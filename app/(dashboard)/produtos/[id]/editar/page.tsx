@@ -1,0 +1,214 @@
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import { useRouter, useParams } from 'next/navigation'
+import { useDropzone } from 'react-dropzone'
+import { X, Upload, Loader2, Save, ImageIcon, Link as LinkIcon } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { toast } from '@/hooks/use-toast'
+
+interface Produto {
+  id: string
+  nome: string
+  categoria: string
+  preco: number
+  imagens: string[]
+  descricao: string
+  linkProduto: string | null
+}
+
+export default function EditarImagensPage() {
+  const router = useRouter()
+  const params = useParams()
+  const id = params.id as string
+
+  const [produto, setProduto] = useState<Produto | null>(null)
+  const [imagens, setImagens] = useState<string[]>([])
+  const [urlInput, setUrlInput] = useState('')
+  const [linkProduto, setLinkProduto] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`/api/produtos/${id}`)
+      .then((r) => r.json())
+      .then((p) => {
+        setProduto(p)
+        setImagens(p.imagens ?? [])
+        setLinkProduto(p.linkProduto ?? '')
+        setLoading(false)
+      })
+  }, [id])
+
+  const onDrop = useCallback(async (files: File[]) => {
+    setUploading(true)
+    const urls: string[] = []
+    for (const file of files.slice(0, 10 - imagens.length)) {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/upload', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (data.url) urls.push(data.url)
+      else toast({ title: `Erro: ${data.error}`, variant: 'destructive' })
+    }
+    setImagens((prev) => [...prev, ...urls])
+    setUploading(false)
+  }, [imagens])
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: { 'image/*': [] },
+    maxFiles: 10,
+  })
+
+  function adicionarUrl() {
+    const url = urlInput.trim()
+    if (!url) return
+    try { new URL(url) } catch { toast({ title: 'URL inválida', variant: 'destructive' }); return }
+    setImagens((prev) => [...prev, url])
+    setUrlInput('')
+  }
+
+  async function salvar() {
+    setSaving(true)
+    const patch: Record<string, unknown> = { imagens }
+    if (linkProduto.trim()) patch.linkProduto = linkProduto.trim()
+
+    const res = await fetch(`/api/produtos/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    if (res.ok) {
+      // Atualiza também os links dinâmicos se o link mudou
+      if (linkProduto.trim() && linkProduto.trim() !== produto?.linkProduto) {
+        const linksRes = await fetch('/api/links')
+        const links = await linksRes.json()
+        const meus = links.filter((l: { produtoId: string }) => l.produtoId === id)
+        await Promise.all(meus.map((l: { id: string }) =>
+          fetch('/api/links', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: l.id, urlDestino: linkProduto.trim() }),
+          })
+        ))
+      }
+      toast({ title: 'Produto salvo!', variant: 'success' })
+      router.push('/produtos')
+    } else {
+      toast({ title: 'Erro ao salvar', variant: 'destructive' })
+    }
+    setSaving(false)
+  }
+
+  if (loading) return <div className="card-stat animate-pulse h-48" />
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-white">{produto?.nome}</h2>
+        <p className="text-sm text-muted-foreground">Adicione imagens do produto</p>
+      </div>
+
+      {/* Link de compra */}
+      <div className="card-stat space-y-3">
+        <label className="text-xs text-muted-foreground flex items-center gap-1">
+          <LinkIcon className="w-3 h-3" /> Link de compra (Shopee, Amazon, etc.)
+        </label>
+        <input
+          className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-white
+            placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+          placeholder="https://shopee.com.br/..."
+          value={linkProduto}
+          onChange={e => setLinkProduto(e.target.value)}
+        />
+        {linkProduto && linkProduto !== produto?.linkProduto && (
+          <p className="text-[10px] text-warning">⚠ Link alterado — todos os links rastreáveis serão atualizados ao salvar</p>
+        )}
+      </div>
+
+      <div className="card-stat space-y-5">
+        {/* Drop Zone */}
+        <div>
+          <label className="text-xs text-muted-foreground mb-2 block">
+            Arraste imagens do seu computador (máx. 10)
+          </label>
+          <div {...getRootProps()} className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors
+            ${isDragActive ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/50'}`}>
+            <input {...getInputProps()} />
+            <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+            {isDragActive
+              ? <p className="text-sm text-accent">Solte as imagens aqui...</p>
+              : <p className="text-sm text-muted-foreground">Arraste imagens ou clique para selecionar</p>
+            }
+            <p className="text-xs text-muted-foreground mt-1">JPG, PNG, WEBP — até 10MB cada</p>
+          </div>
+          {uploading && (
+            <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Enviando...
+            </div>
+          )}
+        </div>
+
+        {/* URL Input */}
+        <div>
+          <label className="text-xs text-muted-foreground mb-2 block flex items-center gap-1">
+            <LinkIcon className="w-3 h-3" /> Ou cole uma URL de imagem
+          </label>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-white placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+              placeholder="https://..."
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && adicionarUrl()}
+            />
+            <Button variant="outline" onClick={adicionarUrl}>Adicionar</Button>
+          </div>
+        </div>
+
+        {/* Preview */}
+        {imagens.length > 0 ? (
+          <div>
+            <label className="text-xs text-muted-foreground mb-2 block">
+              <ImageIcon className="w-3 h-3 inline mr-1" />{imagens.length} imagem(ns)
+            </label>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+              {imagens.map((url, i) => (
+                <div key={i} className="relative aspect-square rounded-xl overflow-hidden border border-border group">
+                  <img src={url} alt="" className="w-full h-full object-cover" />
+                  <button
+                    onClick={() => setImagens((prev) => prev.filter((_, j) => j !== i))}
+                    className="absolute top-1 right-1 bg-danger rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-3 h-3 text-white" />
+                  </button>
+                  {i === 0 && (
+                    <span className="absolute bottom-1 left-1 bg-accent text-primary-dark text-[10px] font-bold px-1.5 py-0.5 rounded">
+                      CAPA
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center py-8 text-muted-foreground">
+            <div className="text-center">
+              <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">Nenhuma imagem adicionada</p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-between pt-4 border-t border-border">
+          <Button variant="outline" onClick={() => router.push('/produtos')}>Cancelar</Button>
+          <Button onClick={salvar} disabled={saving || uploading}>
+            {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Salvando...</> : <><Save className="w-4 h-4" />Salvar Imagens</>}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}

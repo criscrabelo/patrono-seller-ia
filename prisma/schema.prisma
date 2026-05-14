@@ -1,0 +1,138 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  password     String
+  name         String?
+  role         String        @default("usuario")
+  status       String        @default("pendente")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  produtos      Produto[]
+  conteudos     Conteudo[]
+  integracoes   Integracao[]
+  linksDinamicos LinkDinamico[]
+}
+
+model LinkDinamico {
+  id                String       @id @default(cuid())
+  userId            String
+  user              User         @relation(fields: [userId], references: [id])
+  produtoId         String
+  produto           Produto      @relation(fields: [produtoId], references: [id])
+  slug              String       @unique
+  plataforma        String
+  urlDestino        String       @db.Text
+  tipo              String       @default("afiliado")
+  comissao          Float?
+  precoAtual        Float?
+  cliques           Int          @default(0)
+  conversoes        Int          @default(0)
+  receitaTotal      Float        @default(0)
+  ativo             Boolean      @default(true)
+  ultimaAtualizacao DateTime     @default(now())
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  eventos           EventoLink[]
+}
+
+model EventoLink {
+  id          String       @id @default(cuid())
+  linkId      String
+  link        LinkDinamico @relation(fields: [linkId], references: [id])
+  tipo        String
+  plataforma  String?
+  referer     String?
+  createdAt   DateTime     @default(now())
+}
+
+model Integracao {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  plataforma   String
+  status       String   @default("desconectado")
+  accessToken  String?  @db.Text
+  refreshToken String?  @db.Text
+  tokenExpiry  DateTime?
+  accountId    String?
+  accountName  String?
+  extraData    Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, plataforma])
+}
+
+model Produto {
+  id             String     @id @default(cuid())
+  userId         String
+  user           User       @relation(fields: [userId], references: [id])
+  nome           String
+  categoria      String
+  preco          Float?
+  linkProduto    String?
+  descricao      String?
+  publicoAlvo    String[]
+  origemConteudo String
+  tipoVenda      String
+  observacoes    String?
+  beneficios     String[]
+  pontosNegativos String[]
+  imagens        String[]
+  videos         String[]
+  status         String     @default("ativo")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  conteudos      Conteudo[]
+  linksDinamicos LinkDinamico[]
+}
+
+model Conteudo {
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id])
+  produtoId          String
+  produto            Produto   @relation(fields: [produtoId], references: [id])
+  roteiro            String?   @db.Text
+  legendaTiktok      String?   @db.Text
+  legendaInstagram   String?   @db.Text
+  legendaYoutube     String?   @db.Text
+  legendaWhatsapp    String?   @db.Text
+  legendaMarketplace String?   @db.Text
+  hashtags           String[]
+  textoTela          String?   @db.Text
+  narracao           String?   @db.Text
+  trilhaSugerida     String?
+  promptVideoIA      String?   @db.Text
+  promptCurto        String?   @db.Text
+  promptNarracao     String?   @db.Text
+  chamadaAcao        String?
+  estilo             String?
+  duracao            Int?
+  redeSocial         String?
+  objetivo           String?
+  notaProduto        Float?
+  pontosPositivos    String[]
+  pontosNegativos    String[]
+  veredito           String?
+  status             String    @default("roteiro_gerado")
+  dataPublicacao     DateTime?
+  dataAgendamento    DateTime?
+  visualizacoes      Int       @default(0)
+  cliquesLink        Int       @default(0)
+  comentarios        Int       @default(0)
+  compartilhamentos  Int       @default(0)
+  taxaConclusao      Float?
+  alertasCompliance  Json[]
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
