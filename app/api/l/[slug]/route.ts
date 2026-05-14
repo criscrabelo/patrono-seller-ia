@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
-export async function GET(req: NextRequest, { params }: { params: { slug: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+
   const link = await prisma.linkDinamico.findUnique({
-    where: { slug: params.slug },
+    where: { slug },
   })
 
   if (!link || !link.ativo) {
