@@ -56,53 +56,63 @@ export async function POST(req: NextRequest) {
   const temRisco = (alertas: AlertaCompliance[] = []) =>
     alertas.some((a) => a.severidade === 'amarelo' || a.severidade === 'vermelho')
 
-  // Gera o conteúdo e, se houver risco de compliance, refaz automaticamente
-  // pedindo à IA para eliminar os alertas (máx. MAX_TENTATIVAS_COMPLIANCE tentativas).
-  let gerado = await gerarConteudo(produtoData, configGeracao)
+  let gerado
   let tentativas = 1
 
-  while (temRisco(gerado.alertasCompliance) && tentativas < MAX_TENTATIVAS_COMPLIANCE) {
-    const riscos = (gerado.alertasCompliance ?? [])
-      .filter((a) => a.severidade !== 'verde')
-      .map((a) => `- [${a.severidade.toUpperCase()}] ${a.mensagem} (recomendação: ${a.acaoRecomendada})`)
-      .join('\n')
-    gerado = await gerarConteudo(produtoData, configGeracao, riscos)
-    tentativas++
+  try {
+    gerado = await gerarConteudo(produtoData, configGeracao)
+
+    while (temRisco(gerado.alertasCompliance) && tentativas < MAX_TENTATIVAS_COMPLIANCE) {
+      const riscos = (gerado.alertasCompliance ?? [])
+        .filter((a) => a.severidade !== 'verde')
+        .map((a) => `- [${a.severidade.toUpperCase()}] ${a.mensagem} (recomendação: ${a.acaoRecomendada})`)
+        .join('\n')
+      gerado = await gerarConteudo(produtoData, configGeracao, riscos)
+      tentativas++
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Erro ao chamar a IA'
+    return NextResponse.json({ error: msg }, { status: 502 })
   }
 
-  const conteudo = await prisma.conteudo.create({
-    data: {
-      userId: session.user.id,
-      produtoId,
-      redeSocial,
-      duracao,
-      estilo,
-      objetivo,
-      roteiro: gerado.roteiro,
-      legendaTiktok: gerado.legendaTiktok,
-      legendaInstagram: gerado.legendaInstagram,
-      legendaYoutube: gerado.legendaYoutube,
-      legendaWhatsapp: gerado.legendaWhatsapp,
-      legendaFacebook: gerado.legendaFacebook,
-      legendaMarketplace: gerado.legendaMarketplace,
-      hashtags: gerado.hashtags,
-      textoTela: gerado.textoTela,
-      narracao: gerado.narracao,
-      trilhaSugerida: gerado.trilhaSugerida,
-      promptVideoIA: gerado.promptVideoIA,
-      promptCurto: gerado.promptCurto,
-      chamadaAcao: gerado.chamadaAcao,
-      notaProduto: gerado.notaProduto,
-      pontosPositivos: gerado.pontosPositivos,
-      pontosNegativos: gerado.pontosNegativos,
-      veredito: gerado.veredito,
-      alertasCompliance: gerado.alertasCompliance as object[],
-      status: 'roteiro_gerado',
-    },
-  })
+  const dadosBase = {
+    userId: session.user.id,
+    produtoId,
+    redeSocial,
+    duracao,
+    estilo,
+    objetivo,
+    roteiro: gerado.roteiro,
+    legendaTiktok: gerado.legendaTiktok,
+    legendaInstagram: gerado.legendaInstagram,
+    legendaYoutube: gerado.legendaYoutube,
+    legendaWhatsapp: gerado.legendaWhatsapp,
+    legendaMarketplace: gerado.legendaMarketplace,
+    hashtags: gerado.hashtags,
+    textoTela: gerado.textoTela,
+    narracao: gerado.narracao,
+    trilhaSugerida: gerado.trilhaSugerida,
+    promptVideoIA: gerado.promptVideoIA,
+    promptCurto: gerado.promptCurto,
+    chamadaAcao: gerado.chamadaAcao,
+    notaProduto: gerado.notaProduto,
+    pontosPositivos: gerado.pontosPositivos,
+    pontosNegativos: gerado.pontosNegativos,
+    veredito: gerado.veredito,
+    alertasCompliance: gerado.alertasCompliance as object[],
+    status: 'roteiro_gerado',
+  }
+
+  let conteudo
+  try {
+    conteudo = await prisma.conteudo.create({ data: { ...dadosBase, legendaFacebook: gerado.legendaFacebook } })
+  } catch {
+    // Fallback: salva sem legendaFacebook caso a coluna ainda não exista no banco
+    conteudo = await prisma.conteudo.create({ data: dadosBase })
+  }
 
   return NextResponse.json(
-    { ...conteudo, tentativasCompliance: tentativas },
+    { ...conteudo, legendaFacebook: gerado.legendaFacebook, tentativasCompliance: tentativas },
     { status: 201 }
   )
 }

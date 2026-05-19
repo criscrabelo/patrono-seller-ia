@@ -49,7 +49,12 @@ function GerarConteudoInner() {
     })
 
     if (!res.ok) {
-      toast({ title: 'Erro ao gerar conteúdo', description: 'A IA demorou. Tente novamente.', variant: 'destructive' })
+      let descricao = 'Tente novamente.'
+      try {
+        const err = await res.json()
+        if (err?.error) descricao = err.error
+      } catch { /* ignora */ }
+      toast({ title: 'Erro ao gerar conteúdo', description: descricao, variant: 'destructive' })
       setGerando(false)
       return
     }
