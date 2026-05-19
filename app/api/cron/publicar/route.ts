@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { publicarReelInstagram, montarLegenda } from '@/lib/instagram'
+import { publicarReelInstagram, montarLegenda, renovarTokenInstagram } from '@/lib/instagram'
 
 // Endpoint chamado pela Vercel Cron para publicar automaticamente os
 // conteúdos cuja data de agendamento já chegou.
@@ -20,6 +20,43 @@ export async function GET(req: NextRequest) {
   }
 
   const agora = new Date()
+
+  // ── Renovação automática de tokens do Instagram prestes a expirar ──
+  const DIAS_AVISO = 15
+  const limiteRenovacao = new Date(agora.getTime() + DIAS_AVISO * 24 * 60 * 60 * 1000)
+  const tokensParaRenovar = await prisma.integracao.findMany({
+    where: {
+      plataforma: 'instagram',
+      status: 'conectado',
+      tokenExpiry: { lte: limiteRenovacao },
+    },
+  })
+
+  let tokensRenovados = 0
+  let tokensFalha = 0
+  for (const integ of tokensParaRenovar) {
+    const extra = (integ.extraData ?? {}) as Record<string, string>
+    if (!extra.appId || !extra.appSecret || !integ.accessToken) continue
+    try {
+      const { accessToken: novoToken, expiresIn } = await renovarTokenInstagram({
+        accessToken: integ.accessToken,
+        appId: extra.appId,
+        appSecret: extra.appSecret,
+      })
+      await prisma.integracao.update({
+        where: { id: integ.id },
+        data: {
+          accessToken: novoToken,
+          tokenExpiry: new Date(agora.getTime() + expiresIn * 1000),
+          updatedAt: agora,
+        },
+      })
+      tokensRenovados++
+    } catch {
+      tokensFalha++
+    }
+  }
+
   const devidos = await prisma.conteudo.findMany({
     where: { status: 'agendado', dataAgendamento: { lte: agora } },
   })
@@ -89,6 +126,8 @@ export async function GET(req: NextRequest) {
     publicadosApp,
     publicadosInstagram,
     falhas,
+    tokensRenovados,
+    tokensFalha,
     executadoEm: agora.toISOString(),
   })
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CheckCircle, XCircle, ExternalLink, Loader2, AlertCircle } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, Loader2, AlertCircle, RefreshCw, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
@@ -12,6 +12,7 @@ interface Integracao {
   status: string
   accountName?: string
   accountId?: string
+  tokenExpiry?: string
 }
 
 interface Plataforma {
@@ -37,8 +38,10 @@ const PLATAFORMAS: Plataforma[] = [
     tipo: 'oauth',
     urlDocs: 'https://developers.facebook.com/docs/instagram-api',
     campos: [
-      { key: 'accessToken', label: 'Access Token (Instagram Graph API)', placeholder: 'EAABsbCS...', secret: true },
+      { key: 'accessToken', label: 'Access Token (longa duração)', placeholder: 'EAABsbCS...', secret: true },
       { key: 'accountId', label: 'Instagram Business Account ID', placeholder: '17841400...' },
+      { key: 'appId', label: 'Meta App ID (para renovação automática)', placeholder: '123456789012345' },
+      { key: 'appSecret', label: 'Meta App Secret (para renovação automática)', placeholder: 'abc123def456...', secret: true },
     ],
   },
   {
@@ -119,6 +122,7 @@ export default function IntegracoesPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
+  const [renovando, setRenovando] = useState(false)
   const [campos, setCampos] = useState<Record<string, Record<string, string>>>({})
 
   async function fetchIntegracoes() {
@@ -147,6 +151,13 @@ export default function IntegracoesPage() {
     }
 
     setSaving(plataforma.id)
+
+    // Para o Instagram, guarda appId e appSecret em extraData para renovação automática
+    const extraData =
+      plataforma.id === 'instagram' && (data.appId || data.appSecret)
+        ? { appId: data.appId?.trim(), appSecret: data.appSecret?.trim() }
+        : undefined
+
     const res = await fetch('/api/integracoes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -155,6 +166,7 @@ export default function IntegracoesPage() {
         accessToken,
         accountId: data.accountId,
         accountName: data.accountName,
+        extraData,
       }),
     })
 
@@ -167,6 +179,37 @@ export default function IntegracoesPage() {
       toast({ title: 'Erro ao conectar', variant: 'destructive' })
     }
     setSaving(null)
+  }
+
+  async function renovarTokenInstagram() {
+    setRenovando(true)
+    const res = await fetch('/api/integracoes/instagram/renovar', { method: 'POST' })
+    const data = await res.json()
+    if (res.ok) {
+      const expiry = new Date(data.tokenExpiry)
+      toast({
+        title: 'Token renovado com sucesso!',
+        description: `Válido até ${expiry.toLocaleDateString('pt-BR')}`,
+        variant: 'success',
+      })
+      fetchIntegracoes()
+    } else {
+      toast({ title: 'Erro ao renovar token', description: data.error, variant: 'destructive' })
+    }
+    setRenovando(false)
+  }
+
+  function tokenExpiryBadge(tokenExpiry?: string) {
+    if (!tokenExpiry) return null
+    const expiry = new Date(tokenExpiry)
+    const diasRestantes = Math.ceil((expiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    if (diasRestantes <= 0) {
+      return { label: 'Token expirado', cls: 'border-danger/40 bg-danger/10 text-danger' }
+    }
+    if (diasRestantes <= 15) {
+      return { label: `Expira em ${diasRestantes}d`, cls: 'border-warning/40 bg-warning/10 text-warning' }
+    }
+    return { label: `Válido por ${diasRestantes}d`, cls: 'border-accent/30 bg-accent/10 text-accent' }
   }
 
   async function desconectar(id: string, nome: string) {
@@ -250,6 +293,29 @@ export default function IntegracoesPage() {
                   {status.accountId && <p className="text-[10px] text-muted-foreground">ID: {status.accountId}</p>}
                 </div>
               )}
+
+              {/* Badge de expiração do token + botão renovar (apenas Instagram) */}
+              {conectado && plat.id === 'instagram' && (() => {
+                const badge = tokenExpiryBadge(status?.tokenExpiry)
+                return badge ? (
+                  <div className={cn('rounded-lg border px-3 py-2 flex items-center justify-between gap-2', badge.cls)}>
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span className="text-xs font-medium">{badge.label}</span>
+                    </div>
+                    <button
+                      onClick={renovarTokenInstagram}
+                      disabled={renovando}
+                      className="flex items-center gap-1 text-[10px] font-semibold opacity-80 hover:opacity-100 transition-opacity disabled:opacity-40"
+                    >
+                      {renovando
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <RefreshCw className="w-3 h-3" />}
+                      Renovar
+                    </button>
+                  </div>
+                ) : null
+              })()}
 
               {/* Form de credenciais */}
               {isExpanded && !conectado && (

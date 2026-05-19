@@ -90,3 +90,31 @@ export function montarLegenda(legendaInstagram?: string | null, hashtags?: strin
     .filter(Boolean)
     .join('\n\n')
 }
+
+/**
+ * Renova um token de longa duração do Instagram usando o grant fb_exchange_token.
+ * Retorna o novo token e quantos segundos até expirar (~5184000 = 60 dias).
+ */
+export async function renovarTokenInstagram(params: {
+  accessToken: string
+  appId: string
+  appSecret: string
+}): Promise<{ accessToken: string; expiresIn: number }> {
+  const url =
+    `${BASE}/oauth/access_token` +
+    `?grant_type=fb_exchange_token` +
+    `&client_id=${encodeURIComponent(params.appId)}` +
+    `&client_secret=${encodeURIComponent(params.appSecret)}` +
+    `&fb_exchange_token=${encodeURIComponent(params.accessToken)}`
+
+  const data = await fbFetch(url)
+
+  if (!data.access_token) {
+    throw new Error('Meta não retornou um novo access_token na renovação')
+  }
+
+  return {
+    accessToken: data.access_token as string,
+    expiresIn: (data.expires_in as number) ?? 5183944,
+  }
+}

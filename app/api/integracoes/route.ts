@@ -21,10 +21,16 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const { plataforma, accessToken, accountId, accountName, extraData } = body
 
+  // Para o Instagram, registra a data de expiração (~60 dias a partir de agora)
+  const tokenExpiry =
+    plataforma === 'instagram' && accessToken
+      ? new Date(Date.now() + 59 * 24 * 60 * 60 * 1000)
+      : undefined
+
   const integracao = await prisma.integracao.upsert({
     where: { userId_plataforma: { userId: session.user.id, plataforma } },
-    update: { accessToken, accountId, accountName, extraData, status: 'conectado', updatedAt: new Date() },
-    create: { userId: session.user.id, plataforma, accessToken, accountId, accountName, extraData, status: 'conectado' },
+    update: { accessToken, accountId, accountName, extraData, status: 'conectado', tokenExpiry, updatedAt: new Date() },
+    create: { userId: session.user.id, plataforma, accessToken, accountId, accountName, extraData, status: 'conectado', tokenExpiry },
   })
 
   return NextResponse.json(integracao)
