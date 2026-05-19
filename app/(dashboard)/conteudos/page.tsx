@@ -206,7 +206,7 @@ export default function ConteudosPage() {
         <select className={selectClass} value={filtroRede}
           onChange={(e) => setFiltroRede(e.target.value)}>
           <option value="">Todas as redes</option>
-          {['TikTok', 'Instagram Reels', 'YouTube Shorts', 'WhatsApp', 'Marketplace', 'Landing Page'].map((r) => (
+          {['TikTok', 'Instagram Reels', 'YouTube Shorts', 'WhatsApp', 'Facebook', 'Marketplace', 'Landing Page'].map((r) => (
             <option key={r} value={r}>{r}</option>
           ))}
         </select>

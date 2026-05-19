@@ -25,6 +25,7 @@ const REDE_CORES: Record<string, string> = {
   'Instagram Reels': 'bg-purple-500/80',
   'YouTube Shorts': 'bg-red-500/80',
   'WhatsApp': 'bg-green-600/80',
+  'Facebook': 'bg-blue-600/80',
   'Marketplace': 'bg-orange-500/80',
   'Landing Page': 'bg-blue-500/80',
 }

@@ -61,6 +61,7 @@ export function ConteudoPreview({ conteudo, onEnviarAprovacao }: ConteudoPreview
     { label: 'Instagram', text: conteudo.legendaInstagram as string },
     { label: 'YouTube Shorts', text: conteudo.legendaYoutube as string },
     { label: 'WhatsApp', text: conteudo.legendaWhatsapp as string },
+    { label: 'Facebook', text: conteudo.legendaFacebook as string },
     { label: 'Marketplace', text: conteudo.legendaMarketplace as string },
   ]
 

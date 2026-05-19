@@ -64,6 +64,7 @@ Retorne JSON com exatamente estes campos:
   "legendaInstagram": "string",
   "legendaYoutube": "string",
   "legendaWhatsapp": "string",
+  "legendaFacebook": "string",
   "legendaMarketplace": "string",
   "hashtags": ["string"],
   "textoTela": "string",

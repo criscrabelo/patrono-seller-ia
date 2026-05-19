@@ -15,6 +15,7 @@ export type RedeSocial =
   | 'Instagram Reels'
   | 'YouTube Shorts'
   | 'WhatsApp'
+  | 'Facebook'
   | 'Marketplace'
   | 'Landing Page'
 
@@ -43,6 +44,7 @@ export interface ConteudoGerado {
   legendaInstagram: string
   legendaYoutube: string
   legendaWhatsapp: string
+  legendaFacebook: string
   legendaMarketplace: string
   hashtags: string[]
   textoTela: string
@@ -187,6 +189,7 @@ export const REDES_SOCIAIS: RedeSocial[] = [
   'Instagram Reels',
   'YouTube Shorts',
   'WhatsApp',
+  'Facebook',
   'Marketplace',
   'Landing Page',
 ]
