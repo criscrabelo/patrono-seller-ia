@@ -3,7 +3,7 @@
 // ou edite o valor padrão abaixo.
 
 export const LINK_COMPRA =
-  process.env.NEXT_PUBLIC_LINK_COMPRA || 'https://www.instagram.com/boracomprar'
+  process.env.NEXT_PUBLIC_LINK_COMPRA || 'https://www.instagram.com/clickboracomprar'
 
 export const NOME_LOJA = process.env.NEXT_PUBLIC_NOME_LOJA || 'Bora Comprar'
 
