@@ -21,6 +21,7 @@ import {
   ImagePlus,
   Users,
   X,
+  Facebook,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
@@ -148,6 +149,16 @@ export function Sidebar() {
             <p className="text-[10px] text-white/40 truncate">{session?.user?.email}</p>
           </div>
         </div>
+        <a
+          href="https://web.facebook.com/profile.php?id=61589588903488"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-white/50
+                     hover:text-[#1877F2] hover:bg-[#1877F2]/10 transition-colors mb-0.5"
+        >
+          <Facebook className="w-3.5 h-3.5" />
+          Siga-nos no Facebook
+        </a>
         <button
           onClick={() => signOut({ callbackUrl: '/login' })}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-white/50
