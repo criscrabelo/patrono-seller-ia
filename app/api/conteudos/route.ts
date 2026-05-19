@@ -7,13 +7,16 @@ export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  // Publicação automática: ao abrir o app, conteúdos agendados cuja data
-  // já passou são marcados como publicados (complementa o cron diário).
+  // Publicação automática: ao abrir o app, conteúdos agendados SEM vídeo
+  // cuja data já passou são marcados como publicados (complementa o cron).
+  // Conteúdos com vídeo são publicados no Instagram pelo cron ou pelo botão
+  // "Publicar agora" — não aqui, para não travar a listagem com chamadas à API.
   await prisma.conteudo.updateMany({
     where: {
       userId: session.user.id,
       status: 'agendado',
       dataAgendamento: { lte: new Date() },
+      videoUrl: null,
     },
     data: { status: 'publicado', dataPublicacao: new Date() },
   })
