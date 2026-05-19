@@ -81,12 +81,19 @@ export default function NovoProdutoPage() {
   })
 
   async function salvar() {
+    if (!form.tipoVenda || !form.origemConteudo) {
+      toast({ title: 'Preencha o tipo de venda e origem do conteúdo', variant: 'destructive' })
+      setStep(2)
+      return
+    }
+
     setSaving(true)
     const res = await fetch('/api/produtos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...form,
+        preco: form.preco !== '' ? Number(form.preco) : undefined,
         beneficios: form.beneficios.filter(Boolean),
         pontosNegativos: form.pontosNegativos.filter(Boolean),
         linkProduto: form.linkProduto || undefined,
