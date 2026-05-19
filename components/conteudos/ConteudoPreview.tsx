@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Check, Star, AlertTriangle, AlertCircle, CheckCircle, ChevronRight } from 'lucide-react'
+import { Copy, Check, Star, AlertTriangle, AlertCircle, CheckCircle, ChevronRight, ShoppingBag } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn, copyToClipboard } from '@/lib/utils'
+import { LINK_COMPRA, NOME_LOJA } from '@/lib/config'
 import type { AlertaCompliance } from '@/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -163,6 +164,28 @@ export function ConteudoPreview({ conteudo, onEnviarAprovacao }: ConteudoPreview
               </div>
             </div>
 
+            {/* Link de Compra — Instagram */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-white text-sm">Link de Compra</h3>
+                <CopyButton text={LINK_COMPRA} />
+              </div>
+              <div className="rounded-lg border border-accent/30 bg-accent/10 p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-white">🛒 {NOME_LOJA}</p>
+                  <p className="text-xs text-muted-foreground truncate">{LINK_COMPRA}</p>
+                </div>
+                <Button asChild size="sm" className="shrink-0">
+                  <a href={LINK_COMPRA} target="_blank" rel="noopener noreferrer">
+                    <ShoppingBag className="w-3.5 h-3.5" />Comprar
+                  </a>
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                Use este link na bio do Instagram e nas legendas como destino de compra.
+              </p>
+            </div>
+
             {/* Narração */}
             {conteudo.narracao && (
               <div>
@@ -242,14 +265,31 @@ export function ConteudoPreview({ conteudo, onEnviarAprovacao }: ConteudoPreview
       </div>
 
       {/* Ações */}
-      <div className="flex justify-end gap-3">
-        <Button variant="outline">Salvar Rascunho</Button>
-        <Button
-          onClick={onEnviarAprovacao}
-          disabled={temAlertaVermelho && !confirmedRisk}
-        >
-          Enviar para Aprovação <ChevronRight className="w-4 h-4" />
-        </Button>
+      <div className="space-y-3">
+        {temAlertaVermelho && !confirmedRisk && (
+          <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-danger">
+              ⚠️ Há um alerta de compliance grave. Confirme que entendeu o risco para liberar o envio.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setConfirmedRisk(true)}
+            >
+              Entendi o risco — liberar envio
+            </Button>
+          </div>
+        )}
+        <div className="flex justify-end gap-3">
+          <Button variant="outline">Salvar Rascunho</Button>
+          <Button
+            onClick={onEnviarAprovacao}
+            disabled={temAlertaVermelho && !confirmedRisk}
+          >
+            Enviar para Aprovação <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
     </div>
   )

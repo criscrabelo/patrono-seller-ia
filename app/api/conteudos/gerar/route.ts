@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { gerarConteudo } from '@/lib/claude'
+import { MAX_TENTATIVAS_COMPLIANCE } from '@/lib/config'
+import type { AlertaCompliance } from '@/types'
 import { z } from 'zod'
 
 const gerarSchema = z.object({
@@ -34,21 +36,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Produto não encontrado' }, { status: 404 })
   }
 
-  const gerado = await gerarConteudo(
-    {
-      nome: produto.nome,
-      preco: produto.preco,
-      categoria: produto.categoria,
-      publicoAlvo: produto.publicoAlvo,
-      tipoVenda: produto.tipoVenda,
-      origemConteudo: produto.origemConteudo,
-      descricao: produto.descricao ?? undefined,
-      observacoes: produto.observacoes ?? undefined,
-      beneficios: produto.beneficios,
-      pontosNegativos: produto.pontosNegativos,
-    },
-    { redeSocial, duracao, estilo, objetivo }
-  )
+  const produtoData = {
+    nome: produto.nome,
+    preco: produto.preco,
+    categoria: produto.categoria,
+    publicoAlvo: produto.publicoAlvo,
+    tipoVenda: produto.tipoVenda,
+    origemConteudo: produto.origemConteudo,
+    descricao: produto.descricao ?? undefined,
+    observacoes: produto.observacoes ?? undefined,
+    beneficios: produto.beneficios,
+    pontosNegativos: produto.pontosNegativos,
+  }
+  const configGeracao = { redeSocial, duracao, estilo, objetivo }
+
+  const temRisco = (alertas: AlertaCompliance[] = []) =>
+    alertas.some((a) => a.severidade === 'amarelo' || a.severidade === 'vermelho')
+
+  // Gera o conteúdo e, se houver risco de compliance, refaz automaticamente
+  // pedindo à IA para eliminar os alertas (máx. MAX_TENTATIVAS_COMPLIANCE tentativas).
+  let gerado = await gerarConteudo(produtoData, configGeracao)
+  let tentativas = 1
+
+  while (temRisco(gerado.alertasCompliance) && tentativas < MAX_TENTATIVAS_COMPLIANCE) {
+    const riscos = (gerado.alertasCompliance ?? [])
+      .filter((a) => a.severidade !== 'verde')
+      .map((a) => `- [${a.severidade.toUpperCase()}] ${a.mensagem} (recomendação: ${a.acaoRecomendada})`)
+      .join('\n')
+    gerado = await gerarConteudo(produtoData, configGeracao, riscos)
+    tentativas++
+  }
 
   const conteudo = await prisma.conteudo.create({
     data: {
@@ -80,5 +97,8 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  return NextResponse.json(conteudo, { status: 201 })
+  return NextResponse.json(
+    { ...conteudo, tentativasCompliance: tentativas },
+    { status: 201 }
+  )
 }

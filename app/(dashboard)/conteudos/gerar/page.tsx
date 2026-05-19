@@ -57,7 +57,14 @@ function GerarConteudoInner() {
     const data = await res.json()
     setConteudo(data)
     setGerando(false)
-    toast({ title: 'Conteúdo gerado com sucesso!', variant: 'success' })
+    const tentativas = Number(data.tentativasCompliance ?? 1)
+    toast({
+      title: 'Conteúdo gerado com sucesso!',
+      description: tentativas > 1
+        ? `A IA refez o conteúdo ${tentativas}x para reduzir os riscos de compliance.`
+        : undefined,
+      variant: 'success',
+    })
   }
 
   const selectClass = `w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm
@@ -133,11 +140,19 @@ function GerarConteudoInner() {
         <ConteudoPreview
           conteudo={conteudo}
           onEnviarAprovacao={async () => {
-            await fetch(`/api/conteudos/${conteudo.id}`, {
+            if (!conteudo.id) {
+              toast({ title: 'Erro: conteúdo sem identificador', description: 'Gere o conteúdo novamente.', variant: 'destructive' })
+              return
+            }
+            const res = await fetch(`/api/conteudos/${conteudo.id}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ status: 'aguardando_aprovacao' }),
             })
+            if (!res.ok) {
+              toast({ title: 'Erro ao enviar para aprovação', description: 'Tente novamente.', variant: 'destructive' })
+              return
+            }
             toast({ title: 'Enviado para aprovação!', variant: 'success' })
             router.push('/aprovacao')
           }}

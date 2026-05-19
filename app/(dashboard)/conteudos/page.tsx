@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Eye, Trash2, Library, Zap } from 'lucide-react'
+import { Eye, Trash2, Library, Zap, CalendarClock, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDateShort } from '@/lib/utils'
@@ -16,6 +16,7 @@ interface Conteudo {
   estilo: string
   visualizacoes: number
   createdAt: string
+  dataAgendamento: string | null
   produto: { nome: string; imagens: string[] }
 }
 
@@ -26,6 +27,9 @@ export default function ConteudosPage() {
   const [loading, setLoading] = useState(true)
   const [filtroStatus, setFiltroStatus] = useState('')
   const [filtroRede, setFiltroRede] = useState('')
+  const [agendarId, setAgendarId] = useState<string | null>(null)
+  const [agendarData, setAgendarData] = useState('')
+  const [salvandoAgenda, setSalvandoAgenda] = useState(false)
 
   async function fetchConteudos() {
     setLoading(true)
@@ -44,6 +48,47 @@ export default function ConteudosPage() {
     if (!confirm('Deseja realmente excluir este conteúdo?')) return
     await fetch(`/api/conteudos/${id}`, { method: 'DELETE' })
     toast({ title: 'Conteúdo excluído', variant: 'success' })
+    fetchConteudos()
+  }
+
+  function abrirAgendamento(c: Conteudo) {
+    setAgendarId(c.id)
+    // pré-preenche com a data já agendada (se houver), no formato datetime-local
+    if (c.dataAgendamento) {
+      const d = new Date(c.dataAgendamento)
+      const pad = (n: number) => String(n).padStart(2, '0')
+      setAgendarData(
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+      )
+    } else {
+      setAgendarData('')
+    }
+  }
+
+  async function confirmarAgendamento() {
+    if (!agendarId || !agendarData) {
+      toast({ title: 'Escolha a data e a hora', variant: 'destructive' })
+      return
+    }
+    const dataISO = new Date(agendarData)
+    if (isNaN(dataISO.getTime())) {
+      toast({ title: 'Data inválida', variant: 'destructive' })
+      return
+    }
+    setSalvandoAgenda(true)
+    const res = await fetch(`/api/conteudos/${agendarId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'agendado', dataAgendamento: dataISO.toISOString() }),
+    })
+    setSalvandoAgenda(false)
+    if (!res.ok) {
+      toast({ title: 'Erro ao agendar', description: 'Tente novamente.', variant: 'destructive' })
+      return
+    }
+    toast({ title: 'Conteúdo agendado!', description: 'Será publicado automaticamente na data marcada.', variant: 'success' })
+    setAgendarId(null)
+    setAgendarData('')
     fetchConteudos()
   }
 
@@ -128,6 +173,12 @@ export default function ConteudosPage() {
                     <td className="px-4 py-3 text-right text-muted-foreground">{formatDateShort(c.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {(c.status === 'aprovado' || c.status === 'agendado') && (
+                          <Button size="sm" variant="outline" onClick={() => abrirAgendamento(c)}>
+                            <CalendarClock className="w-3.5 h-3.5" />
+                            {c.status === 'agendado' ? 'Reagendar' : 'Agendar'}
+                          </Button>
+                        )}
                         <Button asChild size="sm" variant="ghost">
                           <Link href={`/conteudos/${c.id}`}><Eye className="w-3.5 h-3.5" /></Link>
                         </Button>
@@ -140,6 +191,53 @@ export default function ConteudosPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de agendamento */}
+      {agendarId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => !salvandoAgenda && setAgendarId(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-border bg-card p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-white flex items-center gap-2">
+                <CalendarClock className="w-4 h-4 text-accent" />Agendar publicação
+              </h3>
+              <button
+                onClick={() => !salvandoAgenda && setAgendarId(null)}
+                className="text-muted-foreground hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1.5 block">Data e hora</label>
+              <input
+                type="datetime-local"
+                value={agendarData}
+                onChange={(e) => setAgendarData(e.target.value)}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm
+                  text-white focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Na data marcada o conteúdo é publicado automaticamente (status muda para
+              &quot;Publicado&quot;).
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setAgendarId(null)} disabled={salvandoAgenda}>
+                Cancelar
+              </Button>
+              <Button onClick={confirmarAgendamento} disabled={salvandoAgenda}>
+                {salvandoAgenda ? 'Salvando...' : 'Confirmar agendamento'}
+              </Button>
+            </div>
           </div>
         </div>
       )}

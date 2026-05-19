@@ -31,8 +31,13 @@ export interface ConfiguracaoGeracao {
 
 export async function gerarConteudo(
   produto: ProdutoParaGeracao,
-  config: ConfiguracaoGeracao
+  config: ConfiguracaoGeracao,
+  instrucaoCompliance?: string
 ): Promise<ConteudoGerado> {
+  const blocoCompliance = instrucaoCompliance
+    ? `\n\n⚠️ CORREÇÃO DE COMPLIANCE OBRIGATÓRIA:\n${instrucaoCompliance}\nReescreva o conteúdo eliminando completamente esses riscos. Mantenha o poder de venda, mas use linguagem honesta, sem promessas exageradas, sem falsa escassez e sem afirmações que não possam ser comprovadas. O objetivo é que NÃO sobre nenhum alerta amarelo ou vermelho.`
+    : ''
+
   const userPrompt = `Crie conteúdo comercial para o seguinte produto:
 
 PRODUTO: ${produto.nome}
@@ -50,7 +55,7 @@ CONFIGURAÇÕES:
 REDE SOCIAL: ${config.redeSocial}
 DURAÇÃO: ${config.duracao} segundos
 ESTILO: ${config.estilo}
-OBJETIVO: ${config.objetivo}
+OBJETIVO: ${config.objetivo}${blocoCompliance}
 
 Retorne JSON com exatamente estes campos:
 {
