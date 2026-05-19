@@ -15,6 +15,9 @@ const gerarSchema = z.object({
   objetivo: z.string().min(1),
 })
 
+export const maxDuration = 60
+export const dynamic = 'force-dynamic'
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
@@ -80,6 +83,7 @@ export async function POST(req: NextRequest) {
       legendaInstagram: gerado.legendaInstagram,
       legendaYoutube: gerado.legendaYoutube,
       legendaWhatsapp: gerado.legendaWhatsapp,
+      legendaFacebook: gerado.legendaFacebook,
       legendaMarketplace: gerado.legendaMarketplace,
       hashtags: gerado.hashtags,
       textoTela: gerado.textoTela,

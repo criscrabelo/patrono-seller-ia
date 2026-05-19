@@ -7,5 +7,6 @@ export const LINK_COMPRA =
 
 export const NOME_LOJA = process.env.NEXT_PUBLIC_NOME_LOJA || 'Bora Comprar'
 
-// Quantas vezes a IA tenta refazer o conteúdo para eliminar alertas de compliance
-export const MAX_TENTATIVAS_COMPLIANCE = 3
+// Quantas vezes a IA tenta refazer o conteúdo para eliminar alertas de compliance.
+// Mantido em 2 para evitar timeout (cada chamada leva ~20-30s; limite Vercel = 60s).
+export const MAX_TENTATIVAS_COMPLIANCE = 2

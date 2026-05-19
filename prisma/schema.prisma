@@ -107,6 +107,7 @@ model Conteudo {
   legendaInstagram   String?   @db.Text
   legendaYoutube     String?   @db.Text
   legendaWhatsapp    String?   @db.Text
+  legendaFacebook    String?   @db.Text
   legendaMarketplace String?   @db.Text
   hashtags           String[]
   textoTela          String?   @db.Text
