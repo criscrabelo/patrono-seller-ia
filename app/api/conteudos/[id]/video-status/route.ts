@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { consultarStatusVideo, obterResultadoVideo } from '@/lib/falai'
+import {
+  consultarStatusVideo,
+  obterResultadoVideo,
+  comporVideos,
+  consultarStatusCompose,
+  obterResultadoCompose,
+} from '@/lib/falai'
 import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -12,6 +18,35 @@ const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
   process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder'
 )
+
+interface ClipeEstado {
+  requestId: string
+  statusUrl: string
+  resultUrl: string
+  videoUrl: string | null
+}
+
+interface EstadoVideo {
+  fase: 'gerando_clipes' | 'compondo'
+  duracaoTotal?: number
+  clipes: ClipeEstado[]
+  compose: null | { requestId: string; statusUrl: string; resultUrl: string }
+}
+
+async function baixarUploadParaSupabase(videoUrlFal: string, userId: string): Promise<string> {
+  const videoResp = await fetch(videoUrlFal)
+  if (!videoResp.ok) {
+    throw new Error(`Não consegui baixar o vídeo do fal.ai (HTTP ${videoResp.status})`)
+  }
+  const buffer = Buffer.from(await videoResp.arrayBuffer())
+  const path = `${userId}/${Date.now()}-fal.mp4`
+  const { data: up, error: upErr } = await supabaseAdmin.storage
+    .from('videos')
+    .upload(path, buffer, { contentType: 'video/mp4', upsert: false })
+  if (upErr) throw new Error(`Upload no Supabase falhou: ${upErr.message}`)
+  const { data: urlData } = supabaseAdmin.storage.from('videos').getPublicUrl(up.path)
+  return urlData.publicUrl
+}
 
 export async function GET(
   req: NextRequest,
@@ -24,85 +59,111 @@ export async function GET(
   const conteudo = await prisma.conteudo.findFirst({
     where: { id, userId: session.user.id },
   })
-  if (!conteudo) {
-    return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
-  }
+  if (!conteudo) return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
 
-  // Já tem vídeo pronto → nada a fazer.
   if (conteudo.videoUrl) {
     return NextResponse.json({ status: 'pronto', videoUrl: conteudo.videoUrl })
   }
-  // Sem job em andamento.
   if (!conteudo.videoRequestId) {
     return NextResponse.json({ status: 'nenhum', erro: conteudo.videoErro })
   }
 
-  // videoRequestId guarda um JSON {requestId, statusUrl, resultUrl}
-  let statusUrl: string | undefined
-  let resultUrl: string | undefined
+  // Tenta interpretar o videoRequestId como nosso estado JSON.
+  let estado: EstadoVideo
   try {
-    const parsed = JSON.parse(conteudo.videoRequestId) as {
-      requestId?: string
-      statusUrl?: string
-      resultUrl?: string
-    }
-    statusUrl = parsed.statusUrl
-    resultUrl = parsed.resultUrl
+    estado = JSON.parse(conteudo.videoRequestId) as EstadoVideo
+    if (!estado.clipes || !Array.isArray(estado.clipes)) throw new Error('formato inválido')
   } catch {
-    // dado legado em formato antigo — reseta para o usuário tentar de novo
     await prisma.conteudo.update({
       where: { id: conteudo.id },
-      data: { videoRequestId: null, videoErro: 'Job de vídeo em formato antigo — gere novamente.' },
+      data: { videoRequestId: null, videoErro: 'Job em formato antigo — gere novamente.' },
     })
-    return NextResponse.json({ status: 'erro', erro: 'Formato antigo. Tente gerar de novo.' }, { status: 502 })
-  }
-  if (!statusUrl || !resultUrl) {
-    return NextResponse.json({ status: 'erro', erro: 'URLs do fal.ai ausentes' }, { status: 502 })
+    return NextResponse.json(
+      { status: 'erro', erro: 'Formato antigo. Tente gerar de novo.' },
+      { status: 502 }
+    )
   }
 
   try {
-    const { status } = await consultarStatusVideo(statusUrl)
+    // ─── FASE 1: gerando_clipes ──────────────────────────────────────
+    if (estado.fase === 'gerando_clipes') {
+      let mudouEstado = false
+      let todosProntos = true
 
-    if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
-      return NextResponse.json({ status: 'gerando' })
-    }
+      for (const clipe of estado.clipes) {
+        if (clipe.videoUrl) continue // já está pronto
+        const { status } = await consultarStatusVideo(clipe.statusUrl)
+        if (status === 'COMPLETED') {
+          const { videoUrl } = await obterResultadoVideo(clipe.resultUrl)
+          clipe.videoUrl = videoUrl
+          mudouEstado = true
+        } else if (status === 'FAILED') {
+          throw new Error('Um dos clipes falhou no fal.ai')
+        } else {
+          todosProntos = false
+        }
+      }
 
-    if (status === 'FAILED') {
+      if (!todosProntos) {
+        if (mudouEstado) {
+          await prisma.conteudo.update({
+            where: { id: conteudo.id },
+            data: { videoRequestId: JSON.stringify(estado) },
+          })
+        }
+        return NextResponse.json({ status: 'gerando', fase: 'gerando_clipes' })
+      }
+
+      // Todos os clipes prontos!
+      if (estado.clipes.length === 1) {
+        // Clipe único — pula composição, baixa e salva
+        const videoUrlClipe = estado.clipes[0].videoUrl
+        if (!videoUrlClipe) throw new Error('Clipe sem URL após COMPLETED')
+        const urlFinal = await baixarUploadParaSupabase(videoUrlClipe, session.user.id)
+        await prisma.conteudo.update({
+          where: { id: conteudo.id },
+          data: { videoUrl: urlFinal, videoRequestId: null, videoErro: null },
+        })
+        return NextResponse.json({ status: 'pronto', videoUrl: urlFinal })
+      }
+
+      // Múltiplos clipes — submete composição
+      const urlsClipes = estado.clipes.map((c) => c.videoUrl).filter((u): u is string => !!u)
+      const composeJob = await comporVideos(urlsClipes)
+      estado.fase = 'compondo'
+      estado.compose = composeJob
       await prisma.conteudo.update({
         where: { id: conteudo.id },
-        data: { videoRequestId: null, videoErro: 'Geração de vídeo falhou no fal.ai' },
+        data: { videoRequestId: JSON.stringify(estado) },
       })
-      return NextResponse.json({ status: 'erro', erro: 'Falhou no fal.ai' }, { status: 502 })
+      return NextResponse.json({ status: 'gerando', fase: 'compondo' })
     }
 
-    // COMPLETED → busca a URL, baixa o vídeo e salva no Supabase.
-    const { videoUrl: falVideoUrl } = await obterResultadoVideo(resultUrl)
-
-    const videoResp = await fetch(falVideoUrl)
-    if (!videoResp.ok) {
-      throw new Error(`Não consegui baixar o vídeo do fal.ai (HTTP ${videoResp.status})`)
+    // ─── FASE 2: compondo ────────────────────────────────────────────
+    if (estado.fase === 'compondo' && estado.compose) {
+      const { status } = await consultarStatusCompose(estado.compose.statusUrl)
+      if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
+        return NextResponse.json({ status: 'gerando', fase: 'compondo' })
+      }
+      if (status === 'FAILED') {
+        throw new Error('Composição dos vídeos falhou no fal.ai')
+      }
+      // COMPLETED → busca a URL composta, baixa, sobe pro Supabase
+      const { videoUrl: composedUrl } = await obterResultadoCompose(estado.compose.resultUrl)
+      const urlFinal = await baixarUploadParaSupabase(composedUrl, session.user.id)
+      await prisma.conteudo.update({
+        where: { id: conteudo.id },
+        data: { videoUrl: urlFinal, videoRequestId: null, videoErro: null },
+      })
+      return NextResponse.json({ status: 'pronto', videoUrl: urlFinal })
     }
-    const buffer = Buffer.from(await videoResp.arrayBuffer())
-    const path = `${session.user.id}/${Date.now()}-fal.mp4`
-    const { data: up, error: upErr } = await supabaseAdmin.storage
-      .from('videos')
-      .upload(path, buffer, { contentType: 'video/mp4', upsert: false })
-    if (upErr) throw new Error(`Upload no Supabase falhou: ${upErr.message}`)
 
-    const { data: urlData } = supabaseAdmin.storage.from('videos').getPublicUrl(up.path)
-    const videoUrlPublica = urlData.publicUrl
-
-    const atualizado = await prisma.conteudo.update({
-      where: { id: conteudo.id },
-      data: { videoUrl: videoUrlPublica, videoRequestId: null, videoErro: null },
-    })
-
-    return NextResponse.json({ status: 'pronto', videoUrl: atualizado.videoUrl })
+    return NextResponse.json({ status: 'erro', erro: 'Estado desconhecido' }, { status: 500 })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Falha ao consultar status do vídeo'
     await prisma.conteudo.update({
       where: { id: conteudo.id },
-      data: { videoErro: msg },
+      data: { videoErro: msg, videoRequestId: null },
     })
     return NextResponse.json({ status: 'erro', erro: msg }, { status: 502 })
   }

@@ -115,3 +115,57 @@ export async function obterResultadoVideo(resultUrl: string): Promise<VideoPront
   if (!videoUrl) throw new Error('fal.ai não retornou URL do vídeo')
   return { videoUrl }
 }
+
+/** ── Composição de múltiplos vídeos via fal-ai/ffmpeg-api/compose ── */
+const COMPOSE_PATH = 'fal-ai/ffmpeg-api/compose'
+
+export async function comporVideos(
+  videosUrls: string[]
+): Promise<SubmeterResultado> {
+  // Monta uma track por vídeo, cada um começando logo após o anterior.
+  // Assumimos que cada clipe Kling tem ~15s; pra ser preciso poderíamos
+  // ler a duração real, mas o ffmpeg corta no mínimo entre duração
+  // declarada e duração real do arquivo.
+  const DURACAO_CLIPE_MS = 15000
+  const tracks = videosUrls.map((url, i) => ({
+    id: `video${i + 1}`,
+    type: 'video',
+    keyframes: [
+      {
+        timestamp: i * DURACAO_CLIPE_MS,
+        duration: DURACAO_CLIPE_MS,
+        url,
+      },
+    ],
+  }))
+
+  const data = await falFetch(`${FAL_BASE}/${COMPOSE_PATH}`, {
+    method: 'POST',
+    body: JSON.stringify({ tracks }),
+  })
+
+  const requestId = data.request_id as string | undefined
+  const statusUrl = data.status_url as string | undefined
+  const resultUrl = data.response_url as string | undefined
+  if (!requestId || !statusUrl || !resultUrl) {
+    throw new Error('fal.ai compose não retornou as URLs esperadas')
+  }
+  return { requestId, statusUrl, resultUrl }
+}
+
+/** Consulta status da composição (mesmo formato do Kling). */
+export async function consultarStatusCompose(
+  statusUrl: string
+): Promise<StatusResultado> {
+  return consultarStatusVideo(statusUrl)
+}
+
+/** Obtém URL do vídeo composto (formato diferente do Kling: usa video_url direto). */
+export async function obterResultadoCompose(
+  resultUrl: string
+): Promise<VideoPronto> {
+  const data = await falFetch(resultUrl)
+  const videoUrl = (data as { video_url?: string }).video_url
+  if (!videoUrl) throw new Error('fal.ai compose não retornou video_url')
+  return { videoUrl }
+}

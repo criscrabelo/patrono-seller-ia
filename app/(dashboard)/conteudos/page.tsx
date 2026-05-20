@@ -47,6 +47,7 @@ export default function ConteudosPage() {
   const [uploadingVideo, setUploadingVideo] = useState(false)
   const [publicandoIg, setPublicandoIg] = useState(false)
   const [gerandoVideoIA, setGerandoVideoIA] = useState(false)
+  const [duracaoVideoIA, setDuracaoVideoIA] = useState<number>(5)
 
   async function fetchConteudos() {
     setLoading(true)
@@ -200,14 +201,21 @@ export default function ConteudosPage() {
   async function gerarVideoIA() {
     if (!publicarId) return
     setGerandoVideoIA(true)
-    const res = await fetch(`/api/conteudos/${publicarId}/gerar-video`, { method: 'POST' })
+    const res = await fetch(`/api/conteudos/${publicarId}/gerar-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duracao: duracaoVideoIA }),
+    })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       setGerandoVideoIA(false)
       toast({ title: 'Erro ao iniciar geração', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
       return
     }
-    toast({ title: 'Geração iniciada!', description: 'O vídeo deve ficar pronto em 1-3 minutos. Aguarde nesta tela.', variant: 'success' })
+    const descricao = duracaoVideoIA === 30
+      ? 'Vídeo de 30s = 2 clipes + composição (~5-8 min). Pode deixar a janela aberta.'
+      : 'O vídeo deve ficar pronto em 1-3 minutos. Aguarde nesta tela.'
+    toast({ title: 'Geração iniciada!', description: descricao, variant: 'success' })
     fetchConteudos()
   }
 
@@ -436,8 +444,23 @@ export default function ConteudosPage() {
               ) : (
                 <>
                   <p className="text-[11px] text-muted-foreground">
-                    Use a IA (Kling v3) gerando a partir da imagem do produto, ou envie um vídeo pronto.
+                    Use a IA (Kling v3) gerando a partir das imagens do produto, ou envie um vídeo pronto.
                   </p>
+                  <div className="flex gap-2 items-center">
+                    <label className="text-xs text-muted-foreground shrink-0">Duração:</label>
+                    <select
+                      value={duracaoVideoIA}
+                      onChange={(e) => setDuracaoVideoIA(Number(e.target.value))}
+                      disabled={uploadingVideo}
+                      className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-white
+                        focus:outline-none focus:ring-1 focus:ring-accent"
+                    >
+                      <option value={5}>5 segundos</option>
+                      <option value={10}>10 segundos</option>
+                      <option value={15}>15 segundos</option>
+                      <option value={30}>30 segundos (multi-clipe, ~5-8 min)</option>
+                    </select>
+                  </div>
                   <Button
                     variant="outline"
                     className="w-full"

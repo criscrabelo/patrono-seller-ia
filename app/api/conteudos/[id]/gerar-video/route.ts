@@ -5,6 +5,15 @@ import { prisma } from '@/lib/prisma'
 import { submeterGeracaoVideo } from '@/lib/falai'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
+// Configuração de durações suportadas. Cada duração mapeia para um
+// conjunto de clipes (Kling v3 Pro maxa em 15s por clipe).
+function planoDeClipes(duracaoTotal: number): { duracaoClipe: number; numClipes: number } {
+  if (duracaoTotal === 30) return { duracaoClipe: 15, numClipes: 2 }
+  // 5, 10 ou 15s — clipe único
+  return { duracaoClipe: duracaoTotal, numClipes: 1 }
+}
 
 export async function POST(
   req: NextRequest,
@@ -14,6 +23,16 @@ export async function POST(
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const body = await req.json().catch(() => ({}))
+  const duracaoSolicitada = Number(body.duracao) || 5
+  const DURACOES_VALIDAS = [5, 10, 15, 30]
+  if (!DURACOES_VALIDAS.includes(duracaoSolicitada)) {
+    return NextResponse.json(
+      { error: 'Duração inválida (use 5, 10, 15 ou 30 segundos)' },
+      { status: 400 }
+    )
+  }
+
   const conteudo = await prisma.conteudo.findFirst({
     where: { id, userId: session.user.id },
     include: { produto: { select: { imagens: true, nome: true } } },
@@ -22,8 +41,8 @@ export async function POST(
     return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
   }
 
-  const imagemUrl = conteudo.produto.imagens?.[0]
-  if (!imagemUrl) {
+  const imagens = conteudo.produto.imagens ?? []
+  if (imagens.length === 0) {
     return NextResponse.json(
       { error: 'O produto não tem imagens. Adicione uma imagem ao produto antes de gerar o vídeo.' },
       { status: 400 }
@@ -38,23 +57,42 @@ export async function POST(
     )
   }
 
-  try {
-    const { requestId, statusUrl, resultUrl } = await submeterGeracaoVideo({
-      imageUrl: imagemUrl,
-      prompt,
-      duracaoSegundos: 5,
-    })
+  const { duracaoClipe, numClipes } = planoDeClipes(duracaoSolicitada)
 
-    // Guarda os 3 valores num JSON em videoRequestId (evita adicionar colunas)
+  try {
+    // Submete todos os clipes em paralelo, cada um usando uma imagem diferente
+    // (cicla pelas imagens disponíveis se houver menos imagens que clipes).
+    const submissoes = await Promise.all(
+      Array.from({ length: numClipes }, (_, i) =>
+        submeterGeracaoVideo({
+          imageUrl: imagens[i % imagens.length],
+          prompt,
+          duracaoSegundos: duracaoClipe,
+        })
+      )
+    )
+
+    const estado = {
+      fase: 'gerando_clipes' as const,
+      duracaoTotal: duracaoSolicitada,
+      clipes: submissoes.map((s) => ({
+        requestId: s.requestId,
+        statusUrl: s.statusUrl,
+        resultUrl: s.resultUrl,
+        videoUrl: null as string | null,
+      })),
+      compose: null as null | { requestId: string; statusUrl: string; resultUrl: string },
+    }
+
     await prisma.conteudo.update({
       where: { id: conteudo.id },
       data: {
-        videoRequestId: JSON.stringify({ requestId, statusUrl, resultUrl }),
+        videoRequestId: JSON.stringify(estado),
         videoErro: null,
       },
     })
 
-    return NextResponse.json({ ok: true, requestId })
+    return NextResponse.json({ ok: true, numClipes, duracaoTotal: duracaoSolicitada })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Falha ao iniciar geração de vídeo'
     await prisma.conteudo.update({
