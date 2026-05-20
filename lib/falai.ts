@@ -45,12 +45,20 @@ async function falFetch(url: string, init?: RequestInit) {
     // não é JSON
   }
   if (!res.ok) {
-    const msg =
+    const detail =
       (data?.detail as string) ||
       (data?.error as string) ||
       (data?.message as string) ||
-      textBody.slice(0, 200) ||
-      `Erro HTTP ${res.status} no fal.ai`
+      textBody.slice(0, 200)
+    // Para 405 Method Not Allowed, inclui o header Allow (diz quais métodos a URL aceita)
+    const allowHeader = res.headers.get('allow')
+    const contextoExtra = [
+      res.status === 405 && allowHeader ? `Allow: ${allowHeader}` : '',
+      `URL: ${url}`,
+    ].filter(Boolean).join(' · ')
+    const msg = detail || `Erro HTTP ${res.status} (${res.statusText || 'sem texto'}) no fal.ai · ${contextoExtra}`
+    // Log no servidor para diagnóstico
+    console.error('[falai] erro:', { status: res.status, statusText: res.statusText, url, body: textBody.slice(0, 500), headers: Object.fromEntries(res.headers) })
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
   return data
