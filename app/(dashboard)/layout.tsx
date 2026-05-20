@@ -1,6 +1,7 @@
 import { Sidebar } from '@/components/shared/Sidebar'
 import { Header } from '@/components/shared/Header'
 import { SidebarProvider } from '@/components/shared/SidebarContext'
+import { BoraBanner } from '@/components/shared/BoraBanner'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -9,7 +10,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <Sidebar />
         <div className="flex flex-col flex-1 overflow-hidden min-w-0">
           <Header />
-          <main className="flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
+          <main className="flex-1 overflow-y-auto p-4 lg:p-6">
+            <BoraBanner />
+            {children}
+          </main>
         </div>
       </div>
     </SidebarProvider>
