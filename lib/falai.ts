@@ -47,11 +47,24 @@ async function falFetch(url: string, init?: RequestInit) {
     // não é JSON
   }
   if (!res.ok) {
-    const detail =
-      (data?.detail as string) ||
-      (data?.error as string) ||
-      (data?.message as string) ||
-      textBody.slice(0, 200)
+    // fal.ai retorna erros de validação como array (formato pydantic)
+    let detail: string
+    if (Array.isArray(data?.detail)) {
+      const primeiro = (data.detail as Array<{ type?: string; msg?: string }>)[0]
+      if (primeiro?.type === 'content_policy_violation') {
+        detail =
+          'A imagem do produto foi bloqueada pela moderação do fal.ai. ' +
+          'Tente usar uma imagem diferente, com fundo neutro e sem texto sobreposto.'
+      } else {
+        detail = primeiro?.msg || JSON.stringify(data.detail).slice(0, 200)
+      }
+    } else {
+      detail =
+        (data?.detail as string) ||
+        (data?.error as string) ||
+        (data?.message as string) ||
+        textBody.slice(0, 200)
+    }
     // Para 405 Method Not Allowed, inclui o header Allow (diz quais métodos a URL aceita)
     const allowHeader = res.headers.get('allow')
     const contextoExtra = [
@@ -81,7 +94,7 @@ export async function submeterGeracaoVideo(
   params: SubmeterVideoParams
 ): Promise<SubmeterResultado> {
   const body = {
-    start_image_url: params.imageUrl,
+    image_url: params.imageUrl,
     prompt: params.prompt,
     duration: params.duracaoSegundos ?? 10,
   }
