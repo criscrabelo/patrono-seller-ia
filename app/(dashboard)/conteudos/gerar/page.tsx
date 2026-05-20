@@ -51,8 +51,16 @@ function GerarConteudoInner() {
     if (!res.ok) {
       let descricao = 'Tente novamente.'
       try {
-        const err = await res.json()
-        if (err?.error) descricao = err.error
+        const txt = await res.text()
+        try {
+          const err = JSON.parse(txt)
+          if (err?.error) descricao = err.error
+        } catch {
+          // Resposta não é JSON — provavelmente timeout do servidor.
+          descricao = res.status === 504 || res.status === 408
+            ? 'A IA demorou demais e o servidor desistiu (timeout). Tente novamente.'
+            : `HTTP ${res.status}: ${txt.slice(0, 200) || 'sem detalhes'}`
+        }
       } catch { /* ignora */ }
       toast({ title: 'Erro ao gerar conteúdo', description: descricao, variant: 'destructive' })
       setGerando(false)
