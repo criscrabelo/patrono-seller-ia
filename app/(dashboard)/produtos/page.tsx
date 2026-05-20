@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Package, ExternalLink, Zap, Trash2, Search } from 'lucide-react'
+import { Plus, Package, ExternalLink, Zap, Trash2, Search, RefreshCw, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatDateShort } from '@/lib/utils'
 import { CATEGORIAS } from '@/types'
@@ -22,20 +22,34 @@ interface Produto {
 export default function ProdutosPage() {
   const [produtos, setProdutos] = useState<Produto[]>([])
   const [loading, setLoading] = useState(true)
+  const [erro, setErro] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [categoria, setCategoria] = useState('')
 
   async function fetchProdutos() {
     setLoading(true)
-    const params = new URLSearchParams()
-    if (busca) params.set('busca', busca)
-    if (categoria) params.set('categoria', categoria)
-    const res = await fetch(`/api/produtos?${params}`)
-    const data = await res.json()
-    setProdutos(Array.isArray(data) ? data : [])
-    setLoading(false)
+    setErro(null)
+    try {
+      const params = new URLSearchParams()
+      if (busca) params.set('busca', busca)
+      if (categoria) params.set('categoria', categoria)
+      const res = await fetch(`/api/produtos?${params}`)
+      const data = await res.json()
+      if (!res.ok) {
+        setErro(data?.error || `Erro ${res.status} ao carregar produtos`)
+        setProdutos([])
+      } else {
+        setProdutos(Array.isArray(data) ? data : [])
+      }
+    } catch {
+      setErro('Falha de conexão. Verifique sua internet e tente novamente.')
+      setProdutos([])
+    } finally {
+      setLoading(false)
+    }
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchProdutos() }, [busca, categoria])
 
   async function deletar(id: string) {
@@ -53,12 +67,17 @@ export default function ProdutosPage() {
           <h2 className="text-lg font-semibold text-white">Produtos</h2>
           <p className="text-sm text-muted-foreground">{produtos.length} produto(s) cadastrado(s)</p>
         </div>
-        <Button asChild>
-          <Link href="/produtos/novo">
-            <Plus className="w-4 h-4" />
-            Novo Produto
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={fetchProdutos} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+          <Button asChild>
+            <Link href="/produtos/novo">
+              <Plus className="w-4 h-4" />
+              Novo Produto
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -83,6 +102,23 @@ export default function ProdutosPage() {
           {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
+
+      {/* Erro de carregamento */}
+      {erro && (
+        <div className="flex items-start gap-3 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3">
+          <AlertCircle className="w-4 h-4 text-danger shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-danger font-medium">Erro ao carregar produtos</p>
+            <p className="text-xs text-danger/80 mt-0.5">{erro}</p>
+          </div>
+          <button
+            onClick={fetchProdutos}
+            className="flex items-center gap-1.5 text-xs text-white/60 hover:text-white border border-border rounded-md px-2 py-1 transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" /> Tentar novamente
+          </button>
+        </div>
+      )}
 
       {/* Grid de produtos */}
       {loading ? (
