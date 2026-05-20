@@ -36,7 +36,7 @@ export function BoraBanner() {
         <div className="flex items-center gap-4">
           <div className="shrink-0">
             <Image
-              src="/logo-boracomprar.png"
+              src="/logo-boracomprar.svg"
               alt="BoraComprar"
               width={56}
               height={56}
