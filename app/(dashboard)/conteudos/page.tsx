@@ -219,6 +219,7 @@ export default function ConteudosPage() {
     setPublicandoIg(false)
     if (!res.ok) {
       toast({ title: 'Falha ao publicar', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
+      if (data.oauthError) setIgConectado(false)
       fetchConteudos()
       return
     }
@@ -506,7 +507,18 @@ export default function ConteudosPage() {
               {conteudoPublicar.erroPublicacao && (
                 <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
                   <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>Último erro: {conteudoPublicar.erroPublicacao}</span>
+                  <span>
+                    Último erro: {conteudoPublicar.erroPublicacao}
+                    {(conteudoPublicar.erroPublicacao.toLowerCase().includes('oauth') ||
+                      conteudoPublicar.erroPublicacao.toLowerCase().includes('access token')) && (
+                      <>
+                        {' — '}
+                        <Link href="/integracoes" className="underline font-semibold">
+                          Reconectar Instagram
+                        </Link>
+                      </>
+                    )}
+                  </span>
                 </div>
               )}
               <Button
