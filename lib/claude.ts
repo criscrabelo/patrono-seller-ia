@@ -89,9 +89,9 @@ Retorne JSON com exatamente estes campos:
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 2000,
+    max_tokens: 4096,
     system: `Você é o Patrono Seller IA, especialista em conteúdo comercial para redes sociais brasileiras.
-Retorne APENAS JSON válido, sem markdown, sem blocos de código. Seja conciso.`,
+Retorne APENAS JSON válido, sem markdown, sem blocos de código. Seja conciso mas COMPLETO — todos os campos do schema devem estar preenchidos.`,
     messages: [{ role: 'user', content: userPrompt }],
   })
 
@@ -101,7 +101,11 @@ Retorne APENAS JSON válido, sem markdown, sem blocos de código. Seja conciso.`
   try {
     return JSON.parse(cleaned) as ConteudoGerado
   } catch {
-    throw new Error('Falha ao interpretar resposta da IA. Tente novamente.')
+    const motivo =
+      message.stop_reason === 'max_tokens'
+        ? 'A resposta foi cortada (limite de tokens). Tente reduzir o conteúdo ou avise o suporte.'
+        : 'A IA retornou um formato inválido. Tente novamente.'
+    throw new Error(`Falha ao interpretar resposta da IA: ${motivo}`)
   }
 }
 
