@@ -58,7 +58,15 @@ async function falFetch(url: string, init?: RequestInit) {
     ].filter(Boolean).join(' · ')
     const msg = detail || `Erro HTTP ${res.status} (${res.statusText || 'sem texto'}) no fal.ai · ${contextoExtra}`
     // Log no servidor para diagnóstico
-    console.error('[falai] erro:', { status: res.status, statusText: res.statusText, url, body: textBody.slice(0, 500), headers: Object.fromEntries(res.headers) })
+    const headersDump: Record<string, string> = {}
+    res.headers.forEach((v, k) => { headersDump[k] = v })
+    console.error('[falai] erro:', {
+      status: res.status,
+      statusText: res.statusText,
+      url,
+      body: textBody.slice(0, 500),
+      headers: headersDump,
+    })
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
   return data
@@ -98,7 +106,8 @@ export async function obterResultadoVideo(requestId: string): Promise<VideoPront
   const data = await falFetch(
     `${FAL_BASE}/${MODEL_PATH}/requests/${encodeURIComponent(requestId)}`
   )
-  const videoUrl = data?.video?.url as string | undefined
+  const video = (data as { video?: { url?: string } }).video
+  const videoUrl = video?.url
   if (!videoUrl) throw new Error('fal.ai não retornou URL do vídeo')
   return { videoUrl }
 }
