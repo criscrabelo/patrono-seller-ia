@@ -32,76 +32,82 @@ export interface ConfiguracaoGeracao {
 export async function gerarConteudo(
   produto: ProdutoParaGeracao,
   config: ConfiguracaoGeracao,
-  instrucaoCompliance?: string
 ): Promise<ConteudoGerado> {
-  const blocoCompliance = instrucaoCompliance
-    ? `\n\n⚠️ CORREÇÃO DE COMPLIANCE OBRIGATÓRIA:\n${instrucaoCompliance}\nReescreva o conteúdo eliminando completamente esses riscos. Mantenha o poder de venda, mas use linguagem honesta, sem promessas exageradas, sem falsa escassez e sem afirmações que não possam ser comprovadas. O objetivo é que NÃO sobre nenhum alerta amarelo ou vermelho.`
-    : ''
+  const afiliado = produto.tipoVenda === 'Afiliado'
+  const beneficios = produto.beneficios.filter(Boolean).slice(0, 3).join(' | ') || 'não informado'
 
-  const userPrompt = `Crie conteúdo comercial para o seguinte produto:
+  const userPrompt = `Crie conteúdo comercial para ${config.redeSocial}.
 
 PRODUTO: ${produto.nome}
-PREÇO: Dinâmico — não mencionar valor fixo (usar "clica no link", "preço de hoje no link", etc.)
 CATEGORIA: ${produto.categoria}
-PÚBLICO-ALVO: ${produto.publicoAlvo.join(', ')}
-TIPO DE VENDA: ${produto.tipoVenda}
-ORIGEM DO CONTEÚDO: ${produto.origemConteudo}
-DESCRIÇÃO: ${produto.descricao || 'Não informada'}
-OBSERVAÇÕES: ${produto.observacoes || 'Nenhuma'}
-BENEFÍCIOS: ${produto.beneficios.join(' | ')}
-PONTOS NEGATIVOS: ${produto.pontosNegativos.join(' | ')}
+BENEFÍCIOS: ${beneficios}
+ESTILO: ${config.estilo} | DURAÇÃO: ${config.duracao}s | OBJETIVO: ${config.objetivo}
+${afiliado ? 'AFILIADO: sim — inclua #publi e mencione "link na bio"' : ''}
 
-CONFIGURAÇÕES:
-REDE SOCIAL: ${config.redeSocial}
-DURAÇÃO: ${config.duracao} segundos
-ESTILO: ${config.estilo}
-OBJETIVO: ${config.objetivo}${blocoCompliance}
-
-Retorne JSON com exatamente estes campos:
+Retorne APENAS este JSON (valores curtos e diretos):
 {
-  "roteiro": "string com roteiro cena a cena",
-  "legendaTiktok": "string",
-  "legendaInstagram": "string",
-  "legendaYoutube": "string",
-  "legendaWhatsapp": "string",
-  "legendaFacebook": "string",
-  "legendaMarketplace": "string",
-  "hashtags": ["string"],
-  "textoTela": "string",
-  "narracao": "string",
-  "trilhaSugerida": "string",
-  "promptVideoIA": "string em inglês detalhado para Runway/Kling/Pika",
-  "promptCurto": "string em inglês versão curta",
-  "chamadaAcao": "string",
+  "roteiro": "roteiro cena a cena, máx 250 chars",
+  "legenda": "legenda para ${config.redeSocial}, máx 200 chars${afiliado ? ', com #publi' : ''}",
+  "hashtags": ["5 a 8 hashtags sem #"],
+  "textoTela": "texto para aparecer na tela, máx 60 chars",
+  "narracao": "narração em voz off, máx 150 chars",
+  "chamadaAcao": "CTA direto, máx 60 chars",
+  "promptCurto": "video prompt em inglês, máx 80 chars",
   "notaProduto": 8.5,
-  "pontosPositivos": ["string"],
-  "pontosNegativos": ["string"],
-  "veredito": "string",
-  "alertasCompliance": [
-    {
-      "tipo": "publicidade|copyright|ia|enganoso|plataforma",
-      "mensagem": "string",
-      "severidade": "verde|amarelo|vermelho",
-      "acaoRecomendada": "string"
-    }
-  ]
+  "veredito": "1 frase de veredito",
+  "alertasCompliance": [{"tipo":"publicidade","mensagem":"...","severidade":"verde","acaoRecomendada":"..."}]
 }`
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 2000,
-    system: `Você é o Patrono Seller IA, especialista em conteúdo comercial para redes sociais brasileiras.
-Retorne APENAS JSON válido, sem markdown, sem blocos de código. Seja conciso.`,
+    max_tokens: 700,
+    system: 'Especialista em conteúdo comercial brasileiro. Retorne APENAS JSON válido, sem markdown.',
     messages: [{ role: 'user', content: userPrompt }],
   })
 
   const rawText = message.content[0].type === 'text' ? message.content[0].text : ''
   const cleaned = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
 
+  let parsed: Record<string, unknown>
   try {
-    return JSON.parse(cleaned) as ConteudoGerado
+    parsed = JSON.parse(cleaned)
   } catch {
     throw new Error('Falha ao interpretar resposta da IA. Tente novamente.')
+  }
+
+  const legenda = (parsed.legenda as string) ?? ''
+
+  // Mapeia a legenda gerada para o campo correto da rede selecionada
+  const legendaMap: Partial<Record<string, string>> = {
+    'TikTok': 'legendaTiktok',
+    'Instagram Reels': 'legendaInstagram',
+    'YouTube Shorts': 'legendaYoutube',
+    'WhatsApp': 'legendaWhatsapp',
+    'Facebook': 'legendaFacebook',
+    'Marketplace': 'legendaMarketplace',
+  }
+  const campoLegenda = legendaMap[config.redeSocial] ?? 'legendaInstagram'
+
+  return {
+    roteiro: (parsed.roteiro as string) ?? '',
+    legendaTiktok: campoLegenda === 'legendaTiktok' ? legenda : '',
+    legendaInstagram: campoLegenda === 'legendaInstagram' ? legenda : '',
+    legendaYoutube: campoLegenda === 'legendaYoutube' ? legenda : '',
+    legendaWhatsapp: campoLegenda === 'legendaWhatsapp' ? legenda : '',
+    legendaFacebook: campoLegenda === 'legendaFacebook' ? legenda : '',
+    legendaMarketplace: campoLegenda === 'legendaMarketplace' ? legenda : '',
+    hashtags: (parsed.hashtags as string[]) ?? [],
+    textoTela: (parsed.textoTela as string) ?? '',
+    narracao: (parsed.narracao as string) ?? '',
+    trilhaSugerida: '',
+    promptVideoIA: '',
+    promptCurto: (parsed.promptCurto as string) ?? '',
+    chamadaAcao: (parsed.chamadaAcao as string) ?? '',
+    notaProduto: (parsed.notaProduto as number) ?? 7,
+    pontosPositivos: [],
+    pontosNegativos: [],
+    veredito: (parsed.veredito as string) ?? '',
+    alertasCompliance: (parsed.alertasCompliance as AlertaCompliance[]) ?? [],
   }
 }
 
