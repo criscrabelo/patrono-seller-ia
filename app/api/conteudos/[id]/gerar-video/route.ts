@@ -45,12 +45,11 @@ export async function POST(
       duracaoSegundos: 5,
     })
 
+    // Guarda os 3 valores num JSON em videoRequestId (evita adicionar colunas)
     await prisma.conteudo.update({
       where: { id: conteudo.id },
       data: {
-        videoRequestId: requestId,
-        videoStatusUrl: statusUrl,
-        videoResultUrl: resultUrl,
+        videoRequestId: JSON.stringify({ requestId, statusUrl, resultUrl }),
         videoErro: null,
       },
     })

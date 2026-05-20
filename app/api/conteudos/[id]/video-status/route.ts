@@ -33,12 +33,35 @@ export async function GET(
     return NextResponse.json({ status: 'pronto', videoUrl: conteudo.videoUrl })
   }
   // Sem job em andamento.
-  if (!conteudo.videoRequestId || !conteudo.videoStatusUrl || !conteudo.videoResultUrl) {
+  if (!conteudo.videoRequestId) {
     return NextResponse.json({ status: 'nenhum', erro: conteudo.videoErro })
   }
 
+  // videoRequestId guarda um JSON {requestId, statusUrl, resultUrl}
+  let statusUrl: string | undefined
+  let resultUrl: string | undefined
   try {
-    const { status } = await consultarStatusVideo(conteudo.videoStatusUrl)
+    const parsed = JSON.parse(conteudo.videoRequestId) as {
+      requestId?: string
+      statusUrl?: string
+      resultUrl?: string
+    }
+    statusUrl = parsed.statusUrl
+    resultUrl = parsed.resultUrl
+  } catch {
+    // dado legado em formato antigo — reseta para o usuário tentar de novo
+    await prisma.conteudo.update({
+      where: { id: conteudo.id },
+      data: { videoRequestId: null, videoErro: 'Job de vídeo em formato antigo — gere novamente.' },
+    })
+    return NextResponse.json({ status: 'erro', erro: 'Formato antigo. Tente gerar de novo.' }, { status: 502 })
+  }
+  if (!statusUrl || !resultUrl) {
+    return NextResponse.json({ status: 'erro', erro: 'URLs do fal.ai ausentes' }, { status: 502 })
+  }
+
+  try {
+    const { status } = await consultarStatusVideo(statusUrl)
 
     if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
       return NextResponse.json({ status: 'gerando' })
@@ -53,7 +76,7 @@ export async function GET(
     }
 
     // COMPLETED → busca a URL, baixa o vídeo e salva no Supabase.
-    const { videoUrl: falVideoUrl } = await obterResultadoVideo(conteudo.videoResultUrl)
+    const { videoUrl: falVideoUrl } = await obterResultadoVideo(resultUrl)
 
     const videoResp = await fetch(falVideoUrl)
     if (!videoResp.ok) {

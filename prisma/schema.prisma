@@ -135,9 +135,7 @@ model Conteudo {
   taxaConclusao      Float?
   alertasCompliance  Json[]
   videoUrl           String?   @db.Text
-  videoRequestId     String?
-  videoStatusUrl     String?   @db.Text
-  videoResultUrl     String?   @db.Text
+  videoRequestId     String?   @db.Text
   videoErro          String?   @db.Text
   publicacaoExternaId String?
   erroPublicacao     String?   @db.Text
