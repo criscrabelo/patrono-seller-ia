@@ -1,11 +1,12 @@
 'use client'
 
-import { ShoppingCart, TrendingUp, Zap } from 'lucide-react'
+import Image from 'next/image'
+import { TrendingUp, Zap } from 'lucide-react'
 
 export function BoraBanner() {
   return (
     <div className="relative overflow-hidden rounded-xl mb-6 select-none">
-      {/* Fundo gradiente navy + amarelo */}
+      {/* Fundo gradiente navy */}
       <div
         className="absolute inset-0"
         style={{
@@ -22,10 +23,6 @@ export function BoraBanner() {
         className="absolute -bottom-12 right-24 w-56 h-56 rounded-full opacity-10"
         style={{ background: '#F5C000' }}
       />
-      <div
-        className="absolute top-0 left-1/3 w-24 h-24 rounded-full opacity-5"
-        style={{ background: '#F5C000' }}
-      />
 
       {/* Faixa amarela superior */}
       <div
@@ -34,17 +31,18 @@ export function BoraBanner() {
       />
 
       {/* Conteúdo */}
-      <div className="relative z-10 flex items-center justify-between px-5 py-4 gap-4">
-        {/* Lado esquerdo: logo + tagline */}
+      <div className="relative z-10 flex items-center justify-between px-5 py-3 gap-4">
+        {/* Lado esquerdo: logomarca + tagline */}
         <div className="flex items-center gap-4">
-          <div
-            className="flex items-center justify-center w-12 h-12 rounded-xl shrink-0"
-            style={{
-              background: 'linear-gradient(135deg, #F5C000, #ffd93d)',
-              boxShadow: '0 4px 14px rgba(245, 192, 0, 0.4)',
-            }}
-          >
-            <ShoppingCart className="w-6 h-6" style={{ color: '#1A1A3E' }} />
+          <div className="shrink-0">
+            <Image
+              src="/logo-boracomprar.png"
+              alt="BoraComprar"
+              width={56}
+              height={56}
+              className="rounded-full"
+              style={{ filter: 'drop-shadow(0 4px 12px rgba(245,192,0,0.5))' }}
+            />
           </div>
 
           <div>
@@ -53,10 +51,7 @@ export function BoraBanner() {
                 className="text-xl font-extrabold tracking-tight"
                 style={{ color: '#F5C000' }}
               >
-                Bora
-              </span>
-              <span className="text-xl font-extrabold tracking-tight text-white">
-                Comprar
+                BoraComprar
               </span>
               <span
                 className="text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider"
