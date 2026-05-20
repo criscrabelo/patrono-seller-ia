@@ -40,12 +40,16 @@ export async function concatVideos(urls: string[]): Promise<Buffer> {
     const ffmpegBin = ffmpegStatic
     if (!ffmpegBin) throw new Error('ffmpeg-static não encontrou o binário FFmpeg')
 
-    // Executa a concatenação (cópia de streams, sem re-encoding).
+    // Concatena selecionando apenas a primeira track de vídeo.
+    // Kling v3 gera MP4 com 2 tracks de vídeo (principal + thumbnail);
+    // sem o -map 0:v:0 o muxer MP4 rejeita com "Multiple video tracks not supported".
     await execFileAsync(ffmpegBin, [
       '-f', 'concat',
       '-safe', '0',
       '-i', listPath,
-      '-c', 'copy',
+      '-map', '0:v:0',
+      '-c:v', 'copy',
+      '-an',
       '-y',
       outPath,
     ])
