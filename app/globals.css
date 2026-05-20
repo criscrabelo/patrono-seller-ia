@@ -6,25 +6,25 @@
 
 @layer base {
   :root {
-    --background: 210 40% 6%;
-    --foreground: 210 40% 98%;
-    --card: 210 40% 9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 210 40% 9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 47% 19%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 13%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 210 40% 13%;
-    --muted-foreground: 215 20% 55%;
-    --accent: 162 100% 39%;
-    --accent-foreground: 210 40% 6%;
+    --background: 225 35% 6%;
+    --foreground: 45 20% 96%;
+    --card: 225 35% 9%;
+    --card-foreground: 45 20% 96%;
+    --popover: 225 35% 9%;
+    --popover-foreground: 45 20% 96%;
+    --primary: 225 40% 17%;
+    --primary-foreground: 45 20% 96%;
+    --secondary: 225 35% 13%;
+    --secondary-foreground: 45 20% 96%;
+    --muted: 225 35% 13%;
+    --muted-foreground: 225 15% 55%;
+    --accent: 47 100% 48%;
+    --accent-foreground: 225 40% 8%;
     --destructive: 0 84% 70%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 210 40% 16%;
-    --input: 210 40% 16%;
-    --ring: 162 100% 39%;
+    --destructive-foreground: 45 20% 96%;
+    --border: 225 35% 16%;
+    --input: 225 35% 16%;
+    --ring: 47 100% 48%;
     --radius: 0.5rem;
   }
 
@@ -58,7 +58,7 @@
   }
 
   .sidebar-item.active {
-    @apply text-accent bg-accent/10 hover:bg-accent/20;
+    @apply text-accent bg-accent/15 hover:bg-accent/25;
   }
 
   .card-stat {

@@ -18,17 +18,22 @@ const config: Config = {
     extend: {
       colors: {
         primary: {
-          DEFAULT: '#1a3a4a',
-          light: '#2a5a74',
-          dark: '#0f2430',
+          DEFAULT: '#1a1a3e',
+          light: '#2a2a5e',
+          dark: '#0d0d28',
         },
         accent: {
-          DEFAULT: '#00c896',
-          light: '#00f0b5',
-          dark: '#009e78',
+          DEFAULT: '#f5c000',
+          light: '#ffd93d',
+          dark: '#d4a800',
+        },
+        orange: {
+          DEFAULT: '#f07820',
+          light: '#ff9440',
+          dark: '#c85f10',
         },
         danger: '#ff6b6b',
-        warning: '#ffd700',
+        warning: '#f07820',
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
