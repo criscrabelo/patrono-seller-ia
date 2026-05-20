@@ -3,8 +3,6 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { gerarConteudo } from '@/lib/claude'
-import { MAX_TENTATIVAS_COMPLIANCE } from '@/lib/config'
-import type { AlertaCompliance } from '@/types'
 import { z } from 'zod'
 
 const gerarSchema = z.object({
@@ -53,23 +51,11 @@ export async function POST(req: NextRequest) {
   }
   const configGeracao = { redeSocial, duracao, estilo, objetivo }
 
-  const temRisco = (alertas: AlertaCompliance[] = []) =>
-    alertas.some((a) => a.severidade === 'amarelo' || a.severidade === 'vermelho')
-
   let gerado
-  let tentativas = 1
+  const tentativas = 1
 
   try {
     gerado = await gerarConteudo(produtoData, configGeracao)
-
-    while (temRisco(gerado.alertasCompliance) && tentativas < MAX_TENTATIVAS_COMPLIANCE) {
-      const riscos = (gerado.alertasCompliance ?? [])
-        .filter((a) => a.severidade !== 'verde')
-        .map((a) => `- [${a.severidade.toUpperCase()}] ${a.mensagem} (recomendação: ${a.acaoRecomendada})`)
-        .join('\n')
-      gerado = await gerarConteudo(produtoData, configGeracao, riscos)
-      tentativas++
-    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Erro ao chamar a IA'
     return NextResponse.json({ error: msg }, { status: 502 })

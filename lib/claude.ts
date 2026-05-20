@@ -89,11 +89,9 @@ Retorne JSON com exatamente estes campos:
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 4096,
-    system: `Você é o Patrono Seller IA, especialista em criação de conteúdo comercial para redes sociais brasileiras.
-Crie conteúdo persuasivo, honesto e adequado para cada plataforma.
-Retorne APENAS JSON válido, sem markdown, sem explicações, sem blocos de código.
-O JSON deve ser parseável diretamente com JSON.parse().`,
+    max_tokens: 2000,
+    system: `Você é o Patrono Seller IA, especialista em conteúdo comercial para redes sociais brasileiras.
+Retorne APENAS JSON válido, sem markdown, sem blocos de código. Seja conciso.`,
     messages: [{ role: 'user', content: userPrompt }],
   })
 
