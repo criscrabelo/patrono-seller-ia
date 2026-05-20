@@ -3,8 +3,43 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { submeterMultiplosClipes } from '@/lib/falai'
+import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 30
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder'
+)
+
+// Domínios de CDN externos que o fal.ai pode rejeitar por content policy.
+// Nesses casos, re-fazemos upload para o Supabase antes de enviar ao fal.ai.
+const DOMINIOS_EXTERNOS = ['susercontent.com', 'shopee', 'alicdn', 'aliexpress', 'mercadolibre', 'mlstatic']
+
+function ehDominioExterno(url: string) {
+  try {
+    const host = new URL(url).hostname
+    return DOMINIOS_EXTERNOS.some((d) => host.includes(d))
+  } catch {
+    return false
+  }
+}
+
+async function rehostarImagem(url: string, userId: string): Promise<string> {
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
+  if (!res.ok) throw new Error(`Não foi possível baixar a imagem do produto (HTTP ${res.status})`)
+  const buffer = Buffer.from(await res.arrayBuffer())
+  const contentType = res.headers.get('content-type') || 'image/jpeg'
+  const ext = contentType.includes('webp') ? 'webp' : contentType.includes('png') ? 'png' : 'jpg'
+  const path = `${userId}/img-${Date.now()}.${ext}`
+  const { data, error } = await supabaseAdmin.storage
+    .from('imagens')
+    .upload(path, buffer, { contentType, upsert: false })
+  if (error) throw new Error(`Re-upload da imagem falhou: ${error.message}`)
+  const { data: urlData } = supabaseAdmin.storage.from('imagens').getPublicUrl(data.path)
+  return urlData.publicUrl
+}
 
 export async function POST(
   req: NextRequest,
@@ -22,7 +57,7 @@ export async function POST(
     return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
   }
 
-  const imagemUrl = conteudo.produto.imagens?.[0]
+  let imagemUrl = conteudo.produto.imagens?.[0]
   if (!imagemUrl) {
     return NextResponse.json(
       { error: 'O produto não tem imagens. Adicione uma imagem ao produto antes de gerar o vídeo.' },
@@ -39,12 +74,17 @@ export async function POST(
   }
 
   try {
+    // Se a imagem vier de CDN externo (ex: Shopee), faz re-upload para o Supabase.
+    // O fal.ai pode rejeitar URLs de certos CDNs com content_policy_violation.
+    if (ehDominioExterno(imagemUrl)) {
+      imagemUrl = await rehostarImagem(imagemUrl, session.user.id)
+    }
+
     const clips = await submeterMultiplosClipes(
       { imageUrl: imagemUrl, prompt, duracaoSegundos: 10 },
       3
     )
 
-    // Formato v2: array de clips identificados pela versão "v: 2"
     await prisma.conteudo.update({
       where: { id: conteudo.id },
       data: {
