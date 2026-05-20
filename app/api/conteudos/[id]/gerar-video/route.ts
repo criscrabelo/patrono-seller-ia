@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { submeterMultiplosClipes } from '@/lib/falai'
+import { submeterGeracaoVideo } from '@/lib/falai'
 import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -14,7 +14,6 @@ const supabaseAdmin = createClient(
 )
 
 // Domínios de CDN externos que o fal.ai pode rejeitar por content policy.
-// Nesses casos, re-fazemos upload para o Supabase antes de enviar ao fal.ai.
 const DOMINIOS_EXTERNOS = ['susercontent.com', 'shopee', 'alicdn', 'aliexpress', 'mercadolibre', 'mlstatic']
 
 function ehDominioExterno(url: string) {
@@ -74,26 +73,25 @@ export async function POST(
   }
 
   try {
-    // Se a imagem vier de CDN externo (ex: Shopee), faz re-upload para o Supabase.
-    // O fal.ai pode rejeitar URLs de certos CDNs com content_policy_violation.
     if (ehDominioExterno(imagemUrl)) {
       imagemUrl = await rehostarImagem(imagemUrl, session.user.id)
     }
 
-    const clips = await submeterMultiplosClipes(
-      { imageUrl: imagemUrl, prompt, duracaoSegundos: 10 },
-      3
-    )
+    const { requestId, statusUrl, resultUrl } = await submeterGeracaoVideo({
+      imageUrl: imagemUrl,
+      prompt,
+      duracaoSegundos: 10,
+    })
 
     await prisma.conteudo.update({
       where: { id: conteudo.id },
       data: {
-        videoRequestId: JSON.stringify({ v: 2, clips }),
+        videoRequestId: JSON.stringify({ requestId, statusUrl, resultUrl }),
         videoErro: null,
       },
     })
 
-    return NextResponse.json({ ok: true, requestId: clips[0].requestId })
+    return NextResponse.json({ ok: true, requestId })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Falha ao iniciar geração de vídeo'
     await prisma.conteudo.update({
