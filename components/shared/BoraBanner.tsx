@@ -1,7 +1,68 @@
 'use client'
 
-import Image from 'next/image'
 import { TrendingUp, Zap } from 'lucide-react'
+
+function LogoBoraComprar({ size = 56 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 200 200"
+      width={size}
+      height={size}
+      style={{ flexShrink: 0 }}
+    >
+      {/* Círculo amarelo */}
+      <circle cx="100" cy="100" r="100" fill="#F5C000" />
+
+      {/* Carrinho — corpo */}
+      <line x1="34" y1="58" x2="52" y2="58" stroke="#111" strokeWidth="8" strokeLinecap="round" />
+      <path
+        d="M52 58 L60 105 L148 105 L158 66 L56 66 Z"
+        fill="none"
+        stroke="#111"
+        strokeWidth="7"
+        strokeLinejoin="round"
+      />
+      {/* Rodas */}
+      <circle cx="78"  cy="120" r="9" fill="#F07820" stroke="#111" strokeWidth="5" />
+      <circle cx="130" cy="120" r="9" fill="#F07820" stroke="#111" strokeWidth="5" />
+
+      {/* Sacola laranja */}
+      <rect x="70" y="46" width="68" height="62" rx="6" fill="#F07820" stroke="#111" strokeWidth="6" />
+      {/* Alça */}
+      <path d="M84 46 Q84 30 104 30 Q124 30 124 46" fill="none" stroke="#111" strokeWidth="6" strokeLinecap="round" />
+      {/* Raios de clique */}
+      <line x1="104" y1="72" x2="104" y2="62" stroke="#111" strokeWidth="4" strokeLinecap="round" />
+      <line x1="104" y1="72" x2="114" y2="66" stroke="#111" strokeWidth="4" strokeLinecap="round" />
+      <line x1="104" y1="72" x2="94"  y2="66" stroke="#111" strokeWidth="4" strokeLinecap="round" />
+
+      {/* Mão branca */}
+      <path
+        d="M108 62 L108 90 Q108 100 118 100 L136 100 Q146 100 148 90 L150 72 Q150 64 142 64 Q140 56 134 58 Q132 50 126 52 Q122 44 116 48 L116 62 Z"
+        fill="#FFF5E0"
+        stroke="#111"
+        strokeWidth="5"
+        strokeLinejoin="round"
+      />
+      {/* Dedo indicador */}
+      <rect x="112" y="44" width="12" height="34" rx="6" fill="#FFF5E0" stroke="#111" strokeWidth="5" />
+
+      {/* Texto */}
+      <text
+        x="100"
+        y="158"
+        fontFamily="Arial Black, Arial, sans-serif"
+        fontSize="19"
+        fontWeight="900"
+        textAnchor="middle"
+        fill="#111"
+        letterSpacing="-0.5"
+      >
+        BoraComprar
+      </text>
+    </svg>
+  )
+}
 
 export function BoraBanner() {
   return (
@@ -32,17 +93,10 @@ export function BoraBanner() {
 
       {/* Conteúdo */}
       <div className="relative z-10 flex items-center justify-between px-5 py-3 gap-4">
-        {/* Lado esquerdo: logomarca + tagline */}
+        {/* Logomarca + tagline */}
         <div className="flex items-center gap-4">
-          <div className="shrink-0">
-            <Image
-              src="/logo-boracomprar.svg"
-              alt="BoraComprar"
-              width={56}
-              height={56}
-              className="rounded-full"
-              style={{ filter: 'drop-shadow(0 4px 12px rgba(245,192,0,0.5))' }}
-            />
+          <div style={{ filter: 'drop-shadow(0 4px 12px rgba(245,192,0,0.5))' }}>
+            <LogoBoraComprar size={56} />
           </div>
 
           <div>
@@ -66,12 +120,12 @@ export function BoraBanner() {
           </div>
         </div>
 
-        {/* Lado direito: métricas visuais */}
+        {/* Métricas visuais */}
         <div className="hidden sm:flex items-center gap-5">
           <div className="flex items-center gap-2">
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-              style={{ background: 'rgba(245, 192, 0, 0.15)', border: '1px solid rgba(245, 192, 0, 0.3)' }}
+              style={{ background: 'rgba(245,192,0,0.15)', border: '1px solid rgba(245,192,0,0.3)' }}
             >
               <Zap className="w-4 h-4" style={{ color: '#F5C000' }} />
             </div>
@@ -86,7 +140,7 @@ export function BoraBanner() {
           <div className="flex items-center gap-2">
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-              style={{ background: 'rgba(245, 192, 0, 0.15)', border: '1px solid rgba(245, 192, 0, 0.3)' }}
+              style={{ background: 'rgba(245,192,0,0.15)', border: '1px solid rgba(245,192,0,0.3)' }}
             >
               <TrendingUp className="w-4 h-4" style={{ color: '#F5C000' }} />
             </div>
