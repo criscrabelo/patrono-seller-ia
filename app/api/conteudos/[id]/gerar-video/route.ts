@@ -39,7 +39,7 @@ export async function POST(
   }
 
   try {
-    const { requestId } = await submeterGeracaoVideo({
+    const { requestId, statusUrl, resultUrl } = await submeterGeracaoVideo({
       imageUrl: imagemUrl,
       prompt,
       duracaoSegundos: 5,
@@ -47,7 +47,12 @@ export async function POST(
 
     await prisma.conteudo.update({
       where: { id: conteudo.id },
-      data: { videoRequestId: requestId, videoErro: null },
+      data: {
+        videoRequestId: requestId,
+        videoStatusUrl: statusUrl,
+        videoResultUrl: resultUrl,
+        videoErro: null,
+      },
     })
 
     return NextResponse.json({ ok: true, requestId })

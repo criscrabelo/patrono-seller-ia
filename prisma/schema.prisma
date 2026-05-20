@@ -136,6 +136,8 @@ model Conteudo {
   alertasCompliance  Json[]
   videoUrl           String?   @db.Text
   videoRequestId     String?
+  videoStatusUrl     String?   @db.Text
+  videoResultUrl     String?   @db.Text
   videoErro          String?   @db.Text
   publicacaoExternaId String?
   erroPublicacao     String?   @db.Text

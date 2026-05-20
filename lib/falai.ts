@@ -12,6 +12,8 @@ export interface SubmeterVideoParams {
 
 export interface SubmeterResultado {
   requestId: string
+  statusUrl: string
+  resultUrl: string
 }
 
 export type StatusFal = 'IN_QUEUE' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED'
@@ -72,7 +74,9 @@ async function falFetch(url: string, init?: RequestInit) {
   return data
 }
 
-/** Envia o job de geração de vídeo. Retorna o requestId para acompanhar. */
+/** Envia o job de geração de vídeo. Retorna o requestId e as URLs de
+ * status/resultado fornecidas pelo próprio fal.ai (o caminho varia por
+ * modelo, então é mais seguro usar as URLs que ele devolve). */
 export async function submeterGeracaoVideo(
   params: SubmeterVideoParams
 ): Promise<SubmeterResultado> {
@@ -86,26 +90,26 @@ export async function submeterGeracaoVideo(
     body: JSON.stringify(body),
   })
   const requestId = data.request_id as string | undefined
-  if (!requestId) throw new Error('fal.ai não retornou request_id')
-  return { requestId }
+  const statusUrl = data.status_url as string | undefined
+  const resultUrl = data.response_url as string | undefined
+  if (!requestId || !statusUrl || !resultUrl) {
+    throw new Error('fal.ai não retornou request_id / status_url / response_url')
+  }
+  return { requestId, statusUrl, resultUrl }
 }
 
-/** Consulta o status do job. */
-export async function consultarStatusVideo(requestId: string): Promise<StatusResultado> {
-  const data = await falFetch(
-    `${FAL_BASE}/${MODEL_PATH}/requests/${encodeURIComponent(requestId)}/status`
-  )
+/** Consulta o status do job pela URL fornecida pelo fal.ai no submit. */
+export async function consultarStatusVideo(statusUrl: string): Promise<StatusResultado> {
+  const data = await falFetch(statusUrl)
   return {
     status: data.status as StatusFal,
     logs: data.logs as StatusResultado['logs'],
   }
 }
 
-/** Busca o resultado de um job já concluído (COMPLETED). */
-export async function obterResultadoVideo(requestId: string): Promise<VideoPronto> {
-  const data = await falFetch(
-    `${FAL_BASE}/${MODEL_PATH}/requests/${encodeURIComponent(requestId)}`
-  )
+/** Busca o resultado de um job já concluído (COMPLETED) pela URL do fal.ai. */
+export async function obterResultadoVideo(resultUrl: string): Promise<VideoPronto> {
+  const data = await falFetch(resultUrl)
   const video = (data as { video?: { url?: string } }).video
   const videoUrl = video?.url
   if (!videoUrl) throw new Error('fal.ai não retornou URL do vídeo')

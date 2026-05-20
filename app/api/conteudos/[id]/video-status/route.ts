@@ -33,12 +33,12 @@ export async function GET(
     return NextResponse.json({ status: 'pronto', videoUrl: conteudo.videoUrl })
   }
   // Sem job em andamento.
-  if (!conteudo.videoRequestId) {
+  if (!conteudo.videoRequestId || !conteudo.videoStatusUrl || !conteudo.videoResultUrl) {
     return NextResponse.json({ status: 'nenhum', erro: conteudo.videoErro })
   }
 
   try {
-    const { status } = await consultarStatusVideo(conteudo.videoRequestId)
+    const { status } = await consultarStatusVideo(conteudo.videoStatusUrl)
 
     if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') {
       return NextResponse.json({ status: 'gerando' })
@@ -53,7 +53,7 @@ export async function GET(
     }
 
     // COMPLETED → busca a URL, baixa o vídeo e salva no Supabase.
-    const { videoUrl: falVideoUrl } = await obterResultadoVideo(conteudo.videoRequestId)
+    const { videoUrl: falVideoUrl } = await obterResultadoVideo(conteudo.videoResultUrl)
 
     const videoResp = await fetch(falVideoUrl)
     if (!videoResp.ok) {
