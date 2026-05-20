@@ -7,7 +7,7 @@ const MODEL_PATH = 'fal-ai/kling-video/v3/pro/image-to-video'
 export interface SubmeterVideoParams {
   imageUrl: string
   prompt: string
-  duracaoSegundos?: number // 3-15, default 5
+  duracaoSegundos?: number // 5 ou 10 (limites do Kling v3), default 10
 }
 
 export interface SubmeterResultado {
@@ -47,11 +47,33 @@ async function falFetch(url: string, init?: RequestInit) {
     // não é JSON
   }
   if (!res.ok) {
-    const detail =
-      (data?.detail as string) ||
-      (data?.error as string) ||
-      (data?.message as string) ||
-      textBody.slice(0, 200)
+    // fal.ai retorna erros de validação como array (formato pydantic)
+    let detail: string
+    if (Array.isArray(data?.detail)) {
+      const primeiro = (data.detail as Array<{ type?: string; msg?: string }>)[0]
+      if (primeiro?.type === 'content_policy_violation') {
+        detail =
+          'A imagem do produto foi bloqueada pela moderação do fal.ai. ' +
+          'Tente usar uma imagem diferente, com fundo neutro e sem texto sobreposto.'
+      } else {
+        detail = primeiro?.msg || JSON.stringify(data.detail).slice(0, 200)
+      }
+    } else {
+      const raw =
+        (data?.detail as string) ||
+        (data?.error as string) ||
+        (data?.message as string) ||
+        textBody.slice(0, 300)
+      if (typeof raw === 'string' && raw.toLowerCase().includes('exhausted balance')) {
+        detail =
+          'Saldo esgotado no fal.ai. Recarregue em fal.ai/dashboard/billing e tente novamente.'
+      } else if (typeof raw === 'string' && raw.toLowerCase().includes('user is locked')) {
+        detail =
+          'Conta fal.ai bloqueada por saldo insuficiente. Acesse fal.ai/dashboard/billing para recarregar.'
+      } else {
+        detail = typeof raw === 'string' ? raw : JSON.stringify(raw).slice(0, 200)
+      }
+    }
     // Para 405 Method Not Allowed, inclui o header Allow (diz quais métodos a URL aceita)
     const allowHeader = res.headers.get('allow')
     const contextoExtra = [
@@ -81,9 +103,9 @@ export async function submeterGeracaoVideo(
   params: SubmeterVideoParams
 ): Promise<SubmeterResultado> {
   const body = {
-    start_image_url: params.imageUrl,
+    image_url: params.imageUrl,
     prompt: params.prompt,
-    duration: params.duracaoSegundos ?? 5,
+    duration: params.duracaoSegundos ?? 10,
   }
   const data = await falFetch(`${FAL_BASE}/${MODEL_PATH}`, {
     method: 'POST',
@@ -96,6 +118,16 @@ export async function submeterGeracaoVideo(
     throw new Error('fal.ai não retornou request_id / status_url / response_url')
   }
   return { requestId, statusUrl, resultUrl }
+}
+
+/** Submete múltiplos jobs em paralelo e retorna um array de resultados. */
+export async function submeterMultiplosClipes(
+  params: SubmeterVideoParams,
+  quantidade: number
+): Promise<SubmeterResultado[]> {
+  return Promise.all(
+    Array.from({ length: quantidade }, () => submeterGeracaoVideo(params))
+  )
 }
 
 /** Consulta o status do job pela URL fornecida pelo fal.ai no submit. */

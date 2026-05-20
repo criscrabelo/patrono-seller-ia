@@ -12,6 +12,7 @@ import { formatDateShort, copyToClipboard } from '@/lib/utils'
 import { LINK_COMPRA } from '@/lib/config'
 import { STATUS_LABELS, type StatusConteudo } from '@/types'
 import { toast } from '@/hooks/use-toast'
+import { uploadFile } from '@/lib/supabase'
 
 interface Conteudo {
   id: string
@@ -162,21 +163,32 @@ export default function ConteudosPage() {
       toast({ title: 'Selecione um arquivo de vídeo', variant: 'destructive' })
       return
     }
-    setUploadingVideo(true)
-    const form = new FormData()
-    form.append('file', file)
-    const up = await fetch('/api/upload', { method: 'POST', body: form })
-    if (!up.ok) {
-      const err = await up.json().catch(() => ({}))
-      setUploadingVideo(false)
-      toast({ title: 'Erro no upload', description: err.error ?? 'Tente novamente.', variant: 'destructive' })
+
+    const MAX_VIDEO = 500 * 1024 * 1024
+    if (file.size > MAX_VIDEO) {
+      toast({ title: 'Vídeo muito grande', description: 'Máximo permitido: 500MB.', variant: 'destructive' })
       return
     }
-    const { url } = await up.json()
+
+    setUploadingVideo(true)
+
+    // Upload direto do browser → Supabase Storage (sem passar pelo Next.js/Vercel)
+    let publicUrl: string
+    try {
+      const ext = file.name.split('.').pop() ?? 'mp4'
+      const path = `${publicarId}/${Date.now()}.${ext}`
+      publicUrl = await uploadFile(file, 'videos', path)
+    } catch (err) {
+      setUploadingVideo(false)
+      const msg = err instanceof Error ? err.message : 'Tente novamente.'
+      toast({ title: 'Erro no upload', description: msg, variant: 'destructive' })
+      return
+    }
+
     const patch = await fetch(`/api/conteudos/${publicarId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: url }),
+      body: JSON.stringify({ videoUrl: publicUrl }),
     })
     setUploadingVideo(false)
     if (!patch.ok) {
@@ -227,6 +239,7 @@ export default function ConteudosPage() {
     setPublicandoIg(false)
     if (!res.ok) {
       toast({ title: 'Falha ao publicar', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
+      if (data.oauthError) setIgConectado(false)
       fetchConteudos()
       return
     }
@@ -513,45 +526,69 @@ export default function ConteudosPage() {
             </div>
 
             {/* Publicar no Instagram */}
-            <div className="space-y-2 pt-2 border-t border-border">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Publicar no Instagram
-              </p>
-              {!igConectado && (
-                <div className="rounded-lg border border-warning/30 bg-warning/10 p-2.5 text-xs text-warning flex items-start gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>
-                    Instagram não conectado.{' '}
-                    <Link href="/integracoes" className="underline">Conectar em Integrações</Link>
-                  </span>
+            {(() => {
+              const erroOAuth = !!(
+                conteudoPublicar.erroPublicacao &&
+                (conteudoPublicar.erroPublicacao.toLowerCase().includes('oauth') ||
+                  conteudoPublicar.erroPublicacao.toLowerCase().includes('access token') ||
+                  conteudoPublicar.erroPublicacao.toLowerCase().includes('invalid token'))
+              )
+              return (
+                <div className="space-y-2 pt-2 border-t border-border">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    Publicar no Instagram
+                  </p>
+
+                  {(!igConectado || erroOAuth) ? (
+                    <div className="space-y-2">
+                      <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
+                        <div className="text-xs text-danger space-y-1">
+                          <p className="font-semibold">Token do Instagram inválido ou expirado</p>
+                          {conteudoPublicar.erroPublicacao && (
+                            <p className="opacity-80">{conteudoPublicar.erroPublicacao}</p>
+                          )}
+                          <p>Reconecte sua conta para voltar a publicar.</p>
+                        </div>
+                      </div>
+                      <Button className="w-full" variant="outline" asChild>
+                        <Link href="/integracoes">
+                          <Instagram className="w-4 h-4" />Reconectar Instagram
+                        </Link>
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {conteudoPublicar.erroPublicacao && (
+                        <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
+                          <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                          <span>Último erro: {conteudoPublicar.erroPublicacao}</span>
+                        </div>
+                      )}
+                      <Button
+                        className="w-full"
+                        disabled={!conteudoPublicar.videoUrl || publicandoIg || uploadingVideo}
+                        onClick={publicarInstagram}
+                      >
+                        {publicandoIg
+                          ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
+                          : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
+                      </Button>
+                      {!conteudoPublicar.videoUrl && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Envie o vídeo acima para habilitar a publicação.
+                        </p>
+                      )}
+                      {publicandoIg && (
+                        <p className="text-[11px] text-muted-foreground">
+                          O Instagram pode levar até ~1 minuto processando o vídeo. Não feche esta janela.
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
-              )}
-              {conteudoPublicar.erroPublicacao && (
-                <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>Último erro: {conteudoPublicar.erroPublicacao}</span>
-                </div>
-              )}
-              <Button
-                className="w-full"
-                disabled={!igConectado || !conteudoPublicar.videoUrl || publicandoIg || uploadingVideo}
-                onClick={publicarInstagram}
-              >
-                {publicandoIg
-                  ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
-                  : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
-              </Button>
-              {!conteudoPublicar.videoUrl && (
-                <p className="text-[11px] text-muted-foreground">
-                  Envie o vídeo acima para habilitar a publicação.
-                </p>
-              )}
-              {publicandoIg && (
-                <p className="text-[11px] text-muted-foreground">
-                  O Instagram pode levar até ~1 minuto processando o vídeo. Não feche esta janela.
-                </p>
-              )}
-            </div>
+              )
+            })()}
           </div>
         </div>
       )}

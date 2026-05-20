@@ -65,10 +65,26 @@ export async function POST(
     return NextResponse.json({ ok: true, mediaId })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Falha ao publicar no Instagram'
-    await prisma.conteudo.update({
-      where: { id: conteudo.id },
-      data: { erroPublicacao: msg },
-    })
-    return NextResponse.json({ error: msg }, { status: 502 })
+
+    const isOAuthError =
+      msg.toLowerCase().includes('oauth') ||
+      msg.toLowerCase().includes('access token') ||
+      msg.toLowerCase().includes('invalid token') ||
+      msg.toLowerCase().includes('token expired')
+
+    await Promise.all([
+      prisma.conteudo.update({
+        where: { id: conteudo.id },
+        data: { erroPublicacao: msg },
+      }),
+      isOAuthError
+        ? prisma.integracao.updateMany({
+            where: { userId: session.user.id, plataforma: 'instagram' },
+            data: { status: 'desconectado', accessToken: null },
+          })
+        : Promise.resolve(),
+    ])
+
+    return NextResponse.json({ error: msg, oauthError: isOAuthError }, { status: 502 })
   }
 }
