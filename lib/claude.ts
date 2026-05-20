@@ -52,7 +52,8 @@ Retorne APENAS este JSON (valores curtos e diretos):
   "textoTela": "texto para aparecer na tela, máx 60 chars",
   "narracao": "narração em voz off, máx 150 chars",
   "chamadaAcao": "CTA direto, máx 60 chars",
-  "promptCurto": "video prompt em inglês, máx 80 chars",
+  "promptVideoIA": "video prompt em INGLÊS detalhado para Kling/Runway, descrevendo cena, movimento e estilo, máx 250 chars",
+  "promptCurto": "video prompt em INGLÊS compacto, máx 80 chars",
   "notaProduto": 8.5,
   "veredito": "1 frase de veredito",
   "alertasCompliance": [{"tipo":"publicidade","mensagem":"...","severidade":"verde","acaoRecomendada":"..."}]
@@ -60,7 +61,7 @@ Retorne APENAS este JSON (valores curtos e diretos):
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 700,
+    max_tokens: 900,
     system: 'Especialista em conteúdo comercial brasileiro. Retorne APENAS JSON válido, sem markdown.',
     messages: [{ role: 'user', content: userPrompt }],
   })
@@ -104,7 +105,7 @@ Retorne APENAS este JSON (valores curtos e diretos):
     textoTela: (parsed.textoTela as string) ?? '',
     narracao: (parsed.narracao as string) ?? '',
     trilhaSugerida: '',
-    promptVideoIA: '',
+    promptVideoIA: (parsed.promptVideoIA as string) ?? '',
     promptCurto: (parsed.promptCurto as string) ?? '',
     chamadaAcao: (parsed.chamadaAcao as string) ?? '',
     notaProduto: (parsed.notaProduto as number) ?? 7,
