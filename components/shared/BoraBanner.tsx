@@ -11,52 +11,76 @@ function LogoBoraComprar({ size = 56 }: { size?: number }) {
       height={size}
       style={{ flexShrink: 0 }}
     >
-      {/* Círculo amarelo */}
+      {/* Fundo círculo amarelo */}
       <circle cx="100" cy="100" r="100" fill="#F5C000" />
 
-      {/* Carrinho — corpo */}
-      <line x1="34" y1="58" x2="52" y2="58" stroke="#111" strokeWidth="8" strokeLinecap="round" />
+      {/* ── CARRINHO ── */}
+      {/* Cabo / alça do carrinho (linha grossa à esquerda) */}
+      <line x1="22" y1="52" x2="46" y2="52" stroke="#111" strokeWidth="8" strokeLinecap="round" />
+
+      {/* Cesto do carrinho — trapézio */}
       <path
-        d="M52 58 L60 105 L148 105 L158 66 L56 66 Z"
+        d="M46 52 L54 106 L148 106 L156 64 L50 64 Z"
         fill="none"
         stroke="#111"
         strokeWidth="7"
         strokeLinejoin="round"
+        strokeLinecap="round"
       />
+
       {/* Rodas */}
-      <circle cx="78"  cy="120" r="9" fill="#F07820" stroke="#111" strokeWidth="5" />
-      <circle cx="130" cy="120" r="9" fill="#F07820" stroke="#111" strokeWidth="5" />
+      <circle cx="74"  cy="119" r="9" fill="#F07820" stroke="#111" strokeWidth="5" />
+      <circle cx="130" cy="119" r="9" fill="#F07820" stroke="#111" strokeWidth="5" />
 
-      {/* Sacola laranja */}
-      <rect x="70" y="46" width="68" height="62" rx="6" fill="#F07820" stroke="#111" strokeWidth="6" />
-      {/* Alça */}
-      <path d="M84 46 Q84 30 104 30 Q124 30 124 46" fill="none" stroke="#111" strokeWidth="6" strokeLinecap="round" />
-      {/* Raios de clique */}
-      <line x1="104" y1="72" x2="104" y2="62" stroke="#111" strokeWidth="4" strokeLinecap="round" />
-      <line x1="104" y1="72" x2="114" y2="66" stroke="#111" strokeWidth="4" strokeLinecap="round" />
-      <line x1="104" y1="72" x2="94"  y2="66" stroke="#111" strokeWidth="4" strokeLinecap="round" />
-
-      {/* Mão branca */}
+      {/* ── SACOLA laranja dentro do carrinho ── */}
+      {/* Corpo da sacola */}
+      <rect x="58" y="44" width="70" height="64" rx="7" fill="#F07820" stroke="#111" strokeWidth="6" />
+      {/* Alças da sacola (arco duplo) */}
       <path
-        d="M108 62 L108 90 Q108 100 118 100 L136 100 Q146 100 148 90 L150 72 Q150 64 142 64 Q140 56 134 58 Q132 50 126 52 Q122 44 116 48 L116 62 Z"
-        fill="#FFF5E0"
+        d="M74 44 Q74 26 93 26 Q112 26 112 44"
+        fill="none"
         stroke="#111"
-        strokeWidth="5"
+        strokeWidth="6"
+        strokeLinecap="round"
+      />
+
+      {/* ── MÃO branca clicando ── */}
+      {/* Palma */}
+      <path
+        d="M106 58
+           L106 92
+           Q106 104 118 104
+           L138 104
+           Q150 104 151 92
+           L153 70
+           Q153 61 145 61
+           Q143 53 136 55
+           Q134 47 127 50
+           Q124 42 117 46
+           L117 58 Z"
+        fill="#FFFAEF"
+        stroke="#111"
+        strokeWidth="5.5"
         strokeLinejoin="round"
       />
-      {/* Dedo indicador */}
-      <rect x="112" y="44" width="12" height="34" rx="6" fill="#FFF5E0" stroke="#111" strokeWidth="5" />
+      {/* Dedo indicador (retângulo arredondado) */}
+      <rect x="112" y="38" width="11" height="36" rx="5.5" fill="#FFFAEF" stroke="#111" strokeWidth="5.5" />
 
-      {/* Texto */}
+      {/* Raios de clique ao redor da ponta do dedo */}
+      <line x1="117" y1="30" x2="117" y2="24" stroke="#111" strokeWidth="4" strokeLinecap="round" />
+      <line x1="128" y1="33" x2="132" y2="28" stroke="#111" strokeWidth="4" strokeLinecap="round" />
+      <line x1="106" y1="33" x2="102" y2="28" stroke="#111" strokeWidth="4" strokeLinecap="round" />
+
+      {/* ── TEXTO ── */}
       <text
         x="100"
-        y="158"
-        fontFamily="Arial Black, Arial, sans-serif"
-        fontSize="19"
+        y="160"
+        fontFamily="'Arial Black', 'Arial Bold', Arial, sans-serif"
+        fontSize="22"
         fontWeight="900"
         textAnchor="middle"
-        fill="#111"
-        letterSpacing="-0.5"
+        fill="#111111"
+        letterSpacing="-0.8"
       >
         BoraComprar
       </text>
@@ -95,8 +119,8 @@ export function BoraBanner() {
       <div className="relative z-10 flex items-center justify-between px-5 py-3 gap-4">
         {/* Logomarca + tagline */}
         <div className="flex items-center gap-4">
-          <div style={{ filter: 'drop-shadow(0 4px 12px rgba(245,192,0,0.5))' }}>
-            <LogoBoraComprar size={56} />
+          <div style={{ filter: 'drop-shadow(0 4px 14px rgba(245,192,0,0.45))' }}>
+            <LogoBoraComprar size={60} />
           </div>
 
           <div>
