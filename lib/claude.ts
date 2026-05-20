@@ -72,7 +72,11 @@ Retorne APENAS este JSON (valores curtos e diretos):
   try {
     parsed = JSON.parse(cleaned)
   } catch {
-    throw new Error('Falha ao interpretar resposta da IA. Tente novamente.')
+    const motivo =
+      message.stop_reason === 'max_tokens'
+        ? 'A resposta foi cortada (limite de tokens). Tente reduzir o conteúdo ou avise o suporte.'
+        : 'A IA retornou um formato inválido. Tente novamente.'
+    throw new Error(`Falha ao interpretar resposta da IA: ${motivo}`)
   }
 
   const legenda = (parsed.legenda as string) ?? ''

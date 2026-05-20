@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   Eye, Trash2, Library, Zap, CalendarClock, X, Send, Upload, Copy,
-  Instagram, Loader2, ExternalLink, AlertCircle, CheckCircle,
+  Instagram, Loader2, ExternalLink, AlertCircle, CheckCircle, Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/shared/StatusBadge'
@@ -22,6 +22,8 @@ interface Conteudo {
   createdAt: string
   dataAgendamento: string | null
   videoUrl: string | null
+  videoRequestId: string | null
+  videoErro: string | null
   legendaInstagram: string | null
   hashtags: string[]
   chamadaAcao: string | null
@@ -44,6 +46,7 @@ export default function ConteudosPage() {
   const [publicarId, setPublicarId] = useState<string | null>(null)
   const [uploadingVideo, setUploadingVideo] = useState(false)
   const [publicandoIg, setPublicandoIg] = useState(false)
+  const [gerandoVideoIA, setGerandoVideoIA] = useState(false)
 
   async function fetchConteudos() {
     setLoading(true)
@@ -70,6 +73,39 @@ export default function ConteudosPage() {
       })
       .catch(() => {})
   }, [])
+
+  // Polling do status de geração de vídeo (fal.ai) enquanto a modal Postar
+  // está aberta e existe um job em andamento.
+  useEffect(() => {
+    if (!publicarId) {
+      setGerandoVideoIA(false)
+      return
+    }
+    const c = conteudos.find((x) => x.id === publicarId)
+    if (!c?.videoRequestId || c.videoUrl) {
+      setGerandoVideoIA(false)
+      return
+    }
+    setGerandoVideoIA(true)
+    let cancelado = false
+    const tick = async () => {
+      if (cancelado) return
+      try {
+        const res = await fetch(`/api/conteudos/${publicarId}/video-status`)
+        const data = await res.json().catch(() => ({}))
+        if (cancelado) return
+        if (data.status === 'pronto') {
+          toast({ title: 'Vídeo pronto!', description: 'A IA gerou o vídeo e ele já está anexado.', variant: 'success' })
+          fetchConteudos()
+        } else if (data.status === 'erro') {
+          toast({ title: 'Falha na geração do vídeo', description: data.erro ?? '', variant: 'destructive' })
+          fetchConteudos()
+        }
+      } catch {}
+    }
+    const intervalo = setInterval(tick, 5000)
+    return () => { cancelado = true; clearInterval(intervalo) }
+  }, [publicarId, conteudos])
 
   async function deletar(id: string) {
     if (!confirm('Deseja realmente excluir este conteúdo?')) return
@@ -159,6 +195,20 @@ export default function ConteudosPage() {
     ].filter(Boolean).join('\n\n')
     copyToClipboard(texto)
     toast({ title: 'Tudo copiado!', description: 'Legenda, hashtags e link prontos para colar.', variant: 'success' })
+  }
+
+  async function gerarVideoIA() {
+    if (!publicarId) return
+    setGerandoVideoIA(true)
+    const res = await fetch(`/api/conteudos/${publicarId}/gerar-video`, { method: 'POST' })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setGerandoVideoIA(false)
+      toast({ title: 'Erro ao iniciar geração', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
+      return
+    }
+    toast({ title: 'Geração iniciada!', description: 'O vídeo deve ficar pronto em 1-3 minutos. Aguarde nesta tela.', variant: 'success' })
+    fetchConteudos()
   }
 
   async function publicarInstagram() {
@@ -364,7 +414,7 @@ export default function ConteudosPage() {
               {conteudoPublicar.videoUrl ? (
                 <div className="rounded-lg border border-accent/30 bg-accent/10 p-3 flex items-center justify-between gap-2">
                   <span className="text-sm text-accent flex items-center gap-1.5">
-                    <CheckCircle className="w-4 h-4" />Vídeo enviado
+                    <CheckCircle className="w-4 h-4" />Vídeo pronto
                   </span>
                   <a
                     href={conteudoPublicar.videoUrl}
@@ -375,17 +425,40 @@ export default function ConteudosPage() {
                     <ExternalLink className="w-3 h-3" />Ver
                   </a>
                 </div>
+              ) : gerandoVideoIA ? (
+                <div className="rounded-lg border border-accent/30 bg-accent/10 p-3 flex items-start gap-2 text-sm text-accent">
+                  <Loader2 className="w-4 h-4 animate-spin mt-0.5 shrink-0" />
+                  <span>
+                    A IA está gerando o vídeo… leva de 1 a 3 minutos. Pode deixar
+                    esta janela aberta — quando ficar pronto aparece aqui.
+                  </span>
+                </div>
               ) : (
-                <p className="text-[11px] text-muted-foreground">
-                  Gere o vídeo no Runway/Kling usando o prompt do conteúdo, depois envie aqui
-                  o arquivo final (máx. 100MB).
-                </p>
+                <>
+                  <p className="text-[11px] text-muted-foreground">
+                    Use a IA (Kling v3) gerando a partir da imagem do produto, ou envie um vídeo pronto.
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    disabled={uploadingVideo}
+                    onClick={gerarVideoIA}
+                  >
+                    <Sparkles className="w-4 h-4" />Gerar vídeo com IA (Kling v3)
+                  </Button>
+                </>
+              )}
+              {conteudoPublicar.videoErro && !gerandoVideoIA && (
+                <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>Erro na geração: {conteudoPublicar.videoErro}</span>
+                </div>
               )}
               <label className="block">
                 <input
                   type="file"
                   accept="video/*"
-                  disabled={uploadingVideo}
+                  disabled={uploadingVideo || gerandoVideoIA}
                   onChange={(e) => {
                     const f = e.target.files?.[0]
                     if (f) enviarVideo(f)
@@ -395,10 +468,10 @@ export default function ConteudosPage() {
                 />
                 <span className={`flex items-center justify-center gap-2 rounded-lg border border-border
                   bg-background px-3 py-2.5 text-sm cursor-pointer hover:bg-secondary transition-colors
-                  ${uploadingVideo ? 'opacity-60 pointer-events-none' : ''}`}>
+                  ${uploadingVideo || gerandoVideoIA ? 'opacity-60 pointer-events-none' : ''}`}>
                   {uploadingVideo
                     ? <><Loader2 className="w-4 h-4 animate-spin" />Enviando vídeo...</>
-                    : <><Upload className="w-4 h-4" />{conteudoPublicar.videoUrl ? 'Trocar vídeo' : 'Enviar vídeo'}</>}
+                    : <><Upload className="w-4 h-4" />{conteudoPublicar.videoUrl ? 'Trocar vídeo' : 'Ou enviar vídeo pronto'}</>}
                 </span>
               </label>
             </div>

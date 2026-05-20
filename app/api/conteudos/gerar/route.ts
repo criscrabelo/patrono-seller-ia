@@ -51,54 +51,56 @@ export async function POST(req: NextRequest) {
   }
   const configGeracao = { redeSocial, duracao, estilo, objetivo }
 
-  let gerado
-  const tentativas = 1
-
   try {
-    gerado = await gerarConteudo(produtoData, configGeracao)
+    const gerado = await gerarConteudo(produtoData, configGeracao)
+
+    const dadosBase = {
+      userId: session.user.id,
+      produtoId,
+      redeSocial,
+      duracao,
+      estilo,
+      objetivo,
+      roteiro: gerado.roteiro,
+      legendaTiktok: gerado.legendaTiktok,
+      legendaInstagram: gerado.legendaInstagram,
+      legendaYoutube: gerado.legendaYoutube,
+      legendaWhatsapp: gerado.legendaWhatsapp,
+      legendaMarketplace: gerado.legendaMarketplace,
+      hashtags: gerado.hashtags ?? [],
+      textoTela: gerado.textoTela,
+      narracao: gerado.narracao,
+      trilhaSugerida: gerado.trilhaSugerida,
+      promptVideoIA: gerado.promptVideoIA,
+      promptCurto: gerado.promptCurto,
+      chamadaAcao: gerado.chamadaAcao,
+      notaProduto: gerado.notaProduto,
+      pontosPositivos: gerado.pontosPositivos ?? [],
+      pontosNegativos: gerado.pontosNegativos ?? [],
+      veredito: gerado.veredito,
+      alertasCompliance: (gerado.alertasCompliance ?? []) as object[],
+      status: 'roteiro_gerado',
+    }
+
+    let conteudo
+    try {
+      conteudo = await prisma.conteudo.create({
+        data: { ...dadosBase, legendaFacebook: gerado.legendaFacebook },
+      })
+    } catch (errFacebook) {
+      // Fallback: salva sem legendaFacebook caso a coluna ainda não exista no banco
+      console.error('[gerar] create com legendaFacebook falhou, tentando sem:', errFacebook)
+      conteudo = await prisma.conteudo.create({ data: dadosBase })
+    }
+
+    return NextResponse.json(
+      { ...conteudo, legendaFacebook: gerado.legendaFacebook, tentativasCompliance: 1 },
+      { status: 201 }
+    )
   } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Erro ao chamar a IA'
+    // Captura TUDO (Claude, Prisma, validação) e devolve a mensagem real.
+    const msg = e instanceof Error ? e.message : 'Erro desconhecido ao gerar conteúdo'
+    console.error('[gerar] erro:', e)
     return NextResponse.json({ error: msg }, { status: 502 })
   }
-
-  const dadosBase = {
-    userId: session.user.id,
-    produtoId,
-    redeSocial,
-    duracao,
-    estilo,
-    objetivo,
-    roteiro: gerado.roteiro,
-    legendaTiktok: gerado.legendaTiktok,
-    legendaInstagram: gerado.legendaInstagram,
-    legendaYoutube: gerado.legendaYoutube,
-    legendaWhatsapp: gerado.legendaWhatsapp,
-    legendaMarketplace: gerado.legendaMarketplace,
-    hashtags: gerado.hashtags,
-    textoTela: gerado.textoTela,
-    narracao: gerado.narracao,
-    trilhaSugerida: gerado.trilhaSugerida,
-    promptVideoIA: gerado.promptVideoIA,
-    promptCurto: gerado.promptCurto,
-    chamadaAcao: gerado.chamadaAcao,
-    notaProduto: gerado.notaProduto,
-    pontosPositivos: gerado.pontosPositivos,
-    pontosNegativos: gerado.pontosNegativos,
-    veredito: gerado.veredito,
-    alertasCompliance: gerado.alertasCompliance as object[],
-    status: 'roteiro_gerado',
-  }
-
-  let conteudo
-  try {
-    conteudo = await prisma.conteudo.create({ data: { ...dadosBase, legendaFacebook: gerado.legendaFacebook } })
-  } catch {
-    // Fallback: salva sem legendaFacebook caso a coluna ainda não exista no banco
-    conteudo = await prisma.conteudo.create({ data: dadosBase })
-  }
-
-  return NextResponse.json(
-    { ...conteudo, legendaFacebook: gerado.legendaFacebook, tentativasCompliance: tentativas },
-    { status: 201 }
-  )
 }
