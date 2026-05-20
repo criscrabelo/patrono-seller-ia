@@ -22,6 +22,7 @@ import {
   Users,
   X,
   Facebook,
+  Film,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
@@ -33,6 +34,7 @@ const navItems = [
   { href: '/produtos/imagens', label: 'Importar Imagens', icon: ImagePlus },
   { href: '/conteudos/gerar', label: 'Gerar Conteúdo', icon: Zap },
   { href: '/conteudos', label: 'Banco de Conteúdos', icon: Library },
+  { href: '/videos', label: 'Vídeos Gerados', icon: Film },
   { href: '/aprovacao', label: 'Aprovações', icon: CheckCircle, badge: true },
   { href: '/calendario', label: 'Calendário', icon: Calendar },
   { href: '/relatorios', label: 'Relatórios', icon: BarChart2 },
