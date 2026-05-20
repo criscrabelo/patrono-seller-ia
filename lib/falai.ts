@@ -59,11 +59,20 @@ async function falFetch(url: string, init?: RequestInit) {
         detail = primeiro?.msg || JSON.stringify(data.detail).slice(0, 200)
       }
     } else {
-      detail =
+      const raw =
         (data?.detail as string) ||
         (data?.error as string) ||
         (data?.message as string) ||
-        textBody.slice(0, 200)
+        textBody.slice(0, 300)
+      if (typeof raw === 'string' && raw.toLowerCase().includes('exhausted balance')) {
+        detail =
+          'Saldo esgotado no fal.ai. Recarregue em fal.ai/dashboard/billing e tente novamente.'
+      } else if (typeof raw === 'string' && raw.toLowerCase().includes('user is locked')) {
+        detail =
+          'Conta fal.ai bloqueada por saldo insuficiente. Acesse fal.ai/dashboard/billing para recarregar.'
+      } else {
+        detail = typeof raw === 'string' ? raw : JSON.stringify(raw).slice(0, 200)
+      }
     }
     // Para 405 Method Not Allowed, inclui o header Allow (diz quais métodos a URL aceita)
     const allowHeader = res.headers.get('allow')
