@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { submeterGeracaoVideo } from '@/lib/falai'
+import { submeterMultiplosClipes } from '@/lib/falai'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,22 +39,21 @@ export async function POST(
   }
 
   try {
-    const { requestId, statusUrl, resultUrl } = await submeterGeracaoVideo({
-      imageUrl: imagemUrl,
-      prompt,
-      duracaoSegundos: 10,
-    })
+    const clips = await submeterMultiplosClipes(
+      { imageUrl: imagemUrl, prompt, duracaoSegundos: 10 },
+      3
+    )
 
-    // Guarda os 3 valores num JSON em videoRequestId (evita adicionar colunas)
+    // Formato v2: array de clips identificados pela versão "v: 2"
     await prisma.conteudo.update({
       where: { id: conteudo.id },
       data: {
-        videoRequestId: JSON.stringify({ requestId, statusUrl, resultUrl }),
+        videoRequestId: JSON.stringify({ v: 2, clips }),
         videoErro: null,
       },
     })
 
-    return NextResponse.json({ ok: true, requestId })
+    return NextResponse.json({ ok: true, requestId: clips[0].requestId })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Falha ao iniciar geração de vídeo'
     await prisma.conteudo.update({

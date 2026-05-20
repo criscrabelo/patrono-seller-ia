@@ -98,6 +98,16 @@ export async function submeterGeracaoVideo(
   return { requestId, statusUrl, resultUrl }
 }
 
+/** Submete múltiplos jobs em paralelo e retorna um array de resultados. */
+export async function submeterMultiplosClipes(
+  params: SubmeterVideoParams,
+  quantidade: number
+): Promise<SubmeterResultado[]> {
+  return Promise.all(
+    Array.from({ length: quantidade }, () => submeterGeracaoVideo(params))
+  )
+}
+
 /** Consulta o status do job pela URL fornecida pelo fal.ai no submit. */
 export async function consultarStatusVideo(statusUrl: string): Promise<StatusResultado> {
   const data = await falFetch(statusUrl)
