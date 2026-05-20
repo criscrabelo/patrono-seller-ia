@@ -12,6 +12,7 @@ import { formatDateShort, copyToClipboard } from '@/lib/utils'
 import { LINK_COMPRA } from '@/lib/config'
 import { STATUS_LABELS, type StatusConteudo } from '@/types'
 import { toast } from '@/hooks/use-toast'
+import { uploadFile } from '@/lib/supabase'
 
 interface Conteudo {
   id: string
@@ -161,35 +162,28 @@ export default function ConteudosPage() {
       toast({ title: 'Selecione um arquivo de vídeo', variant: 'destructive' })
       return
     }
+
+    const MAX_VIDEO = 500 * 1024 * 1024
+    if (file.size > MAX_VIDEO) {
+      toast({ title: 'Vídeo muito grande', description: 'Máximo permitido: 500MB.', variant: 'destructive' })
+      return
+    }
+
     setUploadingVideo(true)
 
-    // 1. Solicita URL assinada — o arquivo vai direto do browser ao Supabase
-    const presign = await fetch('/api/upload/presign', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
-    })
-    if (!presign.ok) {
-      const err = await presign.json().catch(() => ({}))
+    // Upload direto do browser → Supabase Storage (sem passar pelo Next.js/Vercel)
+    let publicUrl: string
+    try {
+      const ext = file.name.split('.').pop() ?? 'mp4'
+      const path = `${publicarId}/${Date.now()}.${ext}`
+      publicUrl = await uploadFile(file, 'videos', path)
+    } catch (err) {
       setUploadingVideo(false)
-      toast({ title: 'Erro no upload', description: err.error ?? 'Tente novamente.', variant: 'destructive' })
-      return
-    }
-    const { uploadUrl, publicUrl } = await presign.json()
-
-    // 2. Envia o arquivo diretamente ao Supabase (sem passar pelo Next.js)
-    const put = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': file.type },
-      body: file,
-    })
-    if (!put.ok) {
-      setUploadingVideo(false)
-      toast({ title: 'Erro no upload', description: 'Falha ao enviar o arquivo. Tente novamente.', variant: 'destructive' })
+      const msg = err instanceof Error ? err.message : 'Tente novamente.'
+      toast({ title: 'Erro no upload', description: msg, variant: 'destructive' })
       return
     }
 
-    // 3. Salva a URL pública no conteúdo
     const patch = await fetch(`/api/conteudos/${publicarId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
