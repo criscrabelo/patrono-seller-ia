@@ -7,8 +7,7 @@ const MODEL_PATH = 'fal-ai/kling-video/v3/pro/image-to-video'
 export interface SubmeterVideoParams {
   imageUrl: string
   prompt: string
-  duracaoSegundos?: 5 | 10
-  proporcao?: '16:9' | '9:16' | '1:1'
+  duracaoSegundos?: number // 3-15, default 5
 }
 
 export interface SubmeterResultado {
@@ -37,9 +36,21 @@ function headers(): HeadersInit {
 
 async function falFetch(url: string, init?: RequestInit) {
   const res = await fetch(url, { ...init, headers: { ...headers(), ...(init?.headers ?? {}) } })
-  const data = await res.json().catch(() => ({}))
+  // Tenta ler como JSON; se falhar, captura o texto para diagnóstico.
+  const textBody = await res.text()
+  let data: Record<string, unknown> = {}
+  try {
+    data = textBody ? JSON.parse(textBody) : {}
+  } catch {
+    // não é JSON
+  }
   if (!res.ok) {
-    const msg = data?.detail || data?.error || `Erro HTTP ${res.status} no fal.ai`
+    const msg =
+      (data?.detail as string) ||
+      (data?.error as string) ||
+      (data?.message as string) ||
+      textBody.slice(0, 200) ||
+      `Erro HTTP ${res.status} no fal.ai`
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
   return data
@@ -50,10 +61,9 @@ export async function submeterGeracaoVideo(
   params: SubmeterVideoParams
 ): Promise<SubmeterResultado> {
   const body = {
-    image_url: params.imageUrl,
+    start_image_url: params.imageUrl,
     prompt: params.prompt,
-    duration: String(params.duracaoSegundos ?? 5),
-    aspect_ratio: params.proporcao ?? '9:16',
+    duration: params.duracaoSegundos ?? 5,
   }
   const data = await falFetch(`${FAL_BASE}/${MODEL_PATH}`, {
     method: 'POST',

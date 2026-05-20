@@ -43,7 +43,6 @@ export async function POST(
       imageUrl: imagemUrl,
       prompt,
       duracaoSegundos: 5,
-      proporcao: '9:16',
     })
 
     await prisma.conteudo.update({
