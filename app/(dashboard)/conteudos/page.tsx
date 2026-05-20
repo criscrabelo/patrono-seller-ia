@@ -162,20 +162,38 @@ export default function ConteudosPage() {
       return
     }
     setUploadingVideo(true)
-    const form = new FormData()
-    form.append('file', file)
-    const up = await fetch('/api/upload', { method: 'POST', body: form })
-    if (!up.ok) {
-      const err = await up.json().catch(() => ({}))
+
+    // 1. Solicita URL assinada — o arquivo vai direto do browser ao Supabase
+    const presign = await fetch('/api/upload/presign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
+    })
+    if (!presign.ok) {
+      const err = await presign.json().catch(() => ({}))
       setUploadingVideo(false)
       toast({ title: 'Erro no upload', description: err.error ?? 'Tente novamente.', variant: 'destructive' })
       return
     }
-    const { url } = await up.json()
+    const { uploadUrl, publicUrl } = await presign.json()
+
+    // 2. Envia o arquivo diretamente ao Supabase (sem passar pelo Next.js)
+    const put = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file,
+    })
+    if (!put.ok) {
+      setUploadingVideo(false)
+      toast({ title: 'Erro no upload', description: 'Falha ao enviar o arquivo. Tente novamente.', variant: 'destructive' })
+      return
+    }
+
+    // 3. Salva a URL pública no conteúdo
     const patch = await fetch(`/api/conteudos/${publicarId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: url }),
+      body: JSON.stringify({ videoUrl: publicUrl }),
     })
     setUploadingVideo(false)
     if (!patch.ok) {
