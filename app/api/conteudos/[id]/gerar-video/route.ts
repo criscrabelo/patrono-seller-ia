@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { submeterGeracaoVideo } from '@/lib/falai'
+import { submeterGeracaoVideoRunway } from '@/lib/runway'
 import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -13,7 +14,6 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder'
 )
 
-// Domínios de CDN externos que o fal.ai pode rejeitar por content policy.
 const DOMINIOS_EXTERNOS = ['susercontent.com', 'shopee', 'alicdn', 'aliexpress', 'mercadolibre', 'mlstatic']
 
 function ehDominioExterno(url: string) {
@@ -38,6 +38,12 @@ async function rehostarImagem(url: string, userId: string): Promise<string> {
   if (error) throw new Error(`Re-upload da imagem falhou: ${error.message}`)
   const { data: urlData } = supabaseAdmin.storage.from('imagens').getPublicUrl(data.path)
   return urlData.publicUrl
+}
+
+// Detecta qual provedor usar: RunwayML se a chave estiver configurada, senão fal.ai.
+function provedorAtivo(): 'runway' | 'falai' {
+  if (process.env.RUNWAYML_API_SECRET) return 'runway'
+  return 'falai'
 }
 
 export async function POST(
@@ -77,21 +83,37 @@ export async function POST(
       imagemUrl = await rehostarImagem(imagemUrl, session.user.id)
     }
 
-    const { requestId, statusUrl, resultUrl } = await submeterGeracaoVideo({
-      imageUrl: imagemUrl,
-      prompt,
-      duracaoSegundos: 10,
-    })
+    const provedor = provedorAtivo()
 
-    await prisma.conteudo.update({
-      where: { id: conteudo.id },
-      data: {
-        videoRequestId: JSON.stringify({ requestId, statusUrl, resultUrl }),
-        videoErro: null,
-      },
-    })
-
-    return NextResponse.json({ ok: true, requestId })
+    if (provedor === 'runway') {
+      const { taskId } = await submeterGeracaoVideoRunway({
+        imageUrl: imagemUrl,
+        prompt,
+        duracaoSegundos: 10,
+      })
+      await prisma.conteudo.update({
+        where: { id: conteudo.id },
+        data: {
+          videoRequestId: JSON.stringify({ provider: 'runway', taskId }),
+          videoErro: null,
+        },
+      })
+      return NextResponse.json({ ok: true, taskId })
+    } else {
+      const { requestId, statusUrl, resultUrl } = await submeterGeracaoVideo({
+        imageUrl: imagemUrl,
+        prompt,
+        duracaoSegundos: 10,
+      })
+      await prisma.conteudo.update({
+        where: { id: conteudo.id },
+        data: {
+          videoRequestId: JSON.stringify({ requestId, statusUrl, resultUrl }),
+          videoErro: null,
+        },
+      })
+      return NextResponse.json({ ok: true, requestId })
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Falha ao iniciar geração de vídeo'
     await prisma.conteudo.update({
