@@ -7,7 +7,7 @@ const MODEL_PATH = 'fal-ai/kling-video/v3/pro/image-to-video'
 export interface SubmeterVideoParams {
   imageUrl: string
   prompt: string
-  duracaoSegundos?: number // 3-15, default 5
+  duracaoSegundos?: number // 5 ou 10 (limites do Kling v3), default 10
 }
 
 export interface SubmeterResultado {
@@ -83,7 +83,7 @@ export async function submeterGeracaoVideo(
   const body = {
     start_image_url: params.imageUrl,
     prompt: params.prompt,
-    duration: params.duracaoSegundos ?? 5,
+    duration: params.duracaoSegundos ?? 10,
   }
   const data = await falFetch(`${FAL_BASE}/${MODEL_PATH}`, {
     method: 'POST',

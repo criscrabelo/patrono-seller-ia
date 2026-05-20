@@ -42,7 +42,7 @@ export async function POST(
     const { requestId, statusUrl, resultUrl } = await submeterGeracaoVideo({
       imageUrl: imagemUrl,
       prompt,
-      duracaoSegundos: 5,
+      duracaoSegundos: 10,
     })
 
     // Guarda os 3 valores num JSON em videoRequestId (evita adicionar colunas)
