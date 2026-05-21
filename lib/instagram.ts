@@ -138,9 +138,19 @@ export async function publicarContainer(params: {
   return mediaId
 }
 
-/** Monta a legenda final juntando o texto do Instagram com as hashtags. */
-export function montarLegenda(legendaInstagram?: string | null, hashtags?: string[]): string {
-  return [legendaInstagram?.trim(), (hashtags ?? []).join(' ').trim()]
+/** Monta a legenda final: texto + chamada para ação + link de compra + hashtags. */
+export function montarLegenda(
+  legendaInstagram?: string | null,
+  hashtags?: string[],
+  chamadaAcao?: string | null,
+  linkCompra?: string | null
+): string {
+  return [
+    legendaInstagram?.trim(),
+    chamadaAcao?.trim(),
+    linkCompra ? `🛒 Compre aqui: ${linkCompra}` : '',
+    (hashtags ?? []).join(' ').trim(),
+  ]
     .filter(Boolean)
     .join('\n\n')
 }

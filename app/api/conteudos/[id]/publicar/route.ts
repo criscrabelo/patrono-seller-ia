@@ -8,6 +8,7 @@ import {
   publicarContainer,
   montarLegenda,
 } from '@/lib/instagram'
+import { LINK_COMPRA } from '@/lib/config'
 
 // Publicar um Reels pode levar até ~50s (processamento do vídeo na Meta).
 export const maxDuration = 60
@@ -27,6 +28,7 @@ export async function POST(
 
   const conteudo = await prisma.conteudo.findFirst({
     where: { id, userId: session.user.id },
+    include: { produto: { select: { linkProduto: true } } },
   })
   if (!conteudo) {
     return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
@@ -68,7 +70,12 @@ export async function POST(
         accessToken,
         igUserId,
         videoUrl: conteudo.videoUrl,
-        legenda: montarLegenda(conteudo.legendaInstagram, conteudo.hashtags),
+        legenda: montarLegenda(
+          conteudo.legendaInstagram,
+          conteudo.hashtags,
+          conteudo.chamadaAcao,
+          conteudo.produto?.linkProduto || LINK_COMPRA
+        ),
       })
       await prisma.conteudo.update({
         where: { id: conteudo.id },
