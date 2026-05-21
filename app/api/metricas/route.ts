@@ -14,16 +14,23 @@ export async function GET(req: NextRequest) {
     totalConteudos,
     aguardandoAprovacao,
     publicados,
-    topConteudos,
+    somaVisualizacoes,
+    conteudosRecentes,
     conteudosPorStatus,
   ] = await Promise.all([
     prisma.produto.count({ where: { userId, status: { not: 'descartado' } } }),
     prisma.conteudo.count({ where: { userId } }),
     prisma.conteudo.count({ where: { userId, status: 'aguardando_aprovacao' } }),
     prisma.conteudo.count({ where: { userId, status: 'publicado' } }),
+    // Soma TODAS as visualizações, não apenas top 5
+    prisma.conteudo.aggregate({
+      where: { userId },
+      _sum: { visualizacoes: true },
+    }),
+    // Conteúdos recentes de todos os status (não só publicados)
     prisma.conteudo.findMany({
-      where: { userId, status: 'publicado' },
-      orderBy: { visualizacoes: 'desc' },
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
       take: 5,
       include: { produto: { select: { nome: true } } },
     }),
@@ -34,15 +41,13 @@ export async function GET(req: NextRequest) {
     }),
   ])
 
-  const visualizacoesTotais = topConteudos.reduce((sum, c) => sum + c.visualizacoes, 0)
-
   return NextResponse.json({
     totalProdutos,
     totalConteudos,
     aguardandoAprovacao,
     publicados,
-    visualizacoesTotais,
-    topConteudos,
+    visualizacoesTotais: somaVisualizacoes._sum.visualizacoes ?? 0,
+    topConteudos: conteudosRecentes,
     conteudosPorStatus,
   })
 }

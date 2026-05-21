@@ -136,7 +136,7 @@ export default function DashboardPage() {
         ) : (metricas?.topConteudos ?? []).length === 0 ? (
           <div className="card-stat flex flex-col items-center justify-center py-10 text-center">
             <AlertTriangle className="w-8 h-8 text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">Nenhum conteúdo publicado ainda.</p>
+            <p className="text-sm text-muted-foreground">Nenhum conteúdo gerado ainda.</p>
             <Button asChild variant="outline" size="sm" className="mt-3">
               <Link href="/conteudos/gerar">Gerar primeiro conteúdo</Link>
             </Button>
