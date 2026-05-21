@@ -237,7 +237,16 @@ export default function ConteudosPage() {
     const res = await fetch(`/api/conteudos/${publicarId}/publicar`, { method: 'POST' })
     const data = await res.json().catch(() => ({}))
     setPublicandoIg(false)
-    if (!res.ok) {
+    // Vídeo ainda em processamento no Instagram — não é erro, é só esperar.
+    if (data.processando) {
+      toast({
+        title: 'Vídeo quase pronto',
+        description: data.mensagem ?? 'O Instagram ainda está processando. Clique em publicar de novo em ~30s.',
+      })
+      fetchConteudos()
+      return
+    }
+    if (!res.ok || !data.ok) {
       toast({ title: 'Falha ao publicar', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
       if (data.oauthError) setIgConectado(false)
       fetchConteudos()

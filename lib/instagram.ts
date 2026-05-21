@@ -86,6 +86,58 @@ export async function publicarReelInstagram({
   return mediaId
 }
 
+/** Cria o container de mídia (REELS) e retorna o containerId. */
+export async function criarContainerReel(params: {
+  accessToken: string
+  igUserId: string
+  videoUrl: string
+  legenda: string
+}): Promise<string> {
+  const criar = await fbFetch(`${BASE}/${params.igUserId}/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      media_type: 'REELS',
+      video_url: params.videoUrl,
+      caption: params.legenda,
+      access_token: params.accessToken,
+    }),
+  })
+  const containerId = criar.id as string | undefined
+  if (!containerId) throw new Error('Instagram não retornou o ID do container de mídia')
+  return containerId
+}
+
+/** Consulta o status de processamento de um container (FINISHED/IN_PROGRESS/ERROR). */
+export async function statusContainer(params: {
+  accessToken: string
+  containerId: string
+}): Promise<string> {
+  const data = await fbFetch(
+    `${BASE}/${params.containerId}?fields=status_code&access_token=${encodeURIComponent(params.accessToken)}`
+  )
+  return (data.status_code as string) || 'IN_PROGRESS'
+}
+
+/** Publica um container já processado (FINISHED). Retorna o ID da mídia. */
+export async function publicarContainer(params: {
+  accessToken: string
+  igUserId: string
+  containerId: string
+}): Promise<string> {
+  const publicar = await fbFetch(`${BASE}/${params.igUserId}/media_publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      creation_id: params.containerId,
+      access_token: params.accessToken,
+    }),
+  })
+  const mediaId = publicar.id as string | undefined
+  if (!mediaId) throw new Error('Instagram não retornou o ID da publicação')
+  return mediaId
+}
+
 /** Monta a legenda final juntando o texto do Instagram com as hashtags. */
 export function montarLegenda(legendaInstagram?: string | null, hashtags?: string[]): string {
   return [legendaInstagram?.trim(), (hashtags ?? []).join(' ').trim()]
