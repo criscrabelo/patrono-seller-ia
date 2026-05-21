@@ -19,6 +19,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/integracoes': 'Integrações',
   '/video-seller': 'Patrono Video Seller',
   '/admin/usuarios': 'Usuários',
+  '/whatsapp': 'WhatsApp em Massa',
 }
 
 export function Header() {
