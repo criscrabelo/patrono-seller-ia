@@ -4,18 +4,21 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import {
   criarContainerReel,
+  criarContainerStoryVideo,
+  criarContainerImagemFeed,
+  criarContainerStoryImagem,
+  criarContainerCarrossel,
   statusContainer,
   publicarContainer,
   montarLegenda,
 } from '@/lib/instagram'
 import { LINK_COMPRA } from '@/lib/config'
 
-// Publicar um Reels pode levar até ~50s (processamento do vídeo na Meta).
+// Publicar pode levar até ~50s (processamento do vídeo na Meta).
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
-// Prefixo usado para guardar o ID do container do Instagram dentro do
-// campo videoRequestId (reaproveitado — só existe após o vídeo estar pronto).
+// Prefixo usado para guardar o ID do container do Instagram em videoRequestId.
 const PREFIXO_CONTAINER = 'ig:'
 
 export async function POST(
@@ -26,16 +29,28 @@ export async function POST(
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const body = await req.json().catch(() => ({}))
+  const tipoMidia: 'video' | 'imagens' = body.tipoMidia === 'imagens' ? 'imagens' : 'video'
+  const destino: 'feed' | 'stories' = body.destino === 'stories' ? 'stories' : 'feed'
+
   const conteudo = await prisma.conteudo.findFirst({
     where: { id, userId: session.user.id },
-    include: { produto: { select: { linkProduto: true } } },
+    include: { produto: { select: { linkProduto: true, imagens: true } } },
   })
   if (!conteudo) {
     return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
   }
-  if (!conteudo.videoUrl) {
+
+  const imagens = conteudo.produto?.imagens ?? []
+  if (tipoMidia === 'video' && !conteudo.videoUrl) {
     return NextResponse.json(
-      { error: 'Faça o upload do vídeo antes de publicar.' },
+      { error: 'Este conteúdo não tem vídeo. Gere o vídeo ou escolha publicar as imagens.' },
+      { status: 400 }
+    )
+  }
+  if (tipoMidia === 'imagens' && imagens.length === 0) {
+    return NextResponse.json(
+      { error: 'O produto não tem imagens cadastradas.' },
       { status: 400 }
     )
   }
@@ -57,35 +72,52 @@ export async function POST(
 
   const accessToken = integracao.accessToken
   const igUserId = integracao.accountId
+  const legenda = montarLegenda(
+    conteudo.legendaInstagram,
+    conteudo.hashtags,
+    conteudo.chamadaAcao,
+    conteudo.produto?.linkProduto || LINK_COMPRA
+  )
+  const ehVideo = tipoMidia === 'video'
 
   try {
-    // Reaproveita o container da tentativa anterior (se houver) para não
-    // recomeçar o processamento do zero a cada clique.
+    // Reaproveita o container da tentativa anterior (apenas para vídeo, que
+    // tem processamento lento). Imagens criam container novo a cada chamada.
     let containerId: string
     const vri = conteudo.videoRequestId
-    if (vri && vri.startsWith(PREFIXO_CONTAINER)) {
+    if (ehVideo && vri && vri.startsWith(PREFIXO_CONTAINER)) {
       containerId = vri.slice(PREFIXO_CONTAINER.length)
     } else {
-      containerId = await criarContainerReel({
-        accessToken,
-        igUserId,
-        videoUrl: conteudo.videoUrl,
-        legenda: montarLegenda(
-          conteudo.legendaInstagram,
-          conteudo.hashtags,
-          conteudo.chamadaAcao,
-          conteudo.produto?.linkProduto || LINK_COMPRA
-        ),
-      })
-      await prisma.conteudo.update({
-        where: { id: conteudo.id },
-        data: { videoRequestId: PREFIXO_CONTAINER + containerId },
-      })
+      if (tipoMidia === 'video' && destino === 'feed') {
+        containerId = await criarContainerReel({
+          accessToken, igUserId, videoUrl: conteudo.videoUrl!, legenda,
+        })
+      } else if (tipoMidia === 'video' && destino === 'stories') {
+        containerId = await criarContainerStoryVideo({
+          accessToken, igUserId, videoUrl: conteudo.videoUrl!,
+        })
+      } else if (tipoMidia === 'imagens' && destino === 'feed') {
+        containerId = imagens.length > 1
+          ? await criarContainerCarrossel({ accessToken, igUserId, imageUrls: imagens, legenda })
+          : await criarContainerImagemFeed({ accessToken, igUserId, imageUrl: imagens[0], legenda })
+      } else {
+        // imagens + stories — publica a imagem de capa (primeira)
+        containerId = await criarContainerStoryImagem({
+          accessToken, igUserId, imageUrl: imagens[0],
+        })
+      }
+      if (ehVideo) {
+        await prisma.conteudo.update({
+          where: { id: conteudo.id },
+          data: { videoRequestId: PREFIXO_CONTAINER + containerId },
+        })
+      }
     }
 
-    // Aguarda o Instagram processar o vídeo (~45s, dentro do limite de 60s).
+    // Aguarda o processamento. Vídeo demora; imagem é quase instantânea.
+    const maxPolls = ehVideo ? 9 : 4
     let status = 'IN_PROGRESS'
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < maxPolls; i++) {
       await new Promise((r) => setTimeout(r, 5000))
       status = await statusContainer({ accessToken, containerId })
       if (status === 'FINISHED' || status === 'ERROR' || status === 'EXPIRED') break
@@ -96,20 +128,19 @@ export async function POST(
         where: { id: conteudo.id },
         data: {
           videoRequestId: null,
-          erroPublicacao: `O Instagram não conseguiu processar o vídeo (${status}). Gere o vídeo novamente.`,
+          erroPublicacao: `O Instagram não conseguiu processar a mídia (${status}).`,
         },
       })
       return NextResponse.json(
-        { error: `Instagram falhou ao processar o vídeo (${status})` },
+        { error: `Instagram falhou ao processar a mídia (${status})` },
         { status: 502 }
       )
     }
 
     if (status !== 'FINISHED') {
-      // Ainda processando — mantém o container salvo para reaproveitar no próximo clique.
       const msg =
-        'O vídeo ainda está sendo processado pelo Instagram. Espere ~30s e clique em ' +
-        '"Publicar no Instagram agora" de novo — ele continua de onde parou.'
+        'A mídia ainda está sendo processada pelo Instagram. Espere ~30s e clique em ' +
+        '"Publicar" de novo — continua de onde parou.'
       await prisma.conteudo.update({
         where: { id: conteudo.id },
         data: { erroPublicacao: msg },

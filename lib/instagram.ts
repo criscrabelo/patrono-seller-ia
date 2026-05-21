@@ -138,6 +138,83 @@ export async function publicarContainer(params: {
   return mediaId
 }
 
+/** Helper genérico: cria um container de mídia no Instagram e retorna o ID. */
+async function postarMedia(
+  igUserId: string,
+  accessToken: string,
+  campos: Record<string, unknown>
+): Promise<string> {
+  const data = await fbFetch(`${BASE}/${igUserId}/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...campos, access_token: accessToken }),
+  })
+  const id = data.id as string | undefined
+  if (!id) throw new Error('Instagram não retornou o ID do container de mídia')
+  return id
+}
+
+/** Container de VÍDEO para Stories. */
+export async function criarContainerStoryVideo(params: {
+  accessToken: string
+  igUserId: string
+  videoUrl: string
+}): Promise<string> {
+  return postarMedia(params.igUserId, params.accessToken, {
+    media_type: 'STORIES',
+    video_url: params.videoUrl,
+  })
+}
+
+/** Container de IMAGEM única para o Feed. */
+export async function criarContainerImagemFeed(params: {
+  accessToken: string
+  igUserId: string
+  imageUrl: string
+  legenda: string
+}): Promise<string> {
+  return postarMedia(params.igUserId, params.accessToken, {
+    image_url: params.imageUrl,
+    caption: params.legenda,
+  })
+}
+
+/** Container de IMAGEM para Stories (Stories não têm legenda). */
+export async function criarContainerStoryImagem(params: {
+  accessToken: string
+  igUserId: string
+  imageUrl: string
+}): Promise<string> {
+  return postarMedia(params.igUserId, params.accessToken, {
+    media_type: 'STORIES',
+    image_url: params.imageUrl,
+  })
+}
+
+/** Cria um CARROSSEL no Feed: um container-filho por imagem + o container do carrossel. */
+export async function criarContainerCarrossel(params: {
+  accessToken: string
+  igUserId: string
+  imageUrls: string[]
+  legenda: string
+}): Promise<string> {
+  // Instagram aceita de 2 a 10 itens no carrossel.
+  const urls = params.imageUrls.slice(0, 10)
+  const filhos: string[] = []
+  for (const url of urls) {
+    const filhoId = await postarMedia(params.igUserId, params.accessToken, {
+      image_url: url,
+      is_carousel_item: true,
+    })
+    filhos.push(filhoId)
+  }
+  return postarMedia(params.igUserId, params.accessToken, {
+    media_type: 'CAROUSEL',
+    children: filhos,
+    caption: params.legenda,
+  })
+}
+
 /** Monta a legenda final: texto + chamada para ação + link de compra + hashtags. */
 export function montarLegenda(
   legendaInstagram?: string | null,
