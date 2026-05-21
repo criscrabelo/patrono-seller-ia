@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
 
   const devidos = await prisma.conteudo.findMany({
     where: { status: 'agendado', dataAgendamento: { lte: agora } },
+    include: { produto: { select: { linkProduto: true } } },
   })
 
   let publicadosApp = 0
@@ -99,7 +100,7 @@ export async function GET(req: NextRequest) {
         accessToken: integracao.accessToken,
         igUserId: integracao.accountId,
         videoUrl: c.videoUrl,
-        legenda: montarLegenda(c.legendaInstagram, c.hashtags),
+        legenda: montarLegenda(c.legendaInstagram, c.hashtags, c.chamadaAcao, c.produto?.linkProduto),
       })
       await prisma.conteudo.update({
         where: { id: c.id },

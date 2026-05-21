@@ -3,7 +3,9 @@
 // configurados na página de Integrações.
 
 const API_VERSION = 'v21.0'
-const BASE = `https://graph.facebook.com/${API_VERSION}`
+// Instagram API com Login do Instagram (graph.instagram.com) — usada quando
+// o app é configurado com "API setup with Instagram login".
+const BASE = `https://graph.instagram.com/${API_VERSION}`
 
 export interface PublicarReelParams {
   accessToken: string
@@ -84,9 +86,148 @@ export async function publicarReelInstagram({
   return mediaId
 }
 
-/** Monta a legenda final juntando o texto do Instagram com as hashtags. */
-export function montarLegenda(legendaInstagram?: string | null, hashtags?: string[]): string {
-  return [legendaInstagram?.trim(), (hashtags ?? []).join(' ').trim()]
+/** Cria o container de mídia (REELS) e retorna o containerId. */
+export async function criarContainerReel(params: {
+  accessToken: string
+  igUserId: string
+  videoUrl: string
+  legenda: string
+}): Promise<string> {
+  const criar = await fbFetch(`${BASE}/${params.igUserId}/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      media_type: 'REELS',
+      video_url: params.videoUrl,
+      caption: params.legenda,
+      access_token: params.accessToken,
+    }),
+  })
+  const containerId = criar.id as string | undefined
+  if (!containerId) throw new Error('Instagram não retornou o ID do container de mídia')
+  return containerId
+}
+
+/** Consulta o status de processamento de um container (FINISHED/IN_PROGRESS/ERROR). */
+export async function statusContainer(params: {
+  accessToken: string
+  containerId: string
+}): Promise<string> {
+  const data = await fbFetch(
+    `${BASE}/${params.containerId}?fields=status_code&access_token=${encodeURIComponent(params.accessToken)}`
+  )
+  return (data.status_code as string) || 'IN_PROGRESS'
+}
+
+/** Publica um container já processado (FINISHED). Retorna o ID da mídia. */
+export async function publicarContainer(params: {
+  accessToken: string
+  igUserId: string
+  containerId: string
+}): Promise<string> {
+  const publicar = await fbFetch(`${BASE}/${params.igUserId}/media_publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      creation_id: params.containerId,
+      access_token: params.accessToken,
+    }),
+  })
+  const mediaId = publicar.id as string | undefined
+  if (!mediaId) throw new Error('Instagram não retornou o ID da publicação')
+  return mediaId
+}
+
+/** Helper genérico: cria um container de mídia no Instagram e retorna o ID. */
+async function postarMedia(
+  igUserId: string,
+  accessToken: string,
+  campos: Record<string, unknown>
+): Promise<string> {
+  const data = await fbFetch(`${BASE}/${igUserId}/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...campos, access_token: accessToken }),
+  })
+  const id = data.id as string | undefined
+  if (!id) throw new Error('Instagram não retornou o ID do container de mídia')
+  return id
+}
+
+/** Container de VÍDEO para Stories. */
+export async function criarContainerStoryVideo(params: {
+  accessToken: string
+  igUserId: string
+  videoUrl: string
+}): Promise<string> {
+  return postarMedia(params.igUserId, params.accessToken, {
+    media_type: 'STORIES',
+    video_url: params.videoUrl,
+  })
+}
+
+/** Container de IMAGEM única para o Feed. */
+export async function criarContainerImagemFeed(params: {
+  accessToken: string
+  igUserId: string
+  imageUrl: string
+  legenda: string
+}): Promise<string> {
+  return postarMedia(params.igUserId, params.accessToken, {
+    image_url: params.imageUrl,
+    caption: params.legenda,
+  })
+}
+
+/** Container de IMAGEM para Stories (Stories não têm legenda). */
+export async function criarContainerStoryImagem(params: {
+  accessToken: string
+  igUserId: string
+  imageUrl: string
+}): Promise<string> {
+  return postarMedia(params.igUserId, params.accessToken, {
+    media_type: 'STORIES',
+    image_url: params.imageUrl,
+  })
+}
+
+/** Cria um CARROSSEL no Feed: um container-filho por imagem + o container do carrossel. */
+export async function criarContainerCarrossel(params: {
+  accessToken: string
+  igUserId: string
+  imageUrls: string[]
+  legenda: string
+}): Promise<string> {
+  // Instagram aceita de 2 a 10 itens no carrossel.
+  const urls = params.imageUrls.slice(0, 10)
+  const filhos: string[] = []
+  for (const url of urls) {
+    const filhoId = await postarMedia(params.igUserId, params.accessToken, {
+      image_url: url,
+      is_carousel_item: true,
+    })
+    filhos.push(filhoId)
+  }
+  return postarMedia(params.igUserId, params.accessToken, {
+    media_type: 'CAROUSEL',
+    children: filhos,
+    caption: params.legenda,
+  })
+}
+
+/** Monta a legenda final: texto + chamada para ação + link de compra + hashtags. */
+export function montarLegenda(
+  legendaInstagram?: string | null,
+  hashtags?: string[],
+  chamadaAcao?: string | null,
+  linkCompra?: string | null
+): string {
+  return [
+    legendaInstagram?.trim(),
+    chamadaAcao?.trim(),
+    linkCompra ? `🛒 Compre aqui: ${linkCompra}` : '',
+    (hashtags ?? []).join(' ').trim(),
+  ]
     .filter(Boolean)
     .join('\n\n')
 }
@@ -97,24 +238,24 @@ export function montarLegenda(legendaInstagram?: string | null, hashtags?: strin
  */
 export async function renovarTokenInstagram(params: {
   accessToken: string
-  appId: string
-  appSecret: string
+  appId?: string
+  appSecret?: string
 }): Promise<{ accessToken: string; expiresIn: number }> {
+  // Instagram Login API: renova o token de longa duração via ig_refresh_token.
+  // Não precisa de appId/appSecret — basta o token atual (válido, com +24h de vida).
   const url =
-    `${BASE}/oauth/access_token` +
-    `?grant_type=fb_exchange_token` +
-    `&client_id=${encodeURIComponent(params.appId)}` +
-    `&client_secret=${encodeURIComponent(params.appSecret)}` +
-    `&fb_exchange_token=${encodeURIComponent(params.accessToken)}`
+    `https://graph.instagram.com/refresh_access_token` +
+    `?grant_type=ig_refresh_token` +
+    `&access_token=${encodeURIComponent(params.accessToken)}`
 
   const data = await fbFetch(url)
 
   if (!data.access_token) {
-    throw new Error('Meta não retornou um novo access_token na renovação')
+    throw new Error('Instagram não retornou um novo access_token na renovação')
   }
 
   return {
     accessToken: data.access_token as string,
-    expiresIn: (data.expires_in as number) ?? 5183944,
+    expiresIn: (data.expires_in as number) ?? 5184000,
   }
 }
