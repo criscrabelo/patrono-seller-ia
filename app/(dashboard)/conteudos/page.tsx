@@ -526,69 +526,56 @@ export default function ConteudosPage() {
             </div>
 
             {/* Publicar no Instagram */}
-            {(() => {
-              const erroOAuth = !!(
-                conteudoPublicar.erroPublicacao &&
-                (conteudoPublicar.erroPublicacao.toLowerCase().includes('oauth') ||
-                  conteudoPublicar.erroPublicacao.toLowerCase().includes('access token') ||
-                  conteudoPublicar.erroPublicacao.toLowerCase().includes('invalid token'))
-              )
-              return (
-                <div className="space-y-2 pt-2 border-t border-border">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Publicar no Instagram
-                  </p>
+            <div className="space-y-2 pt-2 border-t border-border">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Publicar no Instagram
+              </p>
 
-                  {(!igConectado || erroOAuth) ? (
-                    <div className="space-y-2">
-                      <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 flex items-start gap-2">
-                        <AlertCircle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
-                        <div className="text-xs text-danger space-y-1">
-                          <p className="font-semibold">Token do Instagram inválido ou expirado</p>
-                          {conteudoPublicar.erroPublicacao && (
-                            <p className="opacity-80">{conteudoPublicar.erroPublicacao}</p>
-                          )}
-                          <p>Reconecte sua conta para voltar a publicar.</p>
-                        </div>
-                      </div>
-                      <Button className="w-full" variant="outline" asChild>
-                        <Link href="/integracoes">
-                          <Instagram className="w-4 h-4" />Reconectar Instagram
-                        </Link>
-                      </Button>
+              {!igConectado ? (
+                <div className="space-y-2">
+                  <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
+                    <div className="text-xs text-danger space-y-1">
+                      <p className="font-semibold">Instagram não conectado</p>
+                      <p>Conecte sua conta em Integrações para publicar.</p>
                     </div>
-                  ) : (
-                    <>
-                      {conteudoPublicar.erroPublicacao && (
-                        <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
-                          <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                          <span>Último erro: {conteudoPublicar.erroPublicacao}</span>
-                        </div>
-                      )}
-                      <Button
-                        className="w-full"
-                        disabled={!conteudoPublicar.videoUrl || publicandoIg || uploadingVideo}
-                        onClick={publicarInstagram}
-                      >
-                        {publicandoIg
-                          ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
-                          : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
-                      </Button>
-                      {!conteudoPublicar.videoUrl && (
-                        <p className="text-[11px] text-muted-foreground">
-                          Envie o vídeo acima para habilitar a publicação.
-                        </p>
-                      )}
-                      {publicandoIg && (
-                        <p className="text-[11px] text-muted-foreground">
-                          O Instagram pode levar até ~1 minuto processando o vídeo. Não feche esta janela.
-                        </p>
-                      )}
-                    </>
-                  )}
+                  </div>
+                  <Button className="w-full" variant="outline" asChild>
+                    <Link href="/integracoes">
+                      <Instagram className="w-4 h-4" />Conectar Instagram
+                    </Link>
+                  </Button>
                 </div>
-              )
-            })()}
+              ) : (
+                <>
+                  {conteudoPublicar.erroPublicacao && (
+                    <div className="rounded-lg border border-warning/30 bg-warning/10 p-2.5 text-xs text-warning flex items-start gap-2">
+                      <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                      <span>Última tentativa falhou: {conteudoPublicar.erroPublicacao} — pode tentar de novo abaixo.</span>
+                    </div>
+                  )}
+                  <Button
+                    className="w-full"
+                    disabled={!conteudoPublicar.videoUrl || publicandoIg || uploadingVideo}
+                    onClick={publicarInstagram}
+                  >
+                    {publicandoIg
+                      ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
+                      : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
+                  </Button>
+                  {!conteudoPublicar.videoUrl && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Envie o vídeo acima para habilitar a publicação.
+                    </p>
+                  )}
+                  {publicandoIg && (
+                    <p className="text-[11px] text-muted-foreground">
+                      O Instagram pode levar até ~1 minuto processando o vídeo. Não feche esta janela.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
