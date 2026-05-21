@@ -3,7 +3,9 @@
 // configurados na página de Integrações.
 
 const API_VERSION = 'v21.0'
-const BASE = `https://graph.facebook.com/${API_VERSION}`
+// Instagram API com Login do Instagram (graph.instagram.com) — usada quando
+// o app é configurado com "API setup with Instagram login".
+const BASE = `https://graph.instagram.com/${API_VERSION}`
 
 export interface PublicarReelParams {
   accessToken: string
@@ -97,24 +99,24 @@ export function montarLegenda(legendaInstagram?: string | null, hashtags?: strin
  */
 export async function renovarTokenInstagram(params: {
   accessToken: string
-  appId: string
-  appSecret: string
+  appId?: string
+  appSecret?: string
 }): Promise<{ accessToken: string; expiresIn: number }> {
+  // Instagram Login API: renova o token de longa duração via ig_refresh_token.
+  // Não precisa de appId/appSecret — basta o token atual (válido, com +24h de vida).
   const url =
-    `${BASE}/oauth/access_token` +
-    `?grant_type=fb_exchange_token` +
-    `&client_id=${encodeURIComponent(params.appId)}` +
-    `&client_secret=${encodeURIComponent(params.appSecret)}` +
-    `&fb_exchange_token=${encodeURIComponent(params.accessToken)}`
+    `https://graph.instagram.com/refresh_access_token` +
+    `?grant_type=ig_refresh_token` +
+    `&access_token=${encodeURIComponent(params.accessToken)}`
 
   const data = await fbFetch(url)
 
   if (!data.access_token) {
-    throw new Error('Meta não retornou um novo access_token na renovação')
+    throw new Error('Instagram não retornou um novo access_token na renovação')
   }
 
   return {
     accessToken: data.access_token as string,
-    expiresIn: (data.expires_in as number) ?? 5183944,
+    expiresIn: (data.expires_in as number) ?? 5184000,
   }
 }
