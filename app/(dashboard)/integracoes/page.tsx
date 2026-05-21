@@ -114,6 +114,22 @@ const PLATAFORMAS: Plataforma[] = [
       { key: 'accountName', label: 'Nome da loja', placeholder: 'Minha Loja Amazon' },
     ],
   },
+  {
+    id: 'whatsapp',
+    nome: 'WhatsApp (Z-API)',
+    logo: '💬',
+    cor: 'from-[#25D366] to-[#128C7E]',
+    descricao: 'Envie conteúdos em massa para sua lista de contatos via Z-API',
+    tipo: 'chaves',
+    urlDocs: 'https://developer.z-api.io',
+    urlDedicada: '/whatsapp',
+    campos: [
+      { key: 'accountId', label: 'Instance ID (Z-API)', placeholder: '3ABC1...', secret: false },
+      { key: 'accessToken', label: 'Token (Z-API)', placeholder: 'F0...', secret: true },
+      { key: 'clientToken', label: 'Client-Token (segurança — opcional)', placeholder: 'F0...', secret: true },
+      { key: 'accountName', label: 'Identificação (ex: WhatsApp da Loja)', placeholder: 'Loja Principal' },
+    ],
+  },
 ]
 
 export default function IntegracoesPage() {
@@ -153,9 +169,12 @@ export default function IntegracoesPage() {
     setSaving(plataforma.id)
 
     // Para o Instagram, guarda appId e appSecret em extraData para renovação automática
+    // Para o WhatsApp, guarda clientToken em extraData
     const extraData =
       plataforma.id === 'instagram' && (data.appId || data.appSecret)
         ? { appId: data.appId?.trim(), appSecret: data.appSecret?.trim() }
+        : plataforma.id === 'whatsapp' && data.clientToken
+        ? { clientToken: data.clientToken.trim() }
         : undefined
 
     const res = await fetch('/api/integracoes', {

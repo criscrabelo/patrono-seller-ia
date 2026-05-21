@@ -23,6 +23,7 @@ import {
   X,
   Facebook,
   Film,
+  MessageCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
@@ -41,6 +42,7 @@ const navItems = [
   { href: '/links', label: 'Links Dinâmicos', icon: Link2 },
   { href: '/monetizacao', label: 'Monetização', icon: DollarSign },
   { href: '/integracoes', label: 'Integrações', icon: Plug },
+  { href: '/whatsapp', label: 'WhatsApp em Massa', icon: MessageCircle },
 ]
 
 export function Sidebar() {
