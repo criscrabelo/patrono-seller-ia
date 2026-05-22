@@ -504,12 +504,20 @@ export default function ConteudosPage() {
 
             {/* Publicar no Instagram */}
             {(() => {
-              const erroOAuth = !!(
-                conteudoPublicar.erroPublicacao &&
-                (conteudoPublicar.erroPublicacao.toLowerCase().includes('oauth') ||
-                  conteudoPublicar.erroPublicacao.toLowerCase().includes('access token') ||
-                  conteudoPublicar.erroPublicacao.toLowerCase().includes('invalid token'))
-              )
+              const erro = conteudoPublicar.erroPublicacao ?? ''
+              const erroLower = erro.toLowerCase()
+              const erroOAuth = !!(erro && (
+                erroLower.includes('oauth') ||
+                erroLower.includes('access token') ||
+                erroLower.includes('invalid token') ||
+                erroLower.includes('token expired')
+              ))
+              const erroPermissao = !!(erro && (
+                erroLower.includes('api access blocked') ||
+                erroLower.includes('access blocked') ||
+                erroLower.includes('(#200)') ||
+                erroLower.includes('instagram_content_publish')
+              ))
               return (
                 <div className="space-y-2 pt-2 border-t border-border">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -522,9 +530,7 @@ export default function ConteudosPage() {
                         <AlertCircle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
                         <div className="text-xs text-danger space-y-1">
                           <p className="font-semibold">Token do Instagram inválido ou expirado</p>
-                          {conteudoPublicar.erroPublicacao && (
-                            <p className="opacity-80">{conteudoPublicar.erroPublicacao}</p>
-                          )}
+                          {erro && <p className="opacity-80">{erro}</p>}
                           <p>Reconecte sua conta para voltar a publicar.</p>
                         </div>
                       </div>
@@ -534,12 +540,35 @@ export default function ConteudosPage() {
                         </Link>
                       </Button>
                     </div>
+                  ) : erroPermissao ? (
+                    <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 space-y-2">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-warning mt-0.5 shrink-0" />
+                        <div className="text-xs text-warning space-y-1">
+                          <p className="font-semibold">Permissão bloqueada no app Meta</p>
+                          <p className="text-warning/80">
+                            O app Meta não tem a permissão <code className="bg-warning/20 px-1 rounded">instagram_content_publish</code> aprovada.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground space-y-1 pl-6">
+                        <p className="font-medium text-white">Como resolver:</p>
+                        <p>1. Sua conta Instagram deve ser <strong className="text-white">Business ou Creator</strong> (não pessoal)</p>
+                        <p>2. No <strong className="text-white">Meta for Developers</strong> → seu app → <em>Permissions</em> → adicione <code className="bg-border px-1 rounded">instagram_content_publish</code></p>
+                        <p>3. Se o app está em modo <strong className="text-white">desenvolvimento</strong>: vá em <em>App Roles → Roles</em> e adicione seu Instagram como Tester</p>
+                      </div>
+                      <Button className="w-full mt-1" size="sm" disabled={publicandoIg} onClick={publicarInstagram}>
+                        {publicandoIg
+                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Tentando...</>
+                          : <><Instagram className="w-3.5 h-3.5" />Tentar de novo</>}
+                      </Button>
+                    </div>
                   ) : (
                     <>
-                      {conteudoPublicar.erroPublicacao && (
+                      {erro && (
                         <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
                           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                          <span>Último erro: {conteudoPublicar.erroPublicacao}</span>
+                          <span>Último erro: {erro}</span>
                         </div>
                       )}
                       <Button

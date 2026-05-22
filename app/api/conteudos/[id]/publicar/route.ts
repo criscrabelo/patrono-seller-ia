@@ -64,13 +64,31 @@ export async function POST(
 
     return NextResponse.json({ ok: true, mediaId })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Falha ao publicar no Instagram'
+    const raw = e instanceof Error ? e.message : 'Falha ao publicar no Instagram'
+    const lower = raw.toLowerCase()
 
     const isOAuthError =
-      msg.toLowerCase().includes('oauth') ||
-      msg.toLowerCase().includes('access token') ||
-      msg.toLowerCase().includes('invalid token') ||
-      msg.toLowerCase().includes('token expired')
+      lower.includes('oauth') ||
+      lower.includes('access token') ||
+      lower.includes('invalid token') ||
+      lower.includes('token expired')
+
+    // "API access blocked" = app Meta sem permissão instagram_content_publish
+    // ou conta não é Business/Creator
+    const isPermissaoError =
+      lower.includes('api access blocked') ||
+      lower.includes('access blocked') ||
+      lower.includes('(#200)') ||
+      lower.includes('permissions error') ||
+      lower.includes("the user hasn") ||
+      lower.includes('application to perform this action')
+
+    const msg = isPermissaoError
+      ? 'API access blocked — seu app Meta não tem a permissão "instagram_content_publish" aprovada. ' +
+        'Verifique: (1) sua conta Instagram é Business ou Creator (não pessoal); ' +
+        '(2) o app no Meta for Developers tem a permissão instagram_content_publish; ' +
+        '(3) se o app está em modo desenvolvimento, adicione seu usuário como Tester em Meta → App Roles → Roles.'
+      : raw
 
     await Promise.all([
       prisma.conteudo.update({
@@ -85,6 +103,6 @@ export async function POST(
         : Promise.resolve(),
     ])
 
-    return NextResponse.json({ error: msg, oauthError: isOAuthError }, { status: 502 })
+    return NextResponse.json({ error: msg, oauthError: isOAuthError, permissaoError: isPermissaoError }, { status: 502 })
   }
 }
