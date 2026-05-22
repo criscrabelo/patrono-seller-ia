@@ -8,6 +8,7 @@ import {
   criarContainerImagemFeed,
   criarContainerStoryImagem,
   criarContainerCarrossel,
+  criarContainerCarrosselMisto,
   statusContainer,
   publicarContainer,
   montarLegenda,
@@ -30,7 +31,9 @@ export async function POST(
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   const body = await req.json().catch(() => ({}))
-  const tipoMidia: 'video' | 'imagens' = body.tipoMidia === 'imagens' ? 'imagens' : 'video'
+  const tipoMidia: 'video' | 'video_imagens' | 'imagens' =
+    body.tipoMidia === 'imagens' ? 'imagens' :
+    body.tipoMidia === 'video_imagens' ? 'video_imagens' : 'video'
   const destino: 'feed' | 'stories' = body.destino === 'stories' ? 'stories' : 'feed'
 
   const conteudo = await prisma.conteudo.findFirst({
@@ -42,13 +45,13 @@ export async function POST(
   }
 
   const imagens = conteudo.produto?.imagens ?? []
-  if (tipoMidia === 'video' && !conteudo.videoUrl) {
+  if ((tipoMidia === 'video' || tipoMidia === 'video_imagens') && !conteudo.videoUrl) {
     return NextResponse.json(
-      { error: 'Este conteúdo não tem vídeo. Gere o vídeo ou escolha publicar as imagens.' },
+      { error: 'Este conteúdo não tem vídeo. Gere o vídeo ou escolha publicar só as imagens.' },
       { status: 400 }
     )
   }
-  if (tipoMidia === 'imagens' && imagens.length === 0) {
+  if ((tipoMidia === 'imagens' || tipoMidia === 'video_imagens') && imagens.length === 0) {
     return NextResponse.json(
       { error: 'O produto não tem imagens cadastradas.' },
       { status: 400 }
@@ -78,7 +81,7 @@ export async function POST(
     conteudo.chamadaAcao,
     conteudo.produto?.linkProduto || LINK_COMPRA
   )
-  const ehVideo = tipoMidia === 'video'
+  const ehVideo = tipoMidia === 'video' || tipoMidia === 'video_imagens'
 
   try {
     // Reaproveita o container da tentativa anterior (apenas para vídeo, que
@@ -93,6 +96,15 @@ export async function POST(
           accessToken, igUserId, videoUrl: conteudo.videoUrl!, legenda,
         })
       } else if (tipoMidia === 'video' && destino === 'stories') {
+        containerId = await criarContainerStoryVideo({
+          accessToken, igUserId, videoUrl: conteudo.videoUrl!,
+        })
+      } else if (tipoMidia === 'video_imagens' && destino === 'feed') {
+        containerId = await criarContainerCarrosselMisto({
+          accessToken, igUserId, videoUrl: conteudo.videoUrl!, imageUrls: imagens, legenda,
+        })
+      } else if (tipoMidia === 'video_imagens' && destino === 'stories') {
+        // Stories não suportam carrossel misto — publica só o vídeo
         containerId = await criarContainerStoryVideo({
           accessToken, igUserId, videoUrl: conteudo.videoUrl!,
         })

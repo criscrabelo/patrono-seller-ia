@@ -215,6 +215,42 @@ export async function criarContainerCarrossel(params: {
   })
 }
 
+/**
+ * Cria um CARROSSEL misto (vídeo + imagens) no Feed.
+ * O vídeo é o primeiro item; as imagens do produto complementam.
+ */
+export async function criarContainerCarrosselMisto(params: {
+  accessToken: string
+  igUserId: string
+  videoUrl: string
+  imageUrls: string[]
+  legenda: string
+}): Promise<string> {
+  // Cria item de vídeo como filho do carrossel
+  const videoFilhoId = await postarMedia(params.igUserId, params.accessToken, {
+    media_type: 'VIDEO',
+    video_url: params.videoUrl,
+    is_carousel_item: true,
+  })
+
+  // Itens de imagem: máximo 9 para manter total ≤ 10
+  const urls = params.imageUrls.slice(0, 9)
+  const imagemFilhos: string[] = []
+  for (const url of urls) {
+    const filhoId = await postarMedia(params.igUserId, params.accessToken, {
+      image_url: url,
+      is_carousel_item: true,
+    })
+    imagemFilhos.push(filhoId)
+  }
+
+  return postarMedia(params.igUserId, params.accessToken, {
+    media_type: 'CAROUSEL',
+    children: [videoFilhoId, ...imagemFilhos],
+    caption: params.legenda,
+  })
+}
+
 /** Monta a legenda final: texto + chamada para ação + link de compra + hashtags. */
 export function montarLegenda(
   legendaInstagram?: string | null,

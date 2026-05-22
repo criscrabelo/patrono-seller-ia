@@ -48,6 +48,7 @@ export default function ConteudosPage() {
   const [uploadingVideo, setUploadingVideo] = useState(false)
   const [publicandoIg, setPublicandoIg] = useState(false)
   const [gerandoVideoIA, setGerandoVideoIA] = useState(false)
+  const [modoPublicacao, setModoPublicacao] = useState<'video' | 'video_imagens' | 'imagens'>('video')
 
   async function fetchConteudos() {
     setLoading(true)
@@ -226,7 +227,11 @@ export default function ConteudosPage() {
   async function publicarInstagram() {
     if (!publicarId) return
     setPublicandoIg(true)
-    const res = await fetch(`/api/conteudos/${publicarId}/publicar`, { method: 'POST' })
+    const res = await fetch(`/api/conteudos/${publicarId}/publicar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tipoMidia: modoPublicacao }),
+    })
     const data = await res.json().catch(() => ({}))
     setPublicandoIg(false)
     if (!res.ok) {
@@ -619,29 +624,57 @@ export default function ConteudosPage() {
                     </div>
                   ) : (
                     <>
+                      {/* Seletor: O que publicar */}
+                      <div className="space-y-1.5">
+                        <p className="text-[11px] text-muted-foreground">O que publicar</p>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {([
+                            { value: 'video', label: 'Só vídeo' },
+                            { value: 'video_imagens', label: 'Vídeo + fotos' },
+                            { value: 'imagens', label: 'Só fotos' },
+                          ] as const).map(({ value, label }) => (
+                            <button
+                              key={value}
+                              onClick={() => setModoPublicacao(value)}
+                              className={`rounded-lg border px-2 py-2 text-[11px] text-center transition-colors leading-tight ${
+                                modoPublicacao === value
+                                  ? 'border-accent bg-accent/20 text-accent font-semibold'
+                                  : 'border-border bg-background text-muted-foreground hover:bg-secondary'
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
                       {erro && (
                         <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
                           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                          <span>Último erro: {erro}</span>
+                          <span>Última tentativa: {erro}</span>
                         </div>
                       )}
                       <Button
                         className="w-full"
-                        disabled={!conteudoPublicar.videoUrl || publicandoIg || uploadingVideo}
+                        disabled={
+                          (modoPublicacao !== 'imagens' && !conteudoPublicar.videoUrl) ||
+                          publicandoIg ||
+                          uploadingVideo
+                        }
                         onClick={publicarInstagram}
                       >
                         {publicandoIg
                           ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
                           : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
                       </Button>
-                      {!conteudoPublicar.videoUrl && (
+                      {modoPublicacao !== 'imagens' && !conteudoPublicar.videoUrl && (
                         <p className="text-[11px] text-muted-foreground">
-                          Envie o vídeo acima para habilitar a publicação.
+                          Gere ou envie o vídeo acima para habilitar a publicação.
                         </p>
                       )}
                       {publicandoIg && (
                         <p className="text-[11px] text-muted-foreground">
-                          O Instagram pode levar até ~1 minuto processando o vídeo. Não feche esta janela.
+                          O Instagram pode levar até ~1 minuto processando. Não feche esta janela.
                         </p>
                       )}
                     </>
