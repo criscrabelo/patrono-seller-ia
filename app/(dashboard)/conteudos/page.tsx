@@ -541,27 +541,81 @@ export default function ConteudosPage() {
                       </Button>
                     </div>
                   ) : erroPermissao ? (
-                    <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 space-y-2">
+                    <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 space-y-3">
+                      {/* Cabeçalho */}
                       <div className="flex items-start gap-2">
                         <AlertCircle className="w-4 h-4 text-warning mt-0.5 shrink-0" />
-                        <div className="text-xs text-warning space-y-1">
-                          <p className="font-semibold">Permissão bloqueada no app Meta</p>
-                          <p className="text-warning/80">
-                            O app Meta não tem a permissão <code className="bg-warning/20 px-1 rounded">instagram_content_publish</code> aprovada.
+                        <div>
+                          <p className="text-xs font-bold text-warning">Permissão bloqueada — API access blocked</p>
+                          <p className="text-[11px] text-warning/70 mt-0.5">
+                            O app Meta não possui <code className="bg-warning/20 px-1 rounded">instagram_content_publish</code>. Siga os 4 passos abaixo.
                           </p>
                         </div>
                       </div>
-                      <div className="text-xs text-muted-foreground space-y-1 pl-6">
-                        <p className="font-medium text-white">Como resolver:</p>
-                        <p>1. Sua conta Instagram deve ser <strong className="text-white">Business ou Creator</strong> (não pessoal)</p>
-                        <p>2. No <strong className="text-white">Meta for Developers</strong> → seu app → <em>Permissions</em> → adicione <code className="bg-border px-1 rounded">instagram_content_publish</code></p>
-                        <p>3. Se o app está em modo <strong className="text-white">desenvolvimento</strong>: vá em <em>App Roles → Roles</em> e adicione seu Instagram como Tester</p>
+
+                      {/* Passo a passo */}
+                      <div className="space-y-2">
+                        <div className="rounded-lg border border-border bg-card p-2.5 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-accent text-primary text-[10px] font-bold flex items-center justify-center shrink-0">1</span>
+                            <p className="text-xs font-semibold text-white">Converter conta para Business ou Creator</p>
+                          </div>
+                          <div className="pl-7 text-[11px] text-muted-foreground space-y-0.5">
+                            <p>• No Instagram (celular): <strong className="text-white">Configurações → Conta → Mudar tipo de conta</strong></p>
+                            <p>• Escolha <strong className="text-white">Conta Profissional → Creator</strong> ou <strong className="text-white">Empresa</strong></p>
+                            <p className="text-warning/80">⚠ Contas pessoais não podem usar a API de publicação</p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border bg-card p-2.5 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-accent text-primary text-[10px] font-bold flex items-center justify-center shrink-0">2</span>
+                            <p className="text-xs font-semibold text-white">Adicionar permissão no Meta for Developers</p>
+                          </div>
+                          <div className="pl-7 text-[11px] text-muted-foreground space-y-0.5">
+                            <p>• Acesse <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="text-accent underline">developers.facebook.com/apps</a> → seu app</p>
+                            <p>• Vá em <strong className="text-white">Casos de uso do app → Gerenciar</strong></p>
+                            <p>• Adicione a permissão <code className="bg-border px-1 rounded text-accent">instagram_content_publish</code> e salve</p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border bg-card p-2.5 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-accent text-primary text-[10px] font-bold flex items-center justify-center shrink-0">3</span>
+                            <p className="text-xs font-semibold text-white">Adicionar sua conta como Tester (modo dev)</p>
+                          </div>
+                          <div className="pl-7 text-[11px] text-muted-foreground space-y-0.5">
+                            <p>• No app: <strong className="text-white">Funções → Roles → Testers → Adicionar Testers</strong></p>
+                            <p>• Insira seu <strong className="text-white">@ do Instagram</strong> e envie o convite</p>
+                            <p>• No Instagram: <strong className="text-white">Config. → Negócios → Solicitações → Aceitar</strong></p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border bg-card p-2.5 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-accent text-primary text-[10px] font-bold flex items-center justify-center shrink-0">4</span>
+                            <p className="text-xs font-semibold text-white">Gerar novo token com as permissões corretas</p>
+                          </div>
+                          <div className="pl-7 text-[11px] text-muted-foreground space-y-0.5">
+                            <p>• Acesse <a href="https://developers.facebook.com/tools/explorer" target="_blank" rel="noopener noreferrer" className="text-accent underline">Graph API Explorer</a> → selecione seu app</p>
+                            <p>• Marque: <code className="bg-border px-1 rounded">instagram_basic</code> + <code className="bg-border px-1 rounded text-accent">instagram_content_publish</code></p>
+                            <p>• Clique em <strong className="text-white">Gerar Token</strong>, copie e reconfigure em <a href="/integracoes" className="text-accent underline">Integrações</a></p>
+                          </div>
+                        </div>
                       </div>
-                      <Button className="w-full mt-1" size="sm" disabled={publicandoIg} onClick={publicarInstagram}>
-                        {publicandoIg
-                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Tentando...</>
-                          : <><Instagram className="w-3.5 h-3.5" />Tentar de novo</>}
-                      </Button>
+
+                      <div className="flex flex-col gap-2 pt-1">
+                        <Button size="sm" variant="outline" className="w-full" asChild>
+                          <a href="/integracoes">
+                            <Instagram className="w-3.5 h-3.5" /> Ir para Integrações e reconectar
+                          </a>
+                        </Button>
+                        <Button size="sm" className="w-full" disabled={publicandoIg} onClick={publicarInstagram}>
+                          {publicandoIg
+                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Tentando...</>
+                            : <><Instagram className="w-3.5 h-3.5" />Já corrigi — Tentar de novo</>}
+                        </Button>
+                      </div>
                     </div>
                   ) : (
                     <>
