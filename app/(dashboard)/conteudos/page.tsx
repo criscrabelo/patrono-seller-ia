@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/shared/StatusBadge'
-import { formatDateShort, copyToClipboard, cn } from '@/lib/utils'
+import { formatDateShort, copyToClipboard } from '@/lib/utils'
 import { LINK_COMPRA } from '@/lib/config'
 import { STATUS_LABELS, type StatusConteudo } from '@/types'
 import { toast } from '@/hooks/use-toast'
@@ -48,9 +48,6 @@ export default function ConteudosPage() {
   const [uploadingVideo, setUploadingVideo] = useState(false)
   const [publicandoIg, setPublicandoIg] = useState(false)
   const [gerandoVideoIA, setGerandoVideoIA] = useState(false)
-  const [duracaoVideoIA, setDuracaoVideoIA] = useState<number>(5)
-  const [tipoMidiaIg, setTipoMidiaIg] = useState<'video' | 'imagens'>('video')
-  const [destinoIg, setDestinoIg] = useState<'feed' | 'stories'>('feed')
 
   async function fetchConteudos() {
     setLoading(true)
@@ -215,44 +212,24 @@ export default function ConteudosPage() {
   async function gerarVideoIA() {
     if (!publicarId) return
     setGerandoVideoIA(true)
-    const res = await fetch(`/api/conteudos/${publicarId}/gerar-video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ duracao: duracaoVideoIA }),
-    })
+    const res = await fetch(`/api/conteudos/${publicarId}/gerar-video`, { method: 'POST' })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       setGerandoVideoIA(false)
       toast({ title: 'Erro ao iniciar geração', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
       return
     }
-    const descricao = duracaoVideoIA === 30
-      ? 'Vídeo de 30s = 2 clipes + composição (~5-8 min). Pode deixar a janela aberta.'
-      : 'O vídeo deve ficar pronto em 1-3 minutos. Aguarde nesta tela.'
-    toast({ title: 'Geração iniciada!', description: descricao, variant: 'success' })
+    toast({ title: 'Geração iniciada!', description: 'O vídeo deve ficar pronto em 1-3 minutos. Aguarde nesta tela.', variant: 'success' })
     fetchConteudos()
   }
 
   async function publicarInstagram() {
     if (!publicarId) return
     setPublicandoIg(true)
-    const res = await fetch(`/api/conteudos/${publicarId}/publicar`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tipoMidia: tipoMidiaIg, destino: destinoIg }),
-    })
+    const res = await fetch(`/api/conteudos/${publicarId}/publicar`, { method: 'POST' })
     const data = await res.json().catch(() => ({}))
     setPublicandoIg(false)
-    // Vídeo ainda em processamento no Instagram — não é erro, é só esperar.
-    if (data.processando) {
-      toast({
-        title: 'Vídeo quase pronto',
-        description: data.mensagem ?? 'O Instagram ainda está processando. Clique em publicar de novo em ~30s.',
-      })
-      fetchConteudos()
-      return
-    }
-    if (!res.ok || !data.ok) {
+    if (!res.ok) {
       toast({ title: 'Falha ao publicar', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
       if (data.oauthError) setIgConectado(false)
       fetchConteudos()
@@ -472,23 +449,8 @@ export default function ConteudosPage() {
               ) : (
                 <>
                   <p className="text-[11px] text-muted-foreground">
-                    Use a IA (Kling v3) gerando a partir das imagens do produto, ou envie um vídeo pronto.
+                    Use a IA (Kling v3) gerando a partir da imagem do produto, ou envie um vídeo pronto.
                   </p>
-                  <div className="flex gap-2 items-center">
-                    <label className="text-xs text-muted-foreground shrink-0">Duração:</label>
-                    <select
-                      value={duracaoVideoIA}
-                      onChange={(e) => setDuracaoVideoIA(Number(e.target.value))}
-                      disabled={uploadingVideo}
-                      className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-white
-                        focus:outline-none focus:ring-1 focus:ring-accent"
-                    >
-                      <option value={5}>5 segundos</option>
-                      <option value={10}>10 segundos</option>
-                      <option value={15}>15 segundos</option>
-                      <option value={30}>30 segundos (multi-clipe, ~5-8 min)</option>
-                    </select>
-                  </div>
                   <Button
                     variant="outline"
                     className="w-full"
@@ -541,127 +503,98 @@ export default function ConteudosPage() {
             </div>
 
             {/* Publicar no Instagram */}
-            <div className="space-y-2 pt-2 border-t border-border">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Publicar no Instagram
-              </p>
+            {(() => {
+              const erro = conteudoPublicar.erroPublicacao ?? ''
+              const erroLower = erro.toLowerCase()
+              const erroOAuth = !!(erro && (
+                erroLower.includes('oauth') ||
+                erroLower.includes('access token') ||
+                erroLower.includes('invalid token') ||
+                erroLower.includes('token expired')
+              ))
+              const erroPermissao = !!(erro && (
+                erroLower.includes('api access blocked') ||
+                erroLower.includes('access blocked') ||
+                erroLower.includes('(#200)') ||
+                erroLower.includes('instagram_content_publish')
+              ))
+              return (
+                <div className="space-y-2 pt-2 border-t border-border">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    Publicar no Instagram
+                  </p>
 
-              {!igConectado ? (
-                <div className="space-y-2">
-                  <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
-                    <div className="text-xs text-danger space-y-1">
-                      <p className="font-semibold">Instagram não conectado</p>
-                      <p>Conecte sua conta em Integrações para publicar.</p>
+                  {(!igConectado || erroOAuth) ? (
+                    <div className="space-y-2">
+                      <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
+                        <div className="text-xs text-danger space-y-1">
+                          <p className="font-semibold">Token do Instagram inválido ou expirado</p>
+                          {erro && <p className="opacity-80">{erro}</p>}
+                          <p>Reconecte sua conta para voltar a publicar.</p>
+                        </div>
+                      </div>
+                      <Button className="w-full" variant="outline" asChild>
+                        <Link href="/integracoes">
+                          <Instagram className="w-4 h-4" />Reconectar Instagram
+                        </Link>
+                      </Button>
                     </div>
-                  </div>
-                  <Button className="w-full" variant="outline" asChild>
-                    <Link href="/integracoes">
-                      <Instagram className="w-4 h-4" />Conectar Instagram
-                    </Link>
-                  </Button>
+                  ) : erroPermissao ? (
+                    <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 space-y-2">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-warning mt-0.5 shrink-0" />
+                        <div className="text-xs text-warning space-y-1">
+                          <p className="font-semibold">Permissão bloqueada no app Meta</p>
+                          <p className="text-warning/80">
+                            O app Meta não tem a permissão <code className="bg-warning/20 px-1 rounded">instagram_content_publish</code> aprovada.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground space-y-1 pl-6">
+                        <p className="font-medium text-white">Como resolver:</p>
+                        <p>1. Sua conta Instagram deve ser <strong className="text-white">Business ou Creator</strong> (não pessoal)</p>
+                        <p>2. No <strong className="text-white">Meta for Developers</strong> → seu app → <em>Permissions</em> → adicione <code className="bg-border px-1 rounded">instagram_content_publish</code></p>
+                        <p>3. Se o app está em modo <strong className="text-white">desenvolvimento</strong>: vá em <em>App Roles → Roles</em> e adicione seu Instagram como Tester</p>
+                      </div>
+                      <Button className="w-full mt-1" size="sm" disabled={publicandoIg} onClick={publicarInstagram}>
+                        {publicandoIg
+                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Tentando...</>
+                          : <><Instagram className="w-3.5 h-3.5" />Tentar de novo</>}
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {erro && (
+                        <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
+                          <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                          <span>Último erro: {erro}</span>
+                        </div>
+                      )}
+                      <Button
+                        className="w-full"
+                        disabled={!conteudoPublicar.videoUrl || publicandoIg || uploadingVideo}
+                        onClick={publicarInstagram}
+                      >
+                        {publicandoIg
+                          ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
+                          : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
+                      </Button>
+                      {!conteudoPublicar.videoUrl && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Envie o vídeo acima para habilitar a publicação.
+                        </p>
+                      )}
+                      {publicandoIg && (
+                        <p className="text-[11px] text-muted-foreground">
+                          O Instagram pode levar até ~1 minuto processando o vídeo. Não feche esta janela.
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
-              ) : (
-                <>
-                  {conteudoPublicar.erroPublicacao && (
-                    <div className="rounded-lg border border-warning/30 bg-warning/10 p-2.5 text-xs text-warning flex items-start gap-2">
-                      <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                      <span>Última tentativa: {conteudoPublicar.erroPublicacao} — pode tentar de novo abaixo.</span>
-                    </div>
-                  )}
-
-                  {/* O que publicar */}
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] text-muted-foreground">O que publicar</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => setTipoMidiaIg('video')}
-                        className={cn('rounded-lg border px-2 py-2 text-xs font-medium transition-colors',
-                          tipoMidiaIg === 'video'
-                            ? 'border-accent bg-accent/10 text-accent'
-                            : 'border-border text-muted-foreground hover:text-foreground')}
-                      >
-                        🎬 Vídeo gerado
-                      </button>
-                      <button
-                        onClick={() => setTipoMidiaIg('imagens')}
-                        className={cn('rounded-lg border px-2 py-2 text-xs font-medium transition-colors',
-                          tipoMidiaIg === 'imagens'
-                            ? 'border-accent bg-accent/10 text-accent'
-                            : 'border-border text-muted-foreground hover:text-foreground')}
-                      >
-                        🖼 Imagens do produto
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Onde publicar */}
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] text-muted-foreground">Onde publicar</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => setDestinoIg('feed')}
-                        className={cn('rounded-lg border px-2 py-2 text-xs font-medium transition-colors',
-                          destinoIg === 'feed'
-                            ? 'border-accent bg-accent/10 text-accent'
-                            : 'border-border text-muted-foreground hover:text-foreground')}
-                      >
-                        Feed
-                      </button>
-                      <button
-                        onClick={() => setDestinoIg('stories')}
-                        className={cn('rounded-lg border px-2 py-2 text-xs font-medium transition-colors',
-                          destinoIg === 'stories'
-                            ? 'border-accent bg-accent/10 text-accent'
-                            : 'border-border text-muted-foreground hover:text-foreground')}
-                      >
-                        Stories
-                      </button>
-                    </div>
-                  </div>
-
-                  <Button
-                    className="w-full"
-                    disabled={
-                      publicandoIg || uploadingVideo ||
-                      (tipoMidiaIg === 'video' && !conteudoPublicar.videoUrl) ||
-                      (tipoMidiaIg === 'imagens' && (conteudoPublicar.produto.imagens?.length ?? 0) === 0)
-                    }
-                    onClick={publicarInstagram}
-                  >
-                    {publicandoIg
-                      ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
-                      : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
-                  </Button>
-
-                  {tipoMidiaIg === 'video' && !conteudoPublicar.videoUrl && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Gere ou envie o vídeo acima para publicar como vídeo.
-                    </p>
-                  )}
-                  {tipoMidiaIg === 'imagens' && (conteudoPublicar.produto.imagens?.length ?? 0) === 0 && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Este produto não tem imagens cadastradas.
-                    </p>
-                  )}
-                  {tipoMidiaIg === 'imagens' && destinoIg === 'feed' && (conteudoPublicar.produto.imagens?.length ?? 0) > 1 && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Vai publicar um carrossel com {conteudoPublicar.produto.imagens.length} imagens.
-                    </p>
-                  )}
-                  {destinoIg === 'stories' && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Stories não exibem legenda — o link de compra não aparece. (Imagens nos Stories: publica a capa.)
-                    </p>
-                  )}
-                  {publicandoIg && (
-                    <p className="text-[11px] text-muted-foreground">
-                      O Instagram pode levar até ~1 minuto processando. Não feche esta janela.
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
+              )
+            })()}
           </div>
         </div>
       )}
