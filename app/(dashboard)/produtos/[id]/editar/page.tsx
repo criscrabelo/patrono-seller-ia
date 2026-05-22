@@ -45,12 +45,23 @@ export default function EditarImagensPage() {
     setUploading(true)
     const urls: string[] = []
     for (const file of files.slice(0, 10 - imagens.length)) {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch('/api/upload', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (data.url) urls.push(data.url)
-      else toast({ title: `Erro: ${data.error}`, variant: 'destructive' })
+      const presign = await fetch('/api/upload/presign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
+      })
+      if (!presign.ok) {
+        const err = await presign.json().catch(() => ({}))
+        toast({ title: `Erro: ${err.error ?? 'Upload falhou'}`, variant: 'destructive' })
+        continue
+      }
+      const { uploadUrl, publicUrl } = await presign.json()
+      const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file })
+      if (!put.ok) {
+        toast({ title: `Erro no upload: HTTP ${put.status}`, variant: 'destructive' })
+        continue
+      }
+      urls.push(publicUrl)
     }
     setImagens((prev) => [...prev, ...urls])
     setUploading(false)

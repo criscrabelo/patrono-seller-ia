@@ -45,15 +45,32 @@ export default function NovoProdutoPage() {
     }))
   }
 
+  async function uploadViaPresign(file: File): Promise<string | null> {
+    const presign = await fetch('/api/upload/presign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
+    })
+    if (!presign.ok) {
+      const err = await presign.json().catch(() => ({}))
+      toast({ title: 'Erro no upload', description: err.error ?? 'Tente novamente.', variant: 'destructive' })
+      return null
+    }
+    const { uploadUrl, publicUrl } = await presign.json()
+    const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file })
+    if (!put.ok) {
+      toast({ title: 'Erro no upload', description: `HTTP ${put.status}`, variant: 'destructive' })
+      return null
+    }
+    return publicUrl
+  }
+
   const onDropImages = useCallback(async (files: File[]) => {
     setUploading(true)
     const urls: string[] = []
     for (const file of files.slice(0, 10 - form.imagens.length)) {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch('/api/upload', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (data.url) urls.push(data.url)
+      const url = await uploadViaPresign(file)
+      if (url) urls.push(url)
     }
     setForm((f) => ({ ...f, imagens: [...f.imagens, ...urls] }))
     setUploading(false)
@@ -63,11 +80,8 @@ export default function NovoProdutoPage() {
     setUploading(true)
     const urls: string[] = []
     for (const file of files.slice(0, 5 - form.videos.length)) {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch('/api/upload', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (data.url) urls.push(data.url)
+      const url = await uploadViaPresign(file)
+      if (url) urls.push(url)
     }
     setForm((f) => ({ ...f, videos: [...f.videos, ...urls] }))
     setUploading(false)
