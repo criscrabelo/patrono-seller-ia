@@ -434,7 +434,34 @@ export default function ConteudosPage() {
               </button>
             </div>
 
-            {/* Vídeo */}
+            {/* Seletor de tipo de publicação — sempre visível */}
+            <div className="space-y-2 pb-1 border-b border-border">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                O que publicar
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {([
+                  { value: 'video', label: 'Só vídeo' },
+                  { value: 'video_imagens', label: 'Vídeo + fotos' },
+                  { value: 'imagens', label: 'Só imagens' },
+                ] as const).map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => setModoPublicacao(value)}
+                    className={`rounded-lg border px-2 py-2 text-[11px] text-center transition-colors leading-tight ${
+                      modoPublicacao === value
+                        ? 'border-accent bg-accent/20 text-accent font-semibold'
+                        : 'border-border bg-background text-muted-foreground hover:bg-secondary'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Vídeo — oculto quando modo for "Só imagens" */}
+            {modoPublicacao !== 'imagens' && (
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Vídeo do Reels
@@ -503,6 +530,7 @@ export default function ConteudosPage() {
                 </span>
               </label>
             </div>
+            )}
 
             {/* Legenda */}
             <div className="space-y-2">
@@ -634,40 +662,22 @@ export default function ConteudosPage() {
                     </div>
                   ) : (
                     <>
-                      {/* Seletor: O que publicar */}
-                      <div className="space-y-1.5">
-                        <p className="text-[11px] text-muted-foreground">O que publicar</p>
-                        <div className="grid grid-cols-3 gap-1.5">
-                          {([
-                            { value: 'video', label: 'Só vídeo' },
-                            { value: 'video_imagens', label: 'Vídeo + fotos' },
-                            { value: 'imagens', label: 'Só fotos' },
-                          ] as const).map(({ value, label }) => (
-                            <button
-                              key={value}
-                              onClick={() => setModoPublicacao(value)}
-                              className={`rounded-lg border px-2 py-2 text-[11px] text-center transition-colors leading-tight ${
-                                modoPublicacao === value
-                                  ? 'border-accent bg-accent/20 text-accent font-semibold'
-                                  : 'border-border bg-background text-muted-foreground hover:bg-secondary'
-                              }`}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
                       {erro && (
                         <div className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger flex items-start gap-2">
                           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                           <span>Última tentativa: {erro}</span>
                         </div>
                       )}
+                      {modoPublicacao === 'imagens' && conteudoPublicar.produto.imagens.length === 0 && (
+                        <p className="text-[11px] text-warning">
+                          O produto não tem imagens cadastradas. Adicione imagens ao produto para publicar.
+                        </p>
+                      )}
                       <Button
                         className="w-full"
                         disabled={
                           (modoPublicacao !== 'imagens' && !conteudoPublicar.videoUrl) ||
+                          (modoPublicacao === 'imagens' && conteudoPublicar.produto.imagens.length === 0) ||
                           publicandoIg ||
                           uploadingVideo
                         }
@@ -679,7 +689,7 @@ export default function ConteudosPage() {
                       </Button>
                       {modoPublicacao !== 'imagens' && !conteudoPublicar.videoUrl && (
                         <p className="text-[11px] text-muted-foreground">
-                          Gere ou envie o vídeo acima para habilitar a publicação.
+                          Selecione "Só imagens" ou gere/envie o vídeo acima para publicar.
                         </p>
                       )}
                       {publicandoIg && (
