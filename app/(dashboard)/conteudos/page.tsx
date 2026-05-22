@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/shared/StatusBadge'
-import { formatDateShort, copyToClipboard } from '@/lib/utils'
+import { formatDateShort, formatDatetime, copyToClipboard } from '@/lib/utils'
 import { LINK_COMPRA } from '@/lib/config'
 import { STATUS_LABELS, type StatusConteudo } from '@/types'
 import { toast } from '@/hooks/use-toast'
@@ -21,6 +21,7 @@ interface Conteudo {
   estilo: string
   visualizacoes: number
   createdAt: string
+  updatedAt: string
   dataAgendamento: string | null
   videoUrl: string | null
   videoRequestId: string | null
@@ -302,7 +303,7 @@ export default function ConteudosPage() {
                   <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Estilo</th>
                   <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Status</th>
                   <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Views</th>
-                  <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Data</th>
+                  <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Data / Aprovação</th>
                   <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Ações</th>
                 </tr>
               </thead>
@@ -325,7 +326,16 @@ export default function ConteudosPage() {
                       <StatusBadge status={c.status as StatusConteudo} />
                     </td>
                     <td className="px-4 py-3 text-right text-muted-foreground">{c.visualizacoes.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right text-muted-foreground">{formatDateShort(c.createdAt)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="text-muted-foreground text-xs">{formatDateShort(c.createdAt)}</span>
+                        {(c.status === 'aprovado' || c.status === 'agendado' || c.status === 'publicado') && (
+                          <span className="text-[10px] text-accent/80">
+                            ✓ {formatDatetime(c.updatedAt)}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         {(c.status === 'aprovado' || c.status === 'agendado') && (
