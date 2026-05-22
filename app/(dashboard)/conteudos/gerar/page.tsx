@@ -216,8 +216,8 @@ function GerarConteudoInner() {
             <div className="grid grid-cols-3 gap-2">
               {([
                 { value: 'video', label: 'Vídeos', desc: 'Reels, Shorts, TikTok', Icon: Film },
-                { value: 'video_imagens', label: 'Vídeo + Fotos', desc: 'Carrossel com vídeo', Icon: LayoutGrid },
                 { value: 'imagens', label: 'Imagens', desc: 'Carrossel ou foto', Icon: Images },
+                { value: 'video_imagens', label: 'Vídeos/Imagens', desc: 'Carrossel com vídeo', Icon: LayoutGrid },
               ] as const).map(({ value, label, desc, Icon }) => {
                 const ativo = config.tipoConteudo === value
                 return (

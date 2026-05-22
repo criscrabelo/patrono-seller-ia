@@ -467,9 +467,9 @@ export default function ConteudosPage() {
               </p>
               <div className="grid grid-cols-3 gap-1.5">
                 {([
-                  { value: 'video', label: 'Só vídeo' },
-                  { value: 'video_imagens', label: 'Vídeo + fotos' },
-                  { value: 'imagens', label: 'Só imagens' },
+                  { value: 'video', label: 'Vídeos' },
+                  { value: 'imagens', label: 'Imagens' },
+                  { value: 'video_imagens', label: 'Vídeos/Imagens' },
                 ] as const).map(({ value, label }) => (
                   <button
                     key={value}
