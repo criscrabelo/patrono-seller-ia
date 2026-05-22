@@ -61,7 +61,7 @@ Retorne APENAS este JSON (valores curtos e diretos):
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 900,
+    max_tokens: 1500,
     system: 'Especialista em conteúdo comercial brasileiro. Retorne APENAS JSON válido, sem markdown.',
     messages: [{ role: 'user', content: userPrompt }],
   })

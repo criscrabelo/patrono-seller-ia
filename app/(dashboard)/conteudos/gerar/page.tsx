@@ -98,9 +98,9 @@ function GerarConteudoInner() {
             let descricao = `${redeSocial}: falha ao gerar`
             try {
               const err = await res.json()
-              if (err?.error) descricao = `${redeSocial}: ${err.error}`
+              if (err?.error) descricao = err.error
             } catch { /* ignora */ }
-            toast({ title: 'Erro parcial', description: descricao, variant: 'destructive' })
+            toast({ title: `Erro — ${redeSocial}`, description: descricao, variant: 'destructive' })
             erros++
           } else {
             const data = await res.json()
