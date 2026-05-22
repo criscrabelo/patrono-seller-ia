@@ -27,6 +27,7 @@ export interface ConfiguracaoGeracao {
   duracao: number
   estilo: string
   objetivo: string
+  tipoConteudo?: 'video' | 'video_imagens' | 'imagens'
 }
 
 export async function gerarConteudo(
@@ -35,25 +36,36 @@ export async function gerarConteudo(
 ): Promise<ConteudoGerado> {
   const afiliado = produto.tipoVenda === 'Afiliado'
   const beneficios = produto.beneficios.filter(Boolean).slice(0, 3).join(' | ') || 'não informado'
+  const tipo = config.tipoConteudo ?? 'video'
+
+  const tipoLabel =
+    tipo === 'imagens' ? 'carrossel/post de IMAGENS (sem vídeo)' :
+    tipo === 'video_imagens' ? 'vídeo + imagens (carrossel misto)' :
+    'vídeo (Reels/Shorts)'
+
+  const promptVideoBlock =
+    tipo === 'imagens'
+      ? `  "promptVideoIA": "",\n  "promptCurto": "",`
+      : `  "promptVideoIA": "video prompt em INGLÊS detalhado para Kling/Runway, descrevendo cena, movimento e estilo, máx 250 chars",\n  "promptCurto": "video prompt em INGLÊS compacto, máx 80 chars",`
 
   const userPrompt = `Crie conteúdo comercial para ${config.redeSocial}.
 
 PRODUTO: ${produto.nome}
 CATEGORIA: ${produto.categoria}
 BENEFÍCIOS: ${beneficios}
+TIPO DE MÍDIA: ${tipoLabel}
 ESTILO: ${config.estilo} | DURAÇÃO: ${config.duracao}s | OBJETIVO: ${config.objetivo}
 ${afiliado ? 'AFILIADO: sim — inclua #publi e mencione "link na bio"' : ''}
 
 Retorne APENAS este JSON (valores curtos e diretos):
 {
-  "roteiro": "roteiro cena a cena, máx 250 chars",
+  "roteiro": "roteiro cena a cena adaptado ao tipo de mídia, máx 250 chars",
   "legenda": "legenda para ${config.redeSocial}, máx 200 chars${afiliado ? ', com #publi' : ''}",
   "hashtags": ["5 a 8 hashtags sem #"],
-  "textoTela": "texto para aparecer na tela, máx 60 chars",
+  "textoTela": "texto para aparecer na tela/imagem, máx 60 chars",
   "narracao": "narração em voz off, máx 150 chars",
   "chamadaAcao": "CTA direto, máx 60 chars",
-  "promptVideoIA": "video prompt em INGLÊS detalhado para Kling/Runway, descrevendo cena, movimento e estilo, máx 250 chars",
-  "promptCurto": "video prompt em INGLÊS compacto, máx 80 chars",
+${promptVideoBlock}
   "notaProduto": 8.5,
   "veredito": "1 frase de veredito",
   "alertasCompliance": [{"tipo":"publicidade","mensagem":"...","severidade":"verde","acaoRecomendada":"..."}]

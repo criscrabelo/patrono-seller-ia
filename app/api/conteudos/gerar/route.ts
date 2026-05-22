@@ -11,6 +11,7 @@ const gerarSchema = z.object({
   duracao: z.number().positive(),
   estilo: z.string().min(1),
   objetivo: z.string().min(1),
+  tipoConteudo: z.enum(['video', 'video_imagens', 'imagens']).optional().default('video'),
 })
 
 export const maxDuration = 60
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Dados inválidos' }, { status: 400 })
   }
 
-  const { produtoId, redeSocial, duracao, estilo, objetivo } = parsed.data
+  const { produtoId, redeSocial, duracao, estilo, objetivo, tipoConteudo } = parsed.data
 
   const produto = await prisma.produto.findFirst({
     where: { id: produtoId, userId: session.user.id },
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
     beneficios: produto.beneficios,
     pontosNegativos: produto.pontosNegativos,
   }
-  const configGeracao = { redeSocial, duracao, estilo, objetivo }
+  const configGeracao = { redeSocial, duracao, estilo, objetivo, tipoConteudo }
 
   try {
     const gerado = await gerarConteudo(produtoData, configGeracao)
@@ -85,16 +86,22 @@ export async function POST(req: NextRequest) {
     let conteudo
     try {
       conteudo = await prisma.conteudo.create({
-        data: { ...dadosBase, legendaFacebook: gerado.legendaFacebook },
+        data: { ...dadosBase, legendaFacebook: gerado.legendaFacebook, tipoConteudo },
       })
-    } catch (errFacebook) {
-      // Fallback: salva sem legendaFacebook caso a coluna ainda não exista no banco
-      console.error('[gerar] create com legendaFacebook falhou, tentando sem:', errFacebook)
-      conteudo = await prisma.conteudo.create({ data: dadosBase })
+    } catch (errExtra) {
+      // Fallback: salva sem campos opcionais caso colunas ainda não existam no banco
+      console.error('[gerar] create com campos extras falhou, tentando fallback:', errExtra)
+      try {
+        conteudo = await prisma.conteudo.create({
+          data: { ...dadosBase, legendaFacebook: gerado.legendaFacebook },
+        })
+      } catch {
+        conteudo = await prisma.conteudo.create({ data: dadosBase })
+      }
     }
 
     return NextResponse.json(
-      { ...conteudo, legendaFacebook: gerado.legendaFacebook, tentativasCompliance: 1 },
+      { ...conteudo, legendaFacebook: gerado.legendaFacebook, tipoConteudo, tentativasCompliance: 1 },
       { status: 201 }
     )
   } catch (e) {

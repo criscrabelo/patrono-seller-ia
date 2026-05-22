@@ -139,6 +139,7 @@ model Conteudo {
   videoErro          String?   @db.Text
   publicacaoExternaId String?
   erroPublicacao     String?   @db.Text
+  tipoConteudo       String?   @default("video")
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 }

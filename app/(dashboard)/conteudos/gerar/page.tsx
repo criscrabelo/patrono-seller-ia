@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { Zap, Loader2, CheckSquare, Square } from 'lucide-react'
+import { Zap, Loader2, CheckSquare, Square, Film, Images, LayoutGrid } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConteudoPreview } from '@/components/conteudos/ConteudoPreview'
 import { REDES_SOCIAIS, DURACOES, ESTILOS, OBJETIVOS } from '@/types'
@@ -37,6 +37,7 @@ function GerarConteudoInner() {
     duracao: 30,
     estilo: 'Viral',
     objetivo: 'Venda',
+    tipoConteudo: 'video' as 'video' | 'video_imagens' | 'imagens',
   })
 
   useEffect(() => {
@@ -91,6 +92,7 @@ function GerarConteudoInner() {
               duracao: config.duracao,
               estilo: config.estilo,
               objetivo: config.objetivo,
+              tipoConteudo: config.tipoConteudo,
             }),
           })
 
@@ -202,6 +204,36 @@ function GerarConteudoInner() {
                     <span className="truncate text-xs">{rede}</span>
                     {selecionada && <CheckSquare className="w-3.5 h-3.5 ml-auto shrink-0" />}
                     {!selecionada && <Square className="w-3.5 h-3.5 ml-auto shrink-0 opacity-30" />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Tipo de conteúdo */}
+          <div className="sm:col-span-2 lg:col-span-3">
+            <label className="text-xs text-muted-foreground mb-2 block">Tipo de Conteúdo</label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { value: 'video', label: 'Vídeos', desc: 'Reels, Shorts, TikTok', Icon: Film },
+                { value: 'video_imagens', label: 'Vídeo + Fotos', desc: 'Carrossel com vídeo', Icon: LayoutGrid },
+                { value: 'imagens', label: 'Imagens', desc: 'Carrossel ou foto', Icon: Images },
+              ] as const).map(({ value, label, desc, Icon }) => {
+                const ativo = config.tipoConteudo === value
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setConfig((c) => ({ ...c, tipoConteudo: value }))}
+                    className={`flex flex-col items-center gap-1.5 px-3 py-3 rounded-lg border text-center transition-all ${
+                      ativo
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-border text-muted-foreground hover:border-accent/40 hover:text-white'
+                    }`}
+                  >
+                    <Icon className={`w-5 h-5 ${ativo ? 'text-accent' : 'text-muted-foreground'}`} />
+                    <span className="text-xs font-semibold leading-tight">{label}</span>
+                    <span className="text-[10px] opacity-70 leading-tight">{desc}</span>
                   </button>
                 )
               })}
