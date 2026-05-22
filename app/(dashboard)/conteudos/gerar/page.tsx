@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { Zap, Loader2, CheckSquare, Square, Film, Images, LayoutGrid } from 'lucide-react'
+import { Zap, Loader2, CheckSquare, Square, Film, Images, LayoutGrid, Sparkles, PenLine } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConteudoPreview } from '@/components/conteudos/ConteudoPreview'
 import { REDES_SOCIAIS, DURACOES, ESTILOS, OBJETIVOS } from '@/types'
@@ -31,6 +31,7 @@ function GerarConteudoInner() {
   const [conteudos, setConteudos] = useState<Array<Record<string, unknown>>>([])
   const [gerando, setGerando] = useState(false)
   const [progresso, setProgresso] = useState({ atual: 0, total: 0 })
+  const [modo, setModo] = useState<'ia' | 'manual'>('ia')
   const [config, setConfig] = useState({
     produtoId: searchParams.get('produtoId') ?? '',
     redesSociais: ['TikTok'] as string[],
@@ -38,6 +39,12 @@ function GerarConteudoInner() {
     estilo: 'Viral',
     objetivo: 'Venda',
     tipoConteudo: 'video' as 'video' | 'video_imagens' | 'imagens',
+  })
+  const [manual, setManual] = useState({
+    legenda: '',
+    hashtags: '',
+    roteiro: '',
+    chamadaAcao: '',
   })
 
   useEffect(() => {
@@ -137,6 +144,83 @@ function GerarConteudoInner() {
     }
   }
 
+  async function salvarManual() {
+    if (!config.produtoId) {
+      toast({ title: 'Selecione um produto', variant: 'destructive' })
+      return
+    }
+    if (config.redesSociais.length === 0) {
+      toast({ title: 'Selecione ao menos uma rede social', variant: 'destructive' })
+      return
+    }
+
+    setGerando(true)
+    setConteudos([])
+    setProgresso({ atual: 0, total: config.redesSociais.length })
+
+    const hashtags = manual.hashtags
+      .split(/[\s,]+/)
+      .map((h) => h.replace(/^#/, '').trim())
+      .filter(Boolean)
+
+    const resultados: Array<Record<string, unknown>> = []
+    let erros = 0
+
+    await Promise.all(
+      config.redesSociais.map(async (redeSocial) => {
+        try {
+          const res = await fetch('/api/conteudos/manual', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              produtoId: config.produtoId,
+              redeSocial,
+              duracao: config.duracao,
+              estilo: config.estilo,
+              objetivo: config.objetivo,
+              tipoConteudo: config.tipoConteudo,
+              legenda: manual.legenda,
+              hashtags,
+              roteiro: manual.roteiro,
+              chamadaAcao: manual.chamadaAcao,
+            }),
+          })
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            toast({ title: `Erro — ${redeSocial}`, description: err.error ?? 'Falha ao salvar', variant: 'destructive' })
+            erros++
+          } else {
+            const data = await res.json()
+            resultados.push({ ...data, _redeSocial: redeSocial })
+          }
+        } catch {
+          toast({ title: 'Erro de conexão', description: `Falha ao salvar para ${redeSocial}`, variant: 'destructive' })
+          erros++
+        } finally {
+          setProgresso((p) => ({ ...p, atual: p.atual + 1 }))
+        }
+      })
+    )
+
+    resultados.sort((a, b) => {
+      const ia = config.redesSociais.indexOf(a._redeSocial as string)
+      const ib = config.redesSociais.indexOf(b._redeSocial as string)
+      return ia - ib
+    })
+
+    setConteudos(resultados)
+    setGerando(false)
+
+    if (resultados.length > 0) {
+      toast({
+        title: erros === 0
+          ? `${resultados.length} conteúdo(s) salvo(s)!`
+          : `${resultados.length} salvo(s), ${erros} com erro`,
+        variant: erros === 0 ? 'success' : 'destructive',
+      })
+    }
+  }
+
   const selectClass = `w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm
     text-white focus:outline-none focus:ring-1 focus:ring-accent`
 
@@ -147,7 +231,34 @@ function GerarConteudoInner() {
     <div className="space-y-6 max-w-5xl">
       {/* Formulário */}
       <div className="card-stat space-y-5">
-        <h2 className="font-semibold text-white">Configurar Geração</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-white">Configurar Geração</h2>
+          {/* Toggle: IA vs Manual */}
+          <div className="flex rounded-lg border border-border overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setModo('ia')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${
+                modo === 'ia'
+                  ? 'bg-accent text-primary'
+                  : 'bg-background text-muted-foreground hover:text-white'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />IA
+            </button>
+            <button
+              type="button"
+              onClick={() => setModo('manual')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-l border-border ${
+                modo === 'manual'
+                  ? 'bg-accent text-primary'
+                  : 'bg-background text-muted-foreground hover:text-white'
+              }`}
+            >
+              <PenLine className="w-3.5 h-3.5" />Manual
+            </button>
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
 
           {/* Produto — linha inteira */}
@@ -268,18 +379,85 @@ function GerarConteudoInner() {
           </div>
         </div>
 
+        {/* Campos de entrada manual */}
+        {modo === 'manual' && (
+          <div className="space-y-3 pt-2 border-t border-border">
+            <p className="text-xs text-muted-foreground">Preencha o conteúdo manualmente — nenhuma IA será usada.</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className="text-xs text-muted-foreground mb-1.5 block">Legenda / Descrição</label>
+                <textarea
+                  rows={3}
+                  placeholder="Escreva a legenda para a postagem..."
+                  value={manual.legenda}
+                  onChange={(e) => setManual((m) => ({ ...m, legenda: e.target.value }))}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-white
+                    placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Hashtags</label>
+                <input
+                  type="text"
+                  placeholder="#moda #pet #brasil ..."
+                  value={manual.hashtags}
+                  onChange={(e) => setManual((m) => ({ ...m, hashtags: e.target.value }))}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-white
+                    placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">Separe por espaço ou vírgula</p>
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Chamada para Ação (CTA)</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Compre agora com desconto!"
+                  value={manual.chamadaAcao}
+                  onChange={(e) => setManual((m) => ({ ...m, chamadaAcao: e.target.value }))}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-white
+                    placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="text-xs text-muted-foreground mb-1.5 block">Roteiro / Script</label>
+                <textarea
+                  rows={3}
+                  placeholder="Descreva cena a cena o que será mostrado no vídeo/imagem..."
+                  value={manual.roteiro}
+                  onChange={(e) => setManual((m) => ({ ...m, roteiro: e.target.value }))}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-white
+                    placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent resize-none"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between pt-1">
           {config.redesSociais.length > 1 && !gerando && (
             <p className="text-xs text-muted-foreground">
-              Serão gerados <span className="text-accent font-semibold">{config.redesSociais.length} conteúdos</span> em paralelo
+              {modo === 'ia' ? 'Serão gerados' : 'Será salvo para'}{' '}
+              <span className="text-accent font-semibold">{config.redesSociais.length} conteúdos</span> em paralelo
             </p>
           )}
           <div className="ml-auto">
-            <Button onClick={gerar} disabled={gerando || !config.produtoId || config.redesSociais.length === 0} size="lg">
-              {gerando
-                ? <><Loader2 className="w-4 h-4 animate-spin" />Gerando {progresso.atual}/{progresso.total}...</>
-                : <><Zap className="w-4 h-4" />{config.redesSociais.length > 1 ? `Gerar ${config.redesSociais.length} Conteúdos` : 'Gerar Conteúdo'}</>}
-            </Button>
+            {modo === 'ia' ? (
+              <Button onClick={gerar} disabled={gerando || !config.produtoId || config.redesSociais.length === 0} size="lg">
+                {gerando
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />Gerando {progresso.atual}/{progresso.total}...</>
+                  : <><Zap className="w-4 h-4" />{config.redesSociais.length > 1 ? `Gerar ${config.redesSociais.length} Conteúdos` : 'Gerar Conteúdo'}</>}
+              </Button>
+            ) : (
+              <Button onClick={salvarManual} disabled={gerando || !config.produtoId || config.redesSociais.length === 0} size="lg" variant="outline">
+                {gerando
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />Salvando {progresso.atual}/{progresso.total}...</>
+                  : <><PenLine className="w-4 h-4" />{config.redesSociais.length > 1 ? `Salvar ${config.redesSociais.length} Conteúdos` : 'Salvar Conteúdo'}</>}
+              </Button>
+            )}
           </div>
         </div>
       </div>
