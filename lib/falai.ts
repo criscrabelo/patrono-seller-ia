@@ -201,3 +201,79 @@ export async function obterResultadoCompose(
   if (!videoUrl) throw new Error('fal.ai compose não retornou video_url')
   return { videoUrl }
 }
+
+/** ── Legendas estilo CapCut via veed/subtitles ── */
+const VEED_PATH = 'veed/subtitles'
+
+export interface AdicionarLegendaParams {
+  videoUrl: string
+  srtContent: string
+  preset?: string // 'glass', 'whisper', 'simple', etc. Default 'glass'
+}
+
+export async function adicionarLegendaVideo(
+  params: AdicionarLegendaParams
+): Promise<SubmeterResultado> {
+  const body = {
+    video_url: params.videoUrl,
+    preset: params.preset ?? 'glass',
+    srt_content: params.srtContent,
+  }
+  const data = await falFetch(`${FAL_BASE}/${VEED_PATH}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+  const requestId = data.request_id as string | undefined
+  const statusUrl = data.status_url as string | undefined
+  const resultUrl = data.response_url as string | undefined
+  if (!requestId || !statusUrl || !resultUrl) {
+    throw new Error('veed/subtitles não retornou as URLs esperadas')
+  }
+  return { requestId, statusUrl, resultUrl }
+}
+
+/** Obtém o vídeo legendado pronto. veed pode usar video.url OU video_url. */
+export async function obterResultadoLegenda(resultUrl: string): Promise<VideoPronto> {
+  const data = await falFetch(resultUrl)
+  const v1 = (data as { video?: { url?: string } }).video
+  const v2 = (data as { video_url?: string }).video_url
+  const videoUrl = v1?.url ?? v2
+  if (!videoUrl) throw new Error('veed/subtitles não retornou URL do vídeo')
+  return { videoUrl }
+}
+
+function formatarTempoSrt(segundos: number): string {
+  const ms = Math.max(0, Math.floor(segundos * 1000))
+  const h = Math.floor(ms / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  const milli = ms % 1000
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(milli).padStart(3, '0')}`
+}
+
+/** Gera um SRT a partir de um texto, dividindo em pedaços por pontuação
+ * e distribuindo no tempo total do vídeo. */
+export function montarSrt(texto: string, duracaoSegundos: number): string {
+  const limpo = texto.trim()
+  if (!limpo) return ''
+  const total = duracaoSegundos > 0 ? duracaoSegundos : 10
+
+  // Divide por pontuação final (.!?) mantendo pelo menos um pedaço
+  const partes = limpo
+    .split(/(?<=[.!?])\s+/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+
+  if (partes.length <= 1) {
+    return `1\n${formatarTempoSrt(0)} --> ${formatarTempoSrt(total)}\n${limpo}\n`
+  }
+
+  const duracaoPorParte = total / partes.length
+  let srt = ''
+  partes.forEach((parte, i) => {
+    const inicio = i * duracaoPorParte
+    const fim = Math.min(total, (i + 1) * duracaoPorParte)
+    srt += `${i + 1}\n${formatarTempoSrt(inicio)} --> ${formatarTempoSrt(fim)}\n${parte}\n\n`
+  })
+  return srt
+}

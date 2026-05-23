@@ -48,6 +48,10 @@ export default function ConteudosPage() {
   const [uploadingVideo, setUploadingVideo] = useState(false)
   const [publicandoIg, setPublicandoIg] = useState(false)
   const [gerandoVideoIA, setGerandoVideoIA] = useState(false)
+  const [duracaoVideoIA, setDuracaoVideoIA] = useState<number>(5)
+  const [tipoMidiaIg, setTipoMidiaIg] = useState<'video' | 'imagens'>('video')
+  const [destinoIg, setDestinoIg] = useState<'feed' | 'stories'>('feed')
+  const [adicionandoLegenda, setAdicionandoLegenda] = useState(false)
 
   async function fetchConteudos() {
     setLoading(true)
@@ -220,6 +224,35 @@ export default function ConteudosPage() {
       return
     }
     toast({ title: 'Geração iniciada!', description: 'O vídeo deve ficar pronto em 1-3 minutos. Aguarde nesta tela.', variant: 'success' })
+    fetchConteudos()
+  }
+
+  async function adicionarLegenda() {
+    if (!publicarId) return
+    setAdicionandoLegenda(true)
+    const res = await fetch(`/api/conteudos/${publicarId}/adicionar-legenda`, { method: 'POST' })
+    const data = await res.json().catch(() => ({}))
+    setAdicionandoLegenda(false)
+    if (data.processando) {
+      toast({
+        title: 'Legendas em processamento',
+        description: data.mensagem ?? 'Tente novamente em ~30s.',
+      })
+      return
+    }
+    if (!res.ok || !data.ok) {
+      toast({
+        title: 'Erro ao adicionar legendas',
+        description: data.error ?? 'Tente novamente.',
+        variant: 'destructive',
+      })
+      return
+    }
+    toast({
+      title: 'Legendas adicionadas!',
+      description: 'O vídeo foi atualizado com legendas estilo CapCut.',
+      variant: 'success',
+    })
     fetchConteudos()
   }
 
@@ -425,19 +458,31 @@ export default function ConteudosPage() {
                 Vídeo do Reels
               </p>
               {conteudoPublicar.videoUrl ? (
-                <div className="rounded-lg border border-accent/30 bg-accent/10 p-3 flex items-center justify-between gap-2">
-                  <span className="text-sm text-accent flex items-center gap-1.5">
-                    <CheckCircle className="w-4 h-4" />Vídeo pronto
-                  </span>
-                  <a
-                    href={conteudoPublicar.videoUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-accent hover:underline flex items-center gap-1"
+                <>
+                  <div className="rounded-lg border border-accent/30 bg-accent/10 p-3 flex items-center justify-between gap-2">
+                    <span className="text-sm text-accent flex items-center gap-1.5">
+                      <CheckCircle className="w-4 h-4" />Vídeo pronto
+                    </span>
+                    <a
+                      href={conteudoPublicar.videoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-accent hover:underline flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />Ver
+                    </a>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    disabled={adicionandoLegenda || publicandoIg || uploadingVideo}
+                    onClick={adicionarLegenda}
                   >
-                    <ExternalLink className="w-3 h-3" />Ver
-                  </a>
-                </div>
+                    {adicionandoLegenda
+                      ? <><Loader2 className="w-4 h-4 animate-spin" />Adicionando legendas... (~40s)</>
+                      : <><Sparkles className="w-4 h-4" />Adicionar legendas estilo CapCut</>}
+                  </Button>
+                </>
               ) : gerandoVideoIA ? (
                 <div className="rounded-lg border border-accent/30 bg-accent/10 p-3 flex items-start gap-2 text-sm text-accent">
                   <Loader2 className="w-4 h-4 animate-spin mt-0.5 shrink-0" />
