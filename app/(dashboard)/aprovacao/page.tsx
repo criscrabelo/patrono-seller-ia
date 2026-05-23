@@ -15,6 +15,11 @@ interface Conteudo {
   estilo: string
   roteiro: string
   legendaTiktok: string
+  legendaInstagram: string
+  legendaYoutube: string
+  legendaWhatsapp: string
+  legendaFacebook: string
+  legendaMarketplace: string
   hashtags: string[]
   chamadaAcao: string
   notaProduto: number
@@ -150,9 +155,9 @@ export default function AprovacaoPage() {
                       </div>
                     </div>
                     <div>
-                      <p className="text-xs font-semibold text-muted-foreground mb-1.5">LEGENDA TIKTOK</p>
+                      <p className="text-xs font-semibold text-muted-foreground mb-1.5">LEGENDA</p>
                       <div className="rounded-lg bg-background border border-border p-3 text-xs text-foreground whitespace-pre-wrap">
-                        {c.legendaTiktok}
+                        {c.legendaInstagram || c.legendaTiktok || c.legendaYoutube || c.legendaWhatsapp || c.legendaFacebook || c.legendaMarketplace || '—'}
                       </div>
                     </div>
                     <div>
