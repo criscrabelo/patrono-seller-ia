@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { CheckCircle, X, Clock, AlertTriangle, AlertCircle } from 'lucide-react'
+import { CheckCircle, X, Clock, AlertTriangle, AlertCircle, Pencil, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatDateShort, cn } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
@@ -34,6 +34,9 @@ export default function AprovacaoPage() {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [confirmedRisks, setConfirmedRisks] = useState<string[]>([])
+  const [editandoLegendaId, setEditandoLegendaId] = useState<string | null>(null)
+  const [legendaTexto, setLegendaTexto] = useState('')
+  const [salvandoLegenda, setSalvandoLegenda] = useState(false)
 
   async function fetchConteudos() {
     setLoading(true)
@@ -57,6 +60,59 @@ export default function AprovacaoPage() {
       roteiro_gerado: 'Conteúdo adiado.',
     }
     toast({ title: labels[status], variant: status === 'aprovado' ? 'success' : 'default' })
+    fetchConteudos()
+  }
+
+  // Identifica qual campo de legenda está em uso (o primeiro não-vazio).
+  function getCampoLegenda(c: Conteudo): string {
+    if (c.legendaInstagram?.trim()) return 'legendaInstagram'
+    if (c.legendaTiktok?.trim()) return 'legendaTiktok'
+    if (c.legendaYoutube?.trim()) return 'legendaYoutube'
+    if (c.legendaWhatsapp?.trim()) return 'legendaWhatsapp'
+    if (c.legendaFacebook?.trim()) return 'legendaFacebook'
+    if (c.legendaMarketplace?.trim()) return 'legendaMarketplace'
+    // Default por rede social, se nenhuma estiver preenchida ainda
+    const map: Record<string, string> = {
+      'Instagram Reels': 'legendaInstagram',
+      'TikTok': 'legendaTiktok',
+      'YouTube Shorts': 'legendaYoutube',
+      'WhatsApp': 'legendaWhatsapp',
+      'Facebook': 'legendaFacebook',
+      'Marketplace': 'legendaMarketplace',
+    }
+    return map[c.redeSocial] || 'legendaInstagram'
+  }
+
+  function getLegendaAtual(c: Conteudo): string {
+    return (c[getCampoLegenda(c) as keyof Conteudo] as string) || ''
+  }
+
+  function iniciarEdicaoLegenda(c: Conteudo) {
+    setEditandoLegendaId(c.id)
+    setLegendaTexto(getLegendaAtual(c))
+  }
+
+  function cancelarEdicaoLegenda() {
+    setEditandoLegendaId(null)
+    setLegendaTexto('')
+  }
+
+  async function salvarLegenda(c: Conteudo) {
+    setSalvandoLegenda(true)
+    const campo = getCampoLegenda(c)
+    const res = await fetch(`/api/conteudos/${c.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [campo]: legendaTexto }),
+    })
+    setSalvandoLegenda(false)
+    if (!res.ok) {
+      toast({ title: 'Erro ao salvar legenda', variant: 'destructive' })
+      return
+    }
+    toast({ title: 'Legenda atualizada!', variant: 'success' })
+    setEditandoLegendaId(null)
+    setLegendaTexto('')
     fetchConteudos()
   }
 
@@ -155,10 +211,48 @@ export default function AprovacaoPage() {
                       </div>
                     </div>
                     <div>
-                      <p className="text-xs font-semibold text-muted-foreground mb-1.5">LEGENDA</p>
-                      <div className="rounded-lg bg-background border border-border p-3 text-xs text-foreground whitespace-pre-wrap">
-                        {c.legendaInstagram || c.legendaTiktok || c.legendaYoutube || c.legendaWhatsapp || c.legendaFacebook || c.legendaMarketplace || '—'}
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-xs font-semibold text-muted-foreground">LEGENDA</p>
+                        {editandoLegendaId === c.id ? (
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={cancelarEdicaoLegenda}
+                              disabled={salvandoLegenda}
+                              className="text-[11px] text-muted-foreground hover:text-white px-2 py-0.5 rounded transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              onClick={() => salvarLegenda(c)}
+                              disabled={salvandoLegenda}
+                              className="text-[11px] text-accent hover:text-accent-light flex items-center gap-1 px-2 py-0.5 rounded transition-colors"
+                            >
+                              <Save className="w-3 h-3" />
+                              {salvandoLegenda ? 'Salvando...' : 'Salvar'}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => iniciarEdicaoLegenda(c)}
+                            className="text-[11px] text-muted-foreground hover:text-accent flex items-center gap-1 px-2 py-0.5 rounded transition-colors"
+                          >
+                            <Pencil className="w-3 h-3" />Editar
+                          </button>
+                        )}
                       </div>
+                      {editandoLegendaId === c.id ? (
+                        <textarea
+                          value={legendaTexto}
+                          onChange={(e) => setLegendaTexto(e.target.value)}
+                          rows={4}
+                          className="w-full rounded-lg bg-background border border-accent/40 p-3 text-xs text-foreground
+                            focus:outline-none focus:ring-1 focus:ring-accent resize-y"
+                        />
+                      ) : (
+                        <div className="rounded-lg bg-background border border-border p-3 text-xs text-foreground whitespace-pre-wrap">
+                          {getLegendaAtual(c) || '—'}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground mb-1">HASHTAGS</p>
