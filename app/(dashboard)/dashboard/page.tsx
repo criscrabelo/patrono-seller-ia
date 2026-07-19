@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { LucroEscala } from '@/components/dashboard/LucroEscala'
 import { formatDateShort } from '@/lib/utils'
 import type { StatusConteudo } from '@/types'
 
@@ -22,6 +23,18 @@ interface Metricas {
     visualizacoes: number
     status: string
     createdAt: string
+  }>
+  comissaoTotal: number
+  lucroEscala: Array<{
+    produtoId: string
+    nome: string
+    cliques: number
+    conversoes: number
+    receitaTotal: number
+    ticketMedio: number
+    taxaConversao: number
+    scoreEscala: number
+    faixa: { label: string; cor: 'gold' | 'blue' | 'amber' | 'red' }
   }>
 }
 
@@ -123,6 +136,14 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      {/* Lucro e Escala */}
+      {!loading && (
+        <LucroEscala
+          comissaoTotal={metricas?.comissaoTotal ?? 0}
+          produtos={metricas?.lucroEscala ?? []}
+        />
+      )}
 
       {/* Top conteúdos */}
       <div>

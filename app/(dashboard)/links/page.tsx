@@ -41,6 +41,35 @@ const TIPOS = [
   { id: 'loja-propria', label: 'Loja Própria', desc: '70-100% margem' },
 ]
 
+const TIPO_LABEL: Record<string, string> = {
+  'afiliado': 'Afiliado',
+  'tiktok-shop': 'TikTok Shop',
+  'loja-propria': 'Loja Própria',
+}
+
+function explicarCalculoVenda(link: LinkDinamico, valorDigitado: string) {
+  const valor = parseFloat(valorDigitado.replace(',', '.'))
+  const valorValido = !isNaN(valor) && valor > 0
+  const tipoLabel = TIPO_LABEL[link.tipo] ?? link.tipo
+
+  if (link.tipo === 'loja-propria') {
+    return {
+      texto: `Este link é do tipo ${tipoLabel}, então o valor total da venda será somado como receita.`,
+      resultado: valorValido ? valor : null,
+    }
+  }
+  if (!link.comissao) {
+    return {
+      texto: `Este link é do tipo ${tipoLabel}, mas não tem comissão (%) definida — a receita registrada será R$ 0,00. Edite a comissão do link antes de registrar a venda.`,
+      resultado: valorValido ? 0 : null,
+    }
+  }
+  return {
+    texto: `Este link é do tipo ${tipoLabel}, então apenas a comissão de ${link.comissao}% sobre o valor da venda será somada como receita.`,
+    resultado: valorValido ? valor * (link.comissao / 100) : null,
+  }
+}
+
 function CopyBtn({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -62,6 +91,9 @@ export default function LinksPage() {
   const [showForm, setShowForm] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [expandedProd, setExpandedProd] = useState<string | null>(null)
+  const [vendaAbertaId, setVendaAbertaId] = useState<string | null>(null)
+  const [vendaValor, setVendaValor] = useState('')
+  const [registrandoVenda, setRegistrandoVenda] = useState(false)
 
   const [form, setForm] = useState({
     produtoId: '', urlDestino: '', tipo: 'afiliado', comissao: '',
@@ -99,6 +131,28 @@ export default function LinksPage() {
       toast({ title: 'Erro ao gerar links', variant: 'destructive' })
     }
     setGenerating(false)
+  }
+
+  async function registrarVenda(linkId: string) {
+    const valor = parseFloat(vendaValor.replace(',', '.'))
+    if (!valor || valor <= 0) {
+      toast({ title: 'Informe um valor de venda válido', variant: 'destructive' }); return
+    }
+    setRegistrandoVenda(true)
+    const res = await fetch(`/api/links/${linkId}/venda`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ valor }),
+    })
+    if (res.ok) {
+      toast({ title: '✅ Venda registrada!', variant: 'success' })
+      setVendaAbertaId(null)
+      setVendaValor('')
+      fetchAll()
+    } else {
+      toast({ title: 'Erro ao registrar venda', variant: 'destructive' })
+    }
+    setRegistrandoVenda(false)
   }
 
   function togglePlat(id: string) {
@@ -271,21 +325,59 @@ export default function LinksPage() {
                 {isExpanded && (
                   <div className="border-t border-border pt-3 space-y-2">
                     {prodLinks.map(link => (
-                      <div key={link.id} className="flex items-center gap-3 rounded-lg bg-background border border-border px-3 py-2.5">
-                        <span className="text-lg">{PLAT_EMOJI[link.plataforma] ?? '🔗'}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <code className="text-xs text-accent font-mono">
-                              patrono.link/{link.slug}
-                            </code>
-                            <CopyBtn text={`http://localhost:3000/api/l/${link.slug}`} />
+                      <div key={link.id} className="rounded-lg bg-background border border-border px-3 py-2.5 space-y-2">
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">{PLAT_EMOJI[link.plataforma] ?? '🔗'}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <code className="text-xs text-accent font-mono">
+                                patrono.link/{link.slug}
+                              </code>
+                              <CopyBtn text={`http://localhost:3000/api/l/${link.slug}`} />
+                            </div>
+                            <p className="text-[10px] text-muted-foreground capitalize">{link.plataforma} · {link.tipo}</p>
                           </div>
-                          <p className="text-[10px] text-muted-foreground capitalize">{link.plataforma} · {link.tipo}</p>
+                          <div className="text-right shrink-0">
+                            <p className="text-xs font-semibold text-white">{link.cliques} cliques · {link.conversoes} vendas</p>
+                            <p className="text-[10px] text-accent">
+                              {formatCurrency(link.receitaTotal)}
+                              {link.comissao ? ` · ${link.comissao}% comissão` : ''}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => { setVendaAbertaId(vendaAbertaId === link.id ? null : link.id); setVendaValor('') }}
+                            className="text-xs text-accent hover:underline shrink-0"
+                          >
+                            {vendaAbertaId === link.id ? 'Cancelar' : '+ Venda'}
+                          </button>
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-xs font-semibold text-white">{link.cliques} cliques</p>
-                          {link.comissao && <p className="text-[10px] text-accent">{link.comissao}% comissão</p>}
-                        </div>
+
+                        {vendaAbertaId === link.id && (() => {
+                          const { texto, resultado } = explicarCalculoVenda(link, vendaValor)
+                          return (
+                            <div className="pl-9 space-y-1.5">
+                              <p className="text-[11px] text-muted-foreground">{texto}</p>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="Valor da venda (R$)"
+                                  className={inputCls + ' py-1.5'}
+                                  value={vendaValor}
+                                  onChange={e => setVendaValor(e.target.value)}
+                                />
+                                <Button size="sm" disabled={registrandoVenda} onClick={() => registrarVenda(link.id)}>
+                                  Registrar
+                                </Button>
+                              </div>
+                              {resultado !== null && (
+                                <p className="text-[11px] text-accent">
+                                  Receita que será somada: <strong>{formatCurrency(resultado)}</strong>
+                                </p>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
                     ))}
                   </div>

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Patrono Seller IA — Integração TikTok</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:oklch(0.155 0.018 285);--surface:oklch(0.205 0.018 285);--surface2:oklch(0.238 0.02 285);
+  --border:oklch(0.30 0.022 285);--border-soft:oklch(0.26 0.02 285);
+  --text:oklch(0.975 0.008 90);--muted:oklch(0.70 0.02 285);--dim:oklch(0.56 0.02 285);
+  --gold:oklch(0.84 0.155 86);--gold2:oklch(0.76 0.165 66);--violet:oklch(0.68 0.195 295);
+  --green:oklch(0.80 0.16 158);--red:oklch(0.70 0.19 22);--blue:oklch(0.74 0.13 240);--amber:oklch(0.80 0.15 70);--pink:oklch(0.72 0.18 350);
+  --fd:'Space Grotesk',sans-serif;--fb:'DM Sans',sans-serif;--fm:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(900px 500px at 100% -10%,oklch(0.72 0.18 350/0.06),transparent 60%),radial-gradient(700px 400px at 0% 100%,oklch(0.84 0.155 86/0.04),transparent 55%);background-attachment:fixed}
+.doc{max-width:880px;margin:0 auto;padding:64px 40px 100px}
+h1,h2,h3,h4{font-family:var(--fd);letter-spacing:-0.02em;line-height:1.15}
+h1{font-size:36px;font-weight:700}h2{font-size:23px;font-weight:600;margin:0 0 16px}h3{font-size:16px;font-weight:600;margin:0 0 10px}
+p{color:var(--muted)}a{color:var(--gold);text-decoration:none}
+section{margin-top:52px;scroll-margin-top:24px}
+.lede{font-size:17px;color:var(--muted);max-width:640px;margin-top:14px}
+.tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--pink);background:oklch(0.72 0.18 350/0.12);border:1px solid oklch(0.72 0.18 350/0.25);padding:5px 11px;border-radius:99px}
+.mark{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(150deg,var(--gold),var(--gold2));box-shadow:0 8px 20px -8px var(--gold2)}
+.sec-num{font-family:var(--fm);font-size:13px;color:var(--pink);font-weight:500}
+.card{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:24px;margin-top:16px}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:14px}
+th{text-align:left;padding:10px 12px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--dim);border-bottom:1px solid var(--border)}
+td{padding:11px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+code{font-family:var(--fm);font-size:12.5px;background:oklch(0 0 0/0.3);border:1px solid var(--border-soft);padding:1.5px 6px;border-radius:6px;color:var(--gold)}
+pre{font-family:var(--fm);font-size:12.5px;background:oklch(0 0 0/0.35);border:1px solid var(--border-soft);border-radius:12px;padding:16px 18px;overflow-x:auto;margin-top:14px;line-height:1.7}
+pre .c{color:var(--dim)}.pk{color:var(--violet)}.pv{color:var(--gold)}.ps{color:var(--green)}.pm{color:var(--pink)}
+.steps{list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:14px;margin-top:8px}
+.steps li{display:flex;gap:14px;align-items:flex-start}
+.steps .n{flex-shrink:0;width:28px;height:28px;border-radius:8px;background:oklch(0.72 0.18 350/0.15);color:var(--pink);font-family:var(--fm);font-size:13px;font-weight:600;display:grid;place-items:center}
+.steps b{color:var(--text)}
+.flow{display:flex;flex-direction:column;gap:0;margin-top:10px}
+.flow .step{display:flex;gap:14px;align-items:flex-start;padding:14px 0;border-bottom:1px solid var(--border-soft)}
+.flow .step:last-child{border-bottom:none}
+.flow .ico{flex-shrink:0;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-family:var(--fm);font-weight:600;font-size:14px}
+.callout{border-left:3px solid var(--gold);background:oklch(0.84 0.155 86/0.06);padding:14px 18px;border-radius:0 12px 12px 0;margin-top:18px;font-size:14px;color:var(--muted)}
+.callout.r{border-color:var(--red);background:oklch(0.70 0.19 22/0.06)}
+.callout.p{border-color:var(--pink);background:oklch(0.72 0.18 350/0.06)}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:600;white-space:nowrap}
+.b-you{color:var(--pink);background:oklch(0.72 0.18 350/0.15)}
+.b-cc{color:var(--violet);background:oklch(0.68 0.195 295/0.15)}
+.b-ok{color:var(--green);background:oklch(0.80 0.16 158/0.14)}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.toc a{font-size:13px;padding:7px 13px;border-radius:99px;background:oklch(1 0 0/0.04);border:1px solid var(--border);color:var(--muted)}
+.foot{margin-top:70px;padding-top:24px;border-top:1px solid var(--border-soft);color:var(--dim);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+@media print{body{background:white;color:#111}.doc{padding:24px}.card,pre,section{break-inside:avoid}}
+@media(max-width:680px){.doc{padding:40px 22px}}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:26px">
+      <div class="mark"><svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 2.5l1.7 4.6 4.8.2-3.7 3 1.3 4.6L12 16.3 7.9 14.9l1.3-4.6-3.7-3 4.8-.2z" fill="oklch(0.2 0.02 70)"/><circle cx="12" cy="19.5" r="1.6" fill="oklch(0.2 0.02 70)"/></svg></div>
+      <div><div style="font-family:var(--fd);font-weight:700;font-size:17px">Patrono Seller IA</div><div style="font-size:11px;letter-spacing:0.18em;color:var(--pink);font-weight:700">INTEGRAÇÃO TIKTOK</div></div>
+    </div>
+    <span class="tag">● Guia de implementação</span>
+    <h1 style="margin-top:18px">Conectar a plataforma ao seu TikTok</h1>
+    <p class="lede">Tudo o que falta para publicar de verdade: o que <b>você</b> faz no portal do TikTok, o que o <b>Claude Code</b> implementa no repo, e o caminho rápido (pacote manual) que já funciona enquanto a API não é liberada.</p>
+    <div class="toc">
+      <a href="#quem">Quem faz o quê</a>
+      <a href="#voce">1 · No portal TikTok</a>
+      <a href="#oauth">2 · Login (OAuth)</a>
+      <a href="#post">3 · Publicar vídeo</a>
+      <a href="#manual">4 · Pacote manual</a>
+      <a href="#seg">5 · Segurança</a>
+    </div>
+  </header>
+
+  <section id="quem">
+    <div class="sec-num">00</div>
+    <h2>Quem faz o quê</h2>
+    <p>A conexão tem duas partes: o cadastro do app (só você pode fazer, é da sua conta TikTok) e o código (Claude Code implementa no repo).</p>
+    <table>
+      <thead><tr><th>Etapa</th><th>Responsável</th></tr></thead>
+      <tbody>
+        <tr><td>Criar app no TikTok for Developers + pedir acesso às APIs</td><td><span class="badge b-you">Você</span></td></tr>
+        <tr><td>Copiar Client Key / Secret para as variáveis de ambiente</td><td><span class="badge b-you">Você</span></td></tr>
+        <tr><td>Fluxo de login (OAuth), upload e publicação de vídeo</td><td><span class="badge b-cc">Claude Code</span></td></tr>
+        <tr><td>Gate de aprovação + agendamento</td><td><span class="badge b-cc">Claude Code</span></td></tr>
+        <tr><td>Pacote manual (.zip) enquanto a API não é aprovada</td><td><span class="badge b-cc">Claude Code</span></td></tr>
+      </tbody>
+    </table>
+    <div class="callout p">A <b>Content Posting API</b> do TikTok exige aprovação do app (pode levar dias). Por isso a plataforma já nasce com o <b>modo Pacote Manual</b> — você publica na mão hoje e liga o automático quando a API for liberada. A tela <code>Publicação · TikTok</code> do protótipo mostra os dois modos.</div>
+  </section>
+
+  <section id="voce">
+    <div class="sec-num">01</div>
+    <h2>O que você faz no portal do TikTok</h2>
+    <ol class="steps">
+      <li><span class="n">1</span><div><b>Crie uma conta</b> em <a href="https://developers.tiktok.com">developers.tiktok.com</a> e registre um app (<i>Manage apps → Connect an app</i>).</div></li>
+      <li><span class="n">2</span><div><b>Adicione os produtos</b> <code>Login Kit</code> e <code>Content Posting API</code> ao app. Para marcar produtos: <code>TikTok Shop</code> (à parte, via TikTok Shop Partner Center).</div></li>
+      <li><span class="n">3</span><div><b>Configure o redirect URI</b>: <code>https://SEU-DOMINIO/api/integracoes/tiktok/callback</code> (e a versão localhost para testes).</div></li>
+      <li><span class="n">4</span><div><b>Solicite os escopos</b> <code>user.info.basic</code>, <code>video.upload</code>, <code>video.publish</code>. Publicação direta exige revisão do app pelo TikTok.</div></li>
+      <li><span class="n">5</span><div><b>Copie</b> o <code>Client Key</code> e o <code>Client Secret</code> e mande para as variáveis de ambiente (próxima seção). Nunca exponha o Secret no frontend.</div></li>
+    </ol>
+    <div class="card">
+      <h3>Variáveis de ambiente — <code>.env</code></h3>
+      <pre>TIKTOK_CLIENT_KEY=<span class="pv">awxxxxxxxxxxxx</span>
+TIKTOK_CLIENT_SECRET=<span class="pv">••••••••••••••••</span>
+TIKTOK_REDIRECT_URI=<span class="ps">https://app.patronoseller.com/api/integracoes/tiktok/callback</span>
+NEXTAUTH_URL=<span class="ps">https://app.patronoseller.com</span></pre>
+    </div>
+  </section>
+
+  <section id="oauth">
+    <div class="sec-num">02</div>
+    <h2>Fluxo de login (OAuth · Login Kit)</h2>
+    <p>O que o Claude Code implementa para o botão <b>"Conectar TikTok"</b> da tela de Publicação.</p>
+    <div class="card">
+      <div class="flow">
+        <div class="step"><div class="ico" style="background:oklch(0.72 0.18 350/0.15);color:var(--pink)">1</div><div><b>Usuária clica "Conectar TikTok"</b><div style="color:var(--dim);font-size:13px">Redireciona para <code>https://www.tiktok.com/v2/auth/authorize</code> com client_key, scope, redirect_uri e state.</div></div></div>
+        <div class="step"><div class="ico" style="background:oklch(0.74 0.13 240/0.15);color:var(--blue)">2</div><div><b>TikTok devolve um <code>code</code></b><div style="color:var(--dim);font-size:13px">No callback, troca por token: <code>POST /v2/oauth/token/</code> → <code>access_token</code> + <code>refresh_token</code>.</div></div></div>
+        <div class="step"><div class="ico" style="background:oklch(0.68 0.195 295/0.15);color:var(--violet)">3</div><div><b>Salva os tokens (cifrados)</b><div style="color:var(--dim);font-size:13px">No model <code>Integracao</code> do Prisma. O access_token expira em ~24h — renovar com o refresh_token.</div></div></div>
+        <div class="step"><div class="ico" style="background:oklch(0.80 0.16 158/0.15);color:var(--green)">4</div><div><b>Conta conectada</b><div style="color:var(--dim);font-size:13px">A tela passa a mostrar @conta, escopos e validade (igual ao protótipo).</div></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>prisma — model <code>Integracao</code></h3>
+      <pre><span class="pk">model</span> Integracao {
+  id String <span class="pk">@id @default</span>(cuid())
+  provider String        <span class="c">// tiktok | tiktok_shop | shopee ...</span>
+  contaExterna String?   <span class="c">// @patrono.organiza</span>
+  accessToken String     <span class="c">// CIFRAR em repouso</span>
+  refreshToken String?
+  expiraEm DateTime?
+  escopos String[]
+  status String          <span class="c">// conectado | expirado | revogado</span>
+  userId String          <span class="c">// dono da conexão</span>
+}</pre>
+    </div>
+  </section>
+
+  <section id="post">
+    <div class="sec-num">03</div>
+    <h2>Publicar vídeo (Content Posting API)</h2>
+    <p>Modo automático. Só roda depois do app aprovado e <b>sempre passa pelo gate de aprovação</b> na 1ª campanha.</p>
+    <div class="card">
+      <pre><span class="c">// 1) inicia o upload</span>
+<span class="pm">POST</span> https://open.tiktokapis.com/v2/post/publish/video/init/
+Authorization: Bearer {access_token}
+{
+  <span class="pk">"post_info"</span>: {
+    <span class="pk">"title"</span>: <span class="ps">"legenda + #hashtags"</span>,
+    <span class="pk">"privacy_level"</span>: <span class="ps">"PUBLIC_TO_EVERYONE"</span>,
+    <span class="pk">"disable_comment"</span>: false
+  },
+  <span class="pk">"source_info"</span>: {
+    <span class="pk">"source"</span>: <span class="ps">"FILE_UPLOAD"</span>,
+    <span class="pk">"video_size"</span>: 1048576, <span class="pk">"chunk_size"</span>: 1048576, <span class="pk">"total_chunk_count"</span>: 1
+  }
+}
+<span class="c">// 2) envia os bytes para a upload_url retornada (PUT)
+// 3) consulta status:</span>
+<span class="pm">POST</span> /v2/post/publish/status/fetch/  → PROCESSING | PUBLISH_COMPLETE</pre>
+    </div>
+    <div class="callout">Endpoint do repo: <code>app/api/conteudos/[id]/publicar/route.ts</code> (já existe — adaptar para chamar a API com o token salvo). O <code>app/api/cron/publicar/route.ts</code> dispara os agendados do calendário.</div>
+  </section>
+
+  <section id="manual">
+    <div class="sec-num">04</div>
+    <h2>Pacote manual — funciona hoje</h2>
+    <p>Enquanto a API não é aprovada, a plataforma gera um <b>.zip pronto para postar</b>. É o modo padrão na tela de Publicação.</p>
+    <div class="card">
+      <h3>Conteúdo do pacote (<code>/api/conteudos/[id]/pacote</code>)</h3>
+      <pre>📦 talheres_pov_v1.zip
+ ├─ <span class="ps">video.mp4</span>          <span class="c">// criativo autorizado, 9:16</span>
+ ├─ <span class="ps">legenda.txt</span>        <span class="c">// legenda + CTA</span>
+ ├─ <span class="ps">hashtags.txt</span>       <span class="c">// até 5 hashtags</span>
+ ├─ <span class="ps">link-afiliado.txt</span>  <span class="c">// patrono.link/talheres</span>
+ └─ <span class="ps">instrucoes.txt</span>     <span class="c">// horário recomendado + passo a passo</span></pre>
+    </div>
+    <ol class="steps">
+      <li><span class="n">1</span><div>A usuária clica <b>"Baixar pacote (.zip)"</b> no card do próximo vídeo.</div></li>
+      <li><span class="n">2</span><div>Abre o TikTok, sobe o <code>video.mp4</code> e cola legenda + hashtags.</div></li>
+      <li><span class="n">3</span><div>Marca como <b>postado</b> na plataforma → entra nos Relatórios e no Motor de Decisão.</div></li>
+    </ol>
+  </section>
+
+  <section id="seg">
+    <div class="sec-num">05</div>
+    <h2>Regras de segurança (não pular)</h2>
+    <div class="card">
+      <ul class="steps">
+        <li><span class="n">!</span><div><b>Aprovação inicial obrigatória:</b> a 1ª publicação automática de cada produto/campanha passa pelo painel "Aprovar Agora" antes de ir ao ar.</div></li>
+        <li><span class="n">!</span><div><b>Só criativo autorizado:</b> o vídeo precisa estar na Biblioteca com <code>podePostar = true</code>. Nada de terceiros, sem remoção de marca d'água.</div></li>
+        <li><span class="n">!</span><div><b>Secret no servidor:</b> Client Secret e tokens só no backend, cifrados. Nunca no bundle do Next.</div></li>
+        <li><span class="n">!</span><div><b>Link válido:</b> bloquear publicação se o link de afiliado estiver quebrado ou o produto não vinculado.</div></li>
+        <li><span class="n">!</span><div><b>Renovação de token:</b> agendar refresh antes de expirar; se revogado, marcar a integração como <code>expirado</code> e avisar.</div></li>
+      </ul>
+    </div>
+    <div class="callout r"><b>Importante:</b> a aprovação da Content Posting API e as políticas do TikTok mudam. Sempre confira a documentação oficial em <a href="https://developers.tiktok.com/doc/content-posting-api-get-started">developers.tiktok.com</a> antes de publicar em produção.</div>
+  </section>
+
+  <div class="foot"><span>Patrono Seller IA · Integração TikTok</span><span>Grupo Patrono · 2026</span></div>
+</div>
+</body>
+</html>

@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { ShoppingBag, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
+import { Loader2, AlertCircle, CheckCircle } from 'lucide-react'
+import { BrandMark } from '@/components/shared/BrandMark'
 
 const schema = z.object({
   name: z.string().min(2, 'Nome muito curto'),
@@ -69,8 +70,8 @@ export default function RegisterPage() {
   return (
     <div className="w-full max-w-sm">
       <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-accent/10 border border-accent/30 mb-4">
-          <ShoppingBag className="w-7 h-7 text-accent" />
+        <div className="inline-flex justify-center mb-4">
+          <BrandMark size={56} />
         </div>
         <h1 className="text-2xl font-bold text-white">Patrono Seller IA</h1>
         <p className="text-sm text-white/50 mt-1">Solicitar acesso à plataforma</p>

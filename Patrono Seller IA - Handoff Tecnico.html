@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Patrono Seller IA — Handoff técnico</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:oklch(0.155 0.018 285);--surface:oklch(0.205 0.018 285);--surface2:oklch(0.238 0.02 285);
+  --border:oklch(0.30 0.022 285);--border-soft:oklch(0.26 0.02 285);
+  --text:oklch(0.975 0.008 90);--muted:oklch(0.70 0.02 285);--dim:oklch(0.56 0.02 285);
+  --gold:oklch(0.84 0.155 86);--gold2:oklch(0.76 0.165 66);--violet:oklch(0.68 0.195 295);
+  --green:oklch(0.80 0.16 158);--red:oklch(0.70 0.19 22);--blue:oklch(0.74 0.13 240);--amber:oklch(0.80 0.15 70);
+  --fd:'Space Grotesk',sans-serif;--fb:'DM Sans',sans-serif;--fm:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(900px 500px at 100% -10%,oklch(0.68 0.195 295/0.06),transparent 60%),radial-gradient(700px 400px at 0% 100%,oklch(0.84 0.155 86/0.04),transparent 55%);
+  background-attachment:fixed;}
+.doc{max-width:880px;margin:0 auto;padding:64px 40px 100px}
+h1,h2,h3,h4{font-family:var(--fd);letter-spacing:-0.02em;line-height:1.15}
+h1{font-size:38px;font-weight:700}
+h2{font-size:24px;font-weight:600;margin:0 0 18px}
+h3{font-size:17px;font-weight:600;margin:0 0 10px}
+p{color:var(--muted)}
+a{color:var(--gold);text-decoration:none}
+section{margin-top:54px;scroll-margin-top:24px}
+.lede{font-size:17px;color:var(--muted);max-width:640px;margin-top:14px}
+.tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--gold);background:oklch(0.84 0.155 86/0.12);border:1px solid oklch(0.84 0.155 86/0.25);padding:5px 11px;border-radius:99px}
+.mark{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(150deg,var(--gold),var(--gold2));box-shadow:0 8px 20px -8px var(--gold2)}
+.sec-num{font-family:var(--fm);font-size:13px;color:var(--violet);font-weight:500}
+.card{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:24px;margin-top:16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:14px}
+th{text-align:left;padding:10px 12px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--dim);border-bottom:1px solid var(--border)}
+td{padding:11px 12px;border-bottom:1px solid var(--border-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+code{font-family:var(--fm);font-size:12.5px;background:oklch(0 0 0/0.3);border:1px solid var(--border-soft);padding:1.5px 6px;border-radius:6px;color:var(--gold)}
+pre{font-family:var(--fm);font-size:12.5px;background:oklch(0 0 0/0.35);border:1px solid var(--border-soft);border-radius:12px;padding:16px 18px;overflow-x:auto;margin-top:14px;line-height:1.7}
+pre .c{color:var(--dim)}.pk{color:var(--violet)}.pv{color:var(--gold)}.ps{color:var(--green)}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:600;white-space:nowrap}
+.b-new{color:var(--violet);background:oklch(0.68 0.195 295/0.15)}
+.b-keep{color:var(--green);background:oklch(0.80 0.16 158/0.14)}
+.b-redo{color:var(--amber);background:oklch(0.80 0.15 70/0.14)}
+.swatch{height:54px;border-radius:10px;border:1px solid oklch(1 0 0/0.08);margin-bottom:8px}
+.tok{font-family:var(--fm);font-size:11.5px;color:var(--text)}
+.tok b{color:var(--dim);font-weight:400}
+.check{list-style:none;display:flex;flex-direction:column;gap:11px;margin-top:8px}
+.check li{display:flex;gap:12px;align-items:flex-start}
+.check .n{flex-shrink:0;width:24px;height:24px;border-radius:7px;background:oklch(0.68 0.195 295/0.15);color:var(--violet);font-family:var(--fm);font-size:12px;font-weight:600;display:grid;place-items:center;margin-top:1px}
+.callout{border-left:3px solid var(--gold);background:oklch(0.84 0.155 86/0.06);padding:14px 18px;border-radius:0 12px 12px 0;margin-top:18px;font-size:14px;color:var(--muted)}
+.callout.v{border-color:var(--violet);background:oklch(0.68 0.195 295/0.06)}
+.pillrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.pill{font-size:12.5px;font-weight:500;padding:6px 12px;border-radius:99px;background:oklch(1 0 0/0.04);border:1px solid var(--border)}
+hr{border:none;border-top:1px solid var(--border-soft);margin:0}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.toc a{font-size:13px;padding:7px 13px;border-radius:99px;background:oklch(1 0 0/0.04);border:1px solid var(--border);color:var(--muted)}
+.foot{margin-top:70px;padding-top:24px;border-top:1px solid var(--border-soft);color:var(--dim);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+@media print{body{background:white;color:#111}.doc{padding:24px}.card,pre{break-inside:avoid}section{break-inside:avoid}}
+@media(max-width:680px){.grid2{grid-template-columns:1fr}.doc{padding:40px 22px}}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:26px">
+      <div class="mark">
+        <svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 2.5l1.7 4.6 4.8.2-3.7 3 1.3 4.6L12 16.3 7.9 14.9l1.3-4.6-3.7-3 4.8-.2z" fill="oklch(0.2 0.02 70)"/><circle cx="12" cy="19.5" r="1.6" fill="oklch(0.2 0.02 70)"/></svg>
+      </div>
+      <div>
+        <div style="font-family:var(--fd);font-weight:700;font-size:17px">Patrono Seller IA</div>
+        <div style="font-size:11px;letter-spacing:0.18em;color:var(--gold);font-weight:700">HANDOFF TÉCNICO · v1</div>
+      </div>
+    </div>
+    <span class="tag">● Pronto para implementação</span>
+    <h1 style="margin-top:18px">Do redesign ao código:<br/>guia de implementação no Claude Code</h1>
+    <p class="lede">Este documento traduz o protótipo de alta fidelidade em instruções concretas para o repositório <code>patrono-seller-ia</code> (Next.js + Tailwind + Prisma). Tokens, componentes, mapeamento de telas e os módulos novos a construir.</p>
+    <div class="toc">
+      <a href="#tokens">1 · Tokens</a>
+      <a href="#tipografia">2 · Tipografia</a>
+      <a href="#componentes">3 · Componentes</a>
+      <a href="#telas">4 · Telas → arquivos</a>
+      <a href="#novos">5 · Módulos novos</a>
+      <a href="#ia">6 · Integração de IA</a>
+      <a href="#offline">7 · Offline</a>
+      <a href="#checklist">8 · Checklist</a>
+    </div>
+  </header>
+
+  <!-- 1 TOKENS -->
+  <section id="tokens">
+    <div class="sec-num">01</div>
+    <h2>Design tokens</h2>
+    <p>O protótipo usa <b>oklch</b>. Abaixo, os valores prontos para colar. Recomendo migrar <code>globals.css</code> e <code>tailwind.config.ts</code> para estes tokens — substituindo o navy/HSL atual.</p>
+
+    <div class="card">
+      <h3>Paleta</h3>
+      <div class="grid2" style="grid-template-columns:repeat(4,1fr);margin-top:6px">
+        <div><div class="swatch" style="background:var(--bg)"></div><div class="tok">bg<br/><b>oklch(.155 .018 285)</b></div></div>
+        <div><div class="swatch" style="background:var(--surface)"></div><div class="tok">surface<br/><b>oklch(.205 .018 285)</b></div></div>
+        <div><div class="swatch" style="background:var(--surface2)"></div><div class="tok">surface-2<br/><b>oklch(.238 .02 285)</b></div></div>
+        <div><div class="swatch" style="background:var(--border)"></div><div class="tok">border<br/><b>oklch(.30 .022 285)</b></div></div>
+        <div><div class="swatch" style="background:linear-gradient(150deg,var(--gold),var(--gold2))"></div><div class="tok">gold (brand)<br/><b>oklch(.84 .155 86)</b></div></div>
+        <div><div class="swatch" style="background:var(--violet)"></div><div class="tok">violet (IA)<br/><b>oklch(.68 .195 295)</b></div></div>
+        <div><div class="swatch" style="background:var(--green)"></div><div class="tok">green<br/><b>oklch(.80 .16 158)</b></div></div>
+        <div><div class="swatch" style="background:var(--red)"></div><div class="tok">red<br/><b>oklch(.70 .19 22)</b></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>tailwind.config.ts — bloco <code>colors</code></h3>
+      <pre><span class="c">// substitui primary/accent/orange atuais</span>
+colors: {
+  bg:      <span class="pv">'oklch(0.155 0.018 285)'</span>,
+  surface: <span class="pv">'oklch(0.205 0.018 285)'</span>,
+  brand:   { DEFAULT: <span class="pv">'oklch(0.84 0.155 86)'</span>, deep: <span class="pv">'oklch(0.76 0.165 66)'</span> }, <span class="c">// ouro</span>
+  ia:      <span class="pv">'oklch(0.68 0.195 295)'</span>, <span class="c">// violeta — features de IA</span>
+  ok:      <span class="pv">'oklch(0.80 0.16 158)'</span>,
+  danger:  <span class="pv">'oklch(0.70 0.19 22)'</span>,
+  warn:    <span class="pv">'oklch(0.80 0.15 70)'</span>,
+}</pre>
+      <div class="callout v">Convenção de cor: <b>ouro</b> = marca, ações primárias e metas. <b>Violeta</b> = tudo que é IA (Radar, Transformador, Video Seller, Motor de Decisão). Mantenha essa semântica para a interface "explicar sozinha".</div>
+    </div>
+
+    <div class="card">
+      <h3>Raios &amp; sombras</h3>
+      <div class="pillrow">
+        <span class="pill">radius base <code>16px</code></span>
+        <span class="pill">radius sm <code>11px</code></span>
+        <span class="pill">radius lg <code>22px</code></span>
+        <span class="pill">shadow <code>0 12px 32px -12px black/55</code></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 TIPOGRAFIA -->
+  <section id="tipografia">
+    <div class="sec-num">02</div>
+    <h2>Tipografia</h2>
+    <p>Troca do <b>Inter</b> por um par com mais personalidade. <b>Space Grotesk</b> para títulos/números, <b>DM Sans</b> para corpo.</p>
+    <div class="card">
+      <pre><span class="c">/* globals.css — substitui o @import do Inter */</span>
+@import url(<span class="ps">'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:opsz,<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="691e0e011d295047475d59">[email&#160;protected]</a>,400..700&display=swap'</span>);
+
+<span class="pk">--font-display</span>: <span class="pv">'Space Grotesk'</span>, system-ui, sans-serif;
+<span class="pk">--font-body</span>: <span class="pv">'DM Sans'</span>, system-ui, sans-serif;</pre>
+      <div class="grid2" style="margin-top:18px">
+        <div><div style="font-family:var(--fd);font-size:30px;font-weight:700">1.240 / 2.000</div><div class="tok" style="margin-top:4px"><b>Space Grotesk · números, h1–h4</b></div></div>
+        <div><div style="font-family:var(--fb);font-size:16px">Tendências viram conteúdo próprio.</div><div class="tok" style="margin-top:8px"><b>DM Sans · corpo, labels, tabelas</b></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 COMPONENTES -->
+  <section id="componentes">
+    <div class="sec-num">03</div>
+    <h2>Receitas de componentes</h2>
+    <p>Os componentes do protótipo já existem como CSS reutilizável (<code>styles.css</code>). Recriar como componentes React + classes Tailwind.</p>
+    <table>
+      <thead><tr><th>Componente</th><th>Anatomia</th><th>Onde aparece</th></tr></thead>
+      <tbody>
+        <tr><td><b>Button</b></td><td>primary (gradiente ouro), violet (IA), ghost, danger · raio 11px</td><td>tudo</td></tr>
+        <tr><td><b>StatCard</b></td><td>ícone em tile colorido + valor (Space Grotesk) + label + tendência</td><td>Dashboard, Relatórios, Links</td></tr>
+        <tr><td><b>Badge / Status</b></td><td>pílula com dot · 8 status mapeados (campeão, aprovado, aguardando…)</td><td>tabelas, cards</td></tr>
+        <tr><td><b>GoalCard</b></td><td>card com barra de progresso + gradiente radial</td><td>Dashboard</td></tr>
+        <tr><td><b>PhonePreview</b></td><td>frame 9:16 + ícones sociais — placeholder de vídeo</td><td>Conteúdos, Aprovação, Video Seller</td></tr>
+        <tr><td><b>Media</b></td><td>placeholder listrado com legenda mono</td><td>onde entra mídia real</td></tr>
+        <tr><td><b>Table</b></td><td>header uppercase dim + linhas com hover</td><td>todas as listagens</td></tr>
+        <tr><td><b>Sidebar</b></td><td>4 grupos, item ativo com barra ouro + badge/tag</td><td>shell</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">Os arquivos <code>styles.css</code>, <code>icons.jsx</code> e <code>ui.jsx</code> do protótipo são a fonte de verdade visual. Os ícones são SVGs simples — em produção, use <code>lucide-react</code> (já no projeto) com os mesmos nomes.</div>
+  </section>
+
+  <!-- 4 TELAS -->
+  <section id="telas">
+    <div class="sec-num">04</div>
+    <h2>Telas → arquivos do repositório</h2>
+    <p>Mapeamento de cada tela do protótipo para a rota no <code>app/(dashboard)</code>. <span class="badge b-keep">existe</span> redesenhar o existente · <span class="badge b-redo">ajustar</span> mudar estrutura · <span class="badge b-new">novo</span> criar do zero.</p>
+    <table>
+      <thead><tr><th>Tela (protótipo)</th><th>Rota / arquivo</th><th>Ação</th></tr></thead>
+      <tbody>
+        <tr><td>Login / Register</td><td><code>app/(auth)/login</code> · <code>/register</code></td><td><span class="badge b-keep">existe</span></td></tr>
+        <tr><td>Dashboard de metas</td><td><code>app/(dashboard)/dashboard</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Radar de Tendências + Analisador</td><td><code>.../radar</code></td><td><span class="badge b-new">novo</span></td></tr>
+        <tr><td>Transformador IA</td><td><code>.../conteudos/gerar</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Banco de Conteúdos</td><td><code>.../conteudos</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Aprovar Agora</td><td><code>.../aprovacao</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Calendário Editorial</td><td><code>.../calendario</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Produtos Afiliados</td><td><code>.../produtos</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Vídeos Autorizados</td><td><code>.../biblioteca</code> (ou <code>/videos</code>)</td><td><span class="badge b-new">novo</span></td></tr>
+        <tr><td>Patrono Video Seller</td><td><code>.../video-seller</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Séries Fixas</td><td><code>.../series</code></td><td><span class="badge b-new">novo</span></td></tr>
+        <tr><td>Relatórios</td><td><code>.../relatorios</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Motor de Decisão</td><td><code>.../decisao</code></td><td><span class="badge b-new">novo</span></td></tr>
+        <tr><td>Painel de Lucro e Escala</td><td><code>.../lucro</code> + drill-down</td><td><span class="badge b-new">novo</span></td></tr>
+        <tr><td>Painel de Metas (equipes + rankings)</td><td><code>.../metas</code></td><td><span class="badge b-new">novo</span></td></tr>
+        <tr><td>Links Dinâmicos</td><td><code>.../links</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+        <tr><td>Integrações · Monetização · WhatsApp</td><td><code>.../integracoes · /monetizacao · /whatsapp</code></td><td><span class="badge b-redo">ajustar</span></td></tr>
+      </tbody>
+    </table>
+    <div class="callout">Comece pelo <b>shell</b>: <code>components/shared/Sidebar.tsx</code> + <code>Header.tsx</code> + <code>globals.css</code>. Trocar tokens + tipografia + sidebar já dá ~70% do impacto visual em todas as telas de uma vez.</div>
+  </section>
+
+  <!-- 5 MODULOS NOVOS -->
+  <section id="novos">
+    <div class="sec-num">05</div>
+    <h2>Módulos novos — backend</h2>
+    <p>Os módulos do documento BoraComprar que ainda não têm modelo no Prisma. Sugestão de schema mínimo para o MVP.</p>
+    <div class="card">
+      <h3>prisma/schema.prisma — modelos a adicionar</h3>
+      <pre><span class="pk">model</span> Tendencia {
+  id String <span class="pk">@id @default</span>(cuid())
+  tema String
+  categoria String
+  produtoIdentificado String?
+  dor String?
+  gancho String?
+  formato String?
+  duracao String?
+  tipoCta String?
+  riscoCopia String   <span class="c">// baixo | medio | alto</span>
+  motivoViral String?
+  linkReferencia String? <span class="c">// SÓ análise — nunca repostar</span>
+  score Int           <span class="c">// 0–100, calculado pela IA</span>
+  createdAt DateTime <span class="pk">@default</span>(now())
+}
+
+<span class="pk">model</span> Criativo {        <span class="c">// Biblioteca de vídeos autorizados</span>
+  id String <span class="pk">@id @default</span>(cuid())
+  arquivo String
+  origem String       <span class="c">// ugc | proprio | fornecedor | banco | ia</span>
+  fornecedor String?
+  categoria String
+  autorizado Boolean <span class="pk">@default</span>(<span class="ps">false</span>)
+  podePostar Boolean <span class="pk">@default</span>(<span class="ps">false</span>)  <span class="c">// gate da fila</span>
+  podeEditar Boolean <span class="pk">@default</span>(<span class="ps">false</span>)
+  validade DateTime?
+  status String       <span class="c">// recebido | em_analise | aprovado | bloqueado | postado | campeao</span>
+}
+
+<span class="pk">model</span> Serie {
+  id String <span class="pk">@id @default</span>(cuid())
+  nome String
+  cor String
+  ativa Boolean <span class="pk">@default</span>(<span class="ps">true</span>)
+  conteudos Conteudo[]
+}
+
+<span class="c">// ===== Painel de Lucro e Escala =====</span>
+<span class="pk">model</span> Venda {
+  id String <span class="pk">@id @default</span>(cuid())
+  data DateTime
+  plataforma String     <span class="c">// shopee | mercado_livre | amazon | tiktok_shop | renner</span>
+  produtoId String
+  linkAfiliado String?
+  valorProduto Float
+  percentualComissao Float
+  valorComissao Float    <span class="c">// = valorProduto * percentual</span>
+  statusComissao String  <span class="c">// pendente | aprovada | cancelada | paga</span>
+  videoId String?
+  campanha String?
+  observacoes String?
+}
+
+<span class="pk">model</span> Custo {
+  id String <span class="pk">@id @default</span>(cuid())
+  tipo String           <span class="c">// ugc | edicao | ia | impulsionamento | assinatura | banco | freela | operacional | outro</span>
+  valor Float
+  vinculoTipo String    <span class="c">// produto | video | campanha | plataforma | geral</span>
+  vinculoId String?
+  data DateTime <span class="pk">@default</span>(now())
+}
+
+<span class="pk">model</span> Metrica {        <span class="c">// agregado por produto (recalculado)</span>
+  id String <span class="pk">@id @default</span>(cuid())
+  produtoId String <span class="pk">@unique</span>
+  cliques Int
+  vendas Int
+  comissao Float
+  custos Float
+  lucroLiquido Float    <span class="c">// comissao - custos</span>
+  margem Float          <span class="c">// lucro / comissao * 100</span>
+  conversao Float       <span class="c">// vendas / cliques * 100</span>
+  scoreEscala Int       <span class="c">// 0–100 (ver fórmula abaixo)</span>
+  cresc7d Float
+}
+
+<span class="pk">model</span> Recomendacao {
+  id String <span class="pk">@id @default</span>(cuid())
+  texto String
+  tipo String           <span class="c">// escalar | pausar | priorizar | revisar | investir</span>
+  alvoTipo String       <span class="c">// produto | plataforma | campanha | ugc</span>
+  alvoId String?
+  risco String          <span class="c">// verde | amarelo | vermelho</span>
+  status String <span class="pk">@default</span>(<span class="ps">"pendente"</span>) <span class="c">// pendente | aprovada | ignorada</span>
+}
+
+<span class="c">// ===== Painel de Metas (gestão de desempenho por equipe) =====</span>
+<span class="pk">model</span> Time {
+  id String <span class="pk">@id @default</span>(cuid())
+  nome String
+  adminId String        <span class="c">// User (papel admin) que lidera</span>
+  operadores User[]
+  metas Meta[]
+}
+
+<span class="pk">model</span> Meta {
+  id String <span class="pk">@id @default</span>(cuid())
+  nome String
+  tipo String           <span class="c">// vendas | atendimento | conversao | seguidores | postagens | lucro | produtos | prospeccao | contratos</span>
+  responsavelTipo String <span class="c">// admin | operador | time</span>
+  responsavelId String
+  timeId String?
+  valorMeta Float
+  valorRealizado Float <span class="pk">@default</span>(0)
+  periodo String        <span class="c">// diario | semanal | mensal | trimestral</span>
+  dataInicial DateTime
+  dataFinal DateTime
+  status String         <span class="c">// andamento | concluida | atrasada</span>
+  peso String           <span class="c">// prioridade: baixa | media | alta</span>
+  pontuacao Int <span class="pk">@default</span>(0)
+  observacoes String?
+}</pre>
+    </div>
+    <div class="card">
+      <h3>Painel de Metas — pontuação, papéis e rankings</h3>
+      <pre><span class="c">// Pontuação justa = baseada no % da meta (não no valor bruto)</span>
+percentual = valorRealizado / valorMeta * 100
+pontuacao  = round(percentual)        <span class="c">// 90% → 90 pts; 125% → 125 pts (extras)</span>
+falta      = max(0, valorMeta - valorRealizado)
+
+<span class="c">// Status visual por cor</span>
+&gt;= 100% azul (concluída) · &gt;= 80% verde · 50–79% amarelo · &lt; 50% vermelho · 0% cinza
+
+<span class="c">// 3 rankings (ordenar por % atingido):</span>
+1. Administradores  2. Operadores  3. Times
+
+<span class="c">// Permissões por papel</span>
+Admin Geral  → cria admins/operadores/times, todas as metas, vê tudo
+Admin Time   → cria/edita metas do SEU time e operadores; vê ranking geral
+Operador     → vê suas metas, ranking de operadores, desempenho do time (sem editar)</pre>
+      <div class="callout v" style="margin-top:14px">Tela: <code>app/(dashboard)/metas</code>. O protótipo traz um seletor "Ver como" (Admin Geral / Admin de Time / Operador) só para demonstração — em produção o painel se adapta ao <code>role</code> do usuário logado. Cada admin tem o botão "Ver meu time" (drill-down com operadores, realizado, % e posição).</div>
+    </div>
+    </div>
+    <div class="card">
+      <h3>Painel de Lucro — fórmulas e Score de Escala</h3>
+      <pre><span class="c">// Fórmulas base</span>
+comissao      = valorVenda * percentualComissao
+lucroLiquido  = comissaoRecebida - custosAtribuidos
+margem        = lucroLiquido / comissaoRecebida * 100
+conversao     = vendas / cliques * 100
+lucroPorVideo = comissaoDoVideo - custoDoVideo
+
+<span class="c">// Score de Escala (0–100): média ponderada normalizada</span>
+score = round(
+  0.20*nVendas + 0.15*conversao + 0.15*lucroLiquido +
+  0.12*comissaoPorVenda + 0.10*nCliques + 0.08*facilidadeVariacao +
+  0.08*avaliacaoProduto + 0.06*precoAcessivel + 0.06*baixoCancelamento
+) <span class="c">// cada fator normalizado 0–1 antes de ponderar</span>
+
+<span class="c">// Faixas:  0–30 não escalar · 31–60 testar · 61–80 promissor · 81–100 campeão</span></pre>
+      <div class="callout v" style="margin-top:14px">Telas: <code>app/(dashboard)/lucro</code> (painel) + drill-down por produto e por plataforma (modal ou rota <code>/lucro/produto/[id]</code>). Recalcular <code>Metrica</code> via job após cada venda/custo novo. Exportação CSV das vendas e do ranking.</div>
+    </div></pre>
+    </div>
+    <div class="card">
+      <h3>Regras de segurança (hard rules)</h3>
+      <ul class="check">
+        <li><span class="n">!</span><div><b>Gate de publicação:</b> só entra na fila <code>Criativo</code> com <code>podePostar === true</code>. Validar no backend, não só na UI.</div></li>
+        <li><span class="n">!</span><div><b>Sem cópia:</b> <code>Tendencia.linkReferencia</code> é só para análise — nunca baixar, repostar ou remover marca d'água.</div></li>
+        <li><span class="n">!</span><div><b>Aprovação obrigatória:</b> publicação automática, fornecedor novo, 1ª campanha e risco jurídico sempre passam pelo painel "Aprovar Agora".</div></li>
+        <li><span class="n">!</span><div><b>Compliance de legenda:</b> bloquear promessas absolutas ("garantido", "prometo") — vira alerta vermelho.</div></li>
+      </ul>
+    </div>
+    <h3 style="margin-top:24px">Motor de Decisão — lógica</h3>
+    <div class="card">
+      <pre><span class="c">// após coletar métricas de um conteúdo postado</span>
+<span class="pk">if</span> (performou === <span class="pv">'bem'</span>)   → marcar campeão · criar 5 variações · repetir produto
+<span class="pk">if</span> (performou === <span class="pv">'medio'</span>) → trocar legenda · novo CTA · mudar horário
+<span class="pk">if</span> (performou === <span class="pv">'fraco'</span>) → pausar formato · arquivar aprendizado</pre>
+    </div>
+  </section>
+
+  <!-- 6 INTEGRACAO IA -->
+  <section id="ia">
+    <div class="sec-num">06</div>
+    <h2>Integração de IA</h2>
+    <p>Onde a IA entra, como conectar e como não estourar custo. <b>Regra de ouro:</b> a chave da IA fica só no servidor (nunca no bundle do front).</p>
+    <div class="card">
+      <h3>Onde a IA é usada</h3>
+      <table>
+        <thead><tr><th>Função</th><th>Entra em</th><th>Saída</th></tr></thead>
+        <tbody>
+          <tr><td>Análise de tendência</td><td>Radar</td><td>gancho, dor, formato, motivo viral, risco de cópia, score</td></tr>
+          <tr><td>Transformar em conteúdo próprio</td><td>Transformador IA</td><td>5 ganchos, 5 roteiros, 5 legendas A/B, CTAs, produtos sugeridos</td></tr>
+          <tr><td>Gerar legendas + hashtags</td><td>Aprovar Agora, Publicação</td><td>legenda + até 5 hashtags + aviso de afiliado</td></tr>
+          <tr><td>Análise de performance</td><td>Motor de Decisão, Lucro</td><td>campeão/médio/fraco + próxima ação</td></tr>
+          <tr><td>Score de Escala + recomendação</td><td>Lucro e Escala</td><td>0–100 + texto de recomendação</td></tr>
+          <tr><td>Análise jurídica de risco</td><td>Compliance</td><td>promessa exagerada, falta de aviso, risco autoral</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Arquitetura recomendada (Next.js)</h3>
+      <pre><span class="c">// .env  — chave só no servidor</span>
+OPENAI_API_KEY=<span class="pv">sk-•••</span>        <span class="c">// ou ANTHROPIC_API_KEY / a IA que você usa</span>
+IA_MODELO=<span class="pv">gpt-4o-mini</span>        <span class="c">// barato para gerar em volume</span>
+IA_LIMITE_DIA=<span class="pv">2000</span>          <span class="c">// teto de gerações/dia por conta</span>
+
+<span class="c">// app/api/ia/gerar/route.ts  (Server Route — nunca no client)</span>
+<span class="pk">export async function</span> POST(req) {
+  <span class="pk">const</span> { tipo, contexto, contaId } = <span class="pk">await</span> req.json()
+  <span class="pk">await</span> checarCota(contaId)            <span class="c">// guardrail de custo</span>
+  <span class="pk">const</span> prompt = montarPrompt(tipo, contexto) <span class="c">// roteiro|legenda|analise…</span>
+  <span class="pk">const</span> r = <span class="pk">await</span> ia.chat({ model: process.env.IA_MODELO, messages: prompt })
+  <span class="pk">await</span> registrarUso(contaId, r.usage) <span class="c">// para cobrança por créditos</span>
+  <span class="pk">return</span> Response.json(r.saida)
+}</pre>
+      <div class="callout v">No protótipo, a IA é simulada (dados mock). Em produção, cada botão "Gerar" chama <code>/api/ia/gerar</code>. Os <b>créditos por módulo</b> (Conteúdo IA, Imagens, Lucro) usam o <code>registrarUso()</code> para descontar e exibir o medidor que já existe na Loja de Módulos.</div>
+    </div>
+    <div class="card">
+      <h3>Guardrails (obrigatórios)</h3>
+      <ul class="check">
+        <li><span class="n">!</span><div><b>Chave no servidor.</b> Nunca exponha a API key no front nem em <code>NEXT_PUBLIC_*</code>.</div></li>
+        <li><span class="n">!</span><div><b>Cota por conta/dia.</b> Bloqueie acima do limite e ofereça compra de créditos extras.</div></li>
+        <li><span class="n">!</span><div><b>Cache.</b> Reaproveite análises de tendência iguais para não pagar duas vezes.</div></li>
+        <li><span class="n">!</span><div><b>Fallback.</b> Se a IA falhar, mostre rascunho editável — nunca trave o fluxo.</div></li>
+        <li><span class="n">!</span><div><b>Revisão humana.</b> Saída de IA sempre passa pela usuária antes de publicar.</div></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 7 OFFLINE -->
+  <section id="offline">
+    <div class="sec-num">07</div>
+    <h2>Funcionamento offline (PWA)</h2>
+    <p>A plataforma deve abrir e ser usável <b>sem internet</b> — consultar conteúdos, calendário, produtos e rascunhar; sincronizando quando a conexão voltar.</p>
+    <div class="card">
+      <h3>O que funciona offline</h3>
+      <table>
+        <thead><tr><th>Offline (lê e edita)</th><th>Só online (precisa de rede)</th></tr></thead>
+        <tbody>
+          <tr><td>Abrir o app e navegar (telas em cache)</td><td>Gerar com IA (chama o servidor)</td></tr>
+          <tr><td>Ver calendário, conteúdos, produtos, metas</td><td>Publicar nas redes / APIs</td></tr>
+          <tr><td>Escrever roteiros e legendas (rascunho)</td><td>Sincronizar vendas e métricas</td></tr>
+          <tr><td>Marcar aprovação (entra na fila de sync)</td><td>Conectar contas (OAuth)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Como implementar</h3>
+      <pre><span class="c">// 1. PWA: manifest + service worker (next-pwa)</span>
+npm i next-pwa
+<span class="c">// next.config.js → registra SW, faz cache do app shell e telas</span>
+
+<span class="c">// 2. Dados locais: IndexedDB (Dexie) como cache + fila offline</span>
+npm i dexie
+db.rascunhos / db.filaSync / db.cacheTelas
+
+<span class="c">// 3. Sincronização quando a rede volta</span>
+window.addEventListener(<span class="ps">'online'</span>, sincronizarFila)
+<span class="c">// envia rascunhos, aprovações e edições pendentes ao servidor</span></pre>
+      <div class="callout">Estratégia de cache: <b>app shell + telas</b> com <i>stale-while-revalidate</i>; <b>dados</b> em IndexedDB com fila de escrita offline. Um selo <span class="badge b-redo">offline</span> no topo avisa a usuária quando está sem rede e o que ficará pendente até sincronizar.</div>
+    </div>
+  </section>
+
+  <!-- 6 CHECKLIST -->
+  <section id="checklist">
+    <div class="sec-num">08</div>
+    <h2>Ordem de implementação sugerida</h2>
+    <div class="card">
+      <ul class="check">
+        <li><span class="n">1</span><div><b>Fundação visual</b> — tokens em <code>globals.css</code> + <code>tailwind.config.ts</code>, fontes Space Grotesk/DM Sans. <span style="color:var(--dim)">(maior impacto, menor esforço)</span></div></li>
+        <li><span class="n">2</span><div><b>Shell</b> — redesenhar <code>Sidebar.tsx</code> (4 grupos, tags IA/NOVO) e <code>Header.tsx</code>.</div></li>
+        <li><span class="n">3</span><div><b>Biblioteca de componentes</b> — Button, StatCard, Badge, Table, PhonePreview, Media como componentes em <code>components/ui</code>.</div></li>
+        <li><span class="n">4</span><div><b>Telas existentes</b> — aplicar o novo visual em Dashboard, Produtos, Conteúdos, Aprovação, Calendário, Relatórios.</div></li>
+        <li><span class="n">5</span><div><b>Módulos novos (frontend + Prisma + API)</b> — Radar, Biblioteca autorizada, Séries, Motor de Decisão.</div></li>
+        <li><span class="n">6</span><div><b>Regras de segurança</b> — gates de publicação, compliance de legenda, fluxo de aprovação.</div></li>
+        <li><span class="n">7</span><div><b>Integração de IA</b> — rota <code>/api/ia/gerar</code>, chave no servidor, cota por conta e medidor de créditos.</div></li>
+        <li><span class="n">8</span><div><b>Offline (PWA)</b> — service worker + IndexedDB + fila de sincronização.</div></li>
+      </ul>
+    </div>
+    <div class="callout v">Dica de prompt para o Claude Code: <i>"Use os tokens oklch e a tipografia Space Grotesk/DM Sans deste handoff. Comece pelo globals.css e Sidebar.tsx, depois os componentes ui/. Mantenha a semântica ouro=marca, violeta=IA."</i></div>
+  </section>
+
+  <div class="foot">
+    <span>Patrono Seller IA · Handoff técnico</span>
+    <span>Grupo Patrono · 2026</span>
+  </div>
+
+</div>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script></body>
+</html>

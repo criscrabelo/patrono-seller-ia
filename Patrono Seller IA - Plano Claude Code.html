@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Patrono Seller IA — Plano para o Claude Code</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:oklch(0.155 0.018 285);--surface:oklch(0.205 0.018 285);--surface2:oklch(0.238 0.02 285);
+  --border:oklch(0.30 0.022 285);--border-soft:oklch(0.26 0.02 285);
+  --text:oklch(0.975 0.008 90);--muted:oklch(0.70 0.02 285);--dim:oklch(0.56 0.02 285);
+  --gold:oklch(0.84 0.155 86);--gold2:oklch(0.76 0.165 66);--violet:oklch(0.68 0.195 295);
+  --green:oklch(0.80 0.16 158);--red:oklch(0.70 0.19 22);--blue:oklch(0.74 0.13 240);--amber:oklch(0.80 0.15 70);--pink:oklch(0.72 0.18 350);
+  --fd:'Space Grotesk',sans-serif;--fb:'DM Sans',sans-serif;--fm:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(900px 500px at 100% -10%,oklch(0.68 0.195 295/0.06),transparent 60%),radial-gradient(700px 400px at 0% 100%,oklch(0.84 0.155 86/0.04),transparent 55%);background-attachment:fixed}
+.doc{max-width:880px;margin:0 auto;padding:64px 40px 100px}
+h1,h2,h3,h4{font-family:var(--fd);letter-spacing:-0.02em;line-height:1.15}
+h1{font-size:36px;font-weight:700}h2{font-size:23px;font-weight:600;margin:0 0 16px}h3{font-size:16px;font-weight:600;margin:0 0 10px}
+p{color:var(--muted)}a{color:var(--gold);text-decoration:none}
+section{margin-top:52px;scroll-margin-top:24px}
+.lede{font-size:17px;color:var(--muted);max-width:660px;margin-top:14px}
+.tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--violet);background:oklch(0.68 0.195 295/0.12);border:1px solid oklch(0.68 0.195 295/0.25);padding:5px 11px;border-radius:99px}
+.mark{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(150deg,var(--gold),var(--gold2));box-shadow:0 8px 20px -8px var(--gold2)}
+.sec-num{font-family:var(--fm);font-size:13px;color:var(--violet);font-weight:500}
+.card{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:24px;margin-top:16px}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.toc a{font-size:13px;padding:7px 13px;border-radius:99px;background:oklch(1 0 0/0.04);border:1px solid var(--border);color:var(--muted)}
+/* prompt block */
+.prompt{position:relative;background:oklch(0 0 0/0.4);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:0 14px 14px 0;padding:18px 20px;margin-top:14px;font-family:var(--fm);font-size:13px;line-height:1.7;color:oklch(0.92 0.01 90);white-space:pre-wrap}
+.prompt .lbl{position:absolute;top:-11px;left:16px;background:var(--gold);color:oklch(0.2 0.02 70);font-family:var(--fb);font-size:11px;font-weight:700;padding:2px 10px;border-radius:99px;letter-spacing:0.02em}
+.step-h{display:flex;align-items:center;gap:12px;margin-top:30px}
+.step-h .n{width:30px;height:30px;border-radius:9px;background:linear-gradient(150deg,var(--gold),var(--gold2));color:oklch(0.2 0.02 70);font-family:var(--fd);font-weight:700;display:grid;place-items:center;flex-shrink:0}
+.step-h h3{margin:0;font-size:17px;white-space:nowrap}
+.step-h .meta{margin-left:auto;font-size:12px;color:var(--dim);white-space:nowrap;flex-shrink:0}
+/* checklist */
+.check{list-style:none;display:flex;flex-direction:column;gap:15px;margin-top:6px}
+.check li{display:flex;gap:12px;align-items:flex-start}
+.check li>div{line-height:1.7}
+.check .box{flex-shrink:0;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border-strong,oklch(0.40 0.028 285));margin-top:2px}
+.check li.done .box{background:var(--green);border-color:var(--green);position:relative}
+.check li.done .box::after{content:'✓';position:absolute;inset:0;display:grid;place-items:center;color:oklch(0.15 0.02 158);font-size:13px;font-weight:700}
+.check b{color:var(--text);font-weight:600}
+.check li .ci{flex:1;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.check li .ci .pill{flex-shrink:0}
+.check small{color:var(--dim);display:block;font-size:12.5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.callout{border-left:3px solid var(--violet);background:oklch(0.68 0.195 295/0.06);padding:14px 18px;border-radius:0 12px 12px 0;margin-top:18px;font-size:14px;color:var(--muted)}
+.callout.r{border-color:var(--red);background:oklch(0.70 0.19 22/0.06)}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:600}
+.p-gold{color:var(--gold);background:oklch(0.84 0.155 86/0.14)}
+.p-ia{color:var(--violet);background:oklch(0.68 0.195 295/0.15)}
+.p-red{color:var(--red);background:oklch(0.70 0.19 22/0.14)}
+code{font-family:var(--fm);font-size:12.5px;background:oklch(0 0 0/0.3);border:1px solid var(--border-soft);padding:1.5px 6px;border-radius:6px;color:var(--gold)}
+.foot{margin-top:70px;padding-top:24px;border-top:1px solid var(--border-soft);color:var(--dim);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+@media print{body{background:white;color:#111}.doc{padding:24px}.card,.prompt,section{break-inside:avoid}}
+@media(max-width:680px){.doc{padding:40px 22px}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:26px">
+      <div class="mark"><svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 2.5l1.7 4.6 4.8.2-3.7 3 1.3 4.6L12 16.3 7.9 14.9l1.3-4.6-3.7-3 4.8-.2z" fill="oklch(0.2 0.02 70)"/><circle cx="12" cy="19.5" r="1.6" fill="oklch(0.2 0.02 70)"/></svg></div>
+      <div><div style="font-family:var(--fd);font-weight:700;font-size:17px">Patrono Seller IA</div><div style="font-size:11px;letter-spacing:0.18em;color:var(--violet);font-weight:700">PLANO PARA O CLAUDE CODE</div></div>
+    </div>
+    <span class="tag">● Prompts prontos + checklist de produção</span>
+    <h1 style="margin-top:18px">O que pedir ao Claude Code<br/>para ficar pronta para uso</h1>
+    <p class="lede">Cole os prompts abaixo, na ordem, um de cada vez. Cada um é uma fatia pequena e testável — assim o Claude Code não se perde e você valida passo a passo. No fim, o checklist mostra o que falta para "pronta para uso de verdade".</p>
+    <div class="toc">
+      <a href="#como">Como usar</a>
+      <a href="#prompts">Os prompts (1–9)</a>
+      <a href="#falta">O que ainda falta</a>
+      <a href="#checklist">Checklist de produção</a>
+    </div>
+  </header>
+
+  <section id="como">
+    <div class="sec-num">00</div>
+    <h2>Como usar este plano</h2>
+    <div class="card">
+      <ul class="check">
+        <li><div class="box"></div><div><b>Um prompt por vez.</b><small>Espere o Claude Code terminar e teste antes de ir para o próximo. Não cole tudo de uma vez.</small></div></li>
+        <li><div class="box"></div><div><b>Anexe os arquivos do handoff.</b><small>Tenha à mão <code>globals.css</code>, <code>tailwind.config.ts</code> e os 3 guias (Handoff, TikTok, este). Mencione-os no prompt.</small></div></li>
+        <li><div class="box"></div><div><b>Faça commit a cada passo.</b><small>Se algo quebrar, você volta um passo. Peça ao Claude Code: "faça commit antes de começar".</small></div></li>
+        <li><div class="box"></div><div><b>Teste no navegador a cada etapa.</b><small>Rode <code>npm run dev</code> e confira a tela antes de seguir.</small></div></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="prompts">
+    <div class="sec-num">01</div>
+    <h2>Os prompts — na ordem</h2>
+    <p>Copie cada bloco para o Claude Code. Comece sempre lembrando o objetivo do projeto.</p>
+
+    <div class="step-h"><div class="n">1</div><h3>Fundação visual</h3><span class="meta">~70% do impacto</span></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Aplique o novo design system do Patrono Seller IA. Substitua app/globals.css e tailwind.config.ts pelos arquivos do handoff (pasta handoff/). Troque a fonte Inter por Space Grotesk (títulos) + DM Sans (corpo). Mantenha funcionando as classes que o código já usa (bg-primary, text-accent, border-border, card-stat, sidebar-item). Não mude lógica ainda — só visual. Rode o build e me mostre erros.</div>
+
+    <div class="step-h"><div class="n">2</div><h3>Shell (sidebar + header)</h3></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Redesenhe components/shared/Sidebar.tsx e Header.tsx seguindo o protótipo: 4 grupos (Operação, Acervo, Inteligência, Conexões) + grupo Administração só para admin. Item ativo com barra dourada à esquerda. Tags "IA" (violeta) e "NOVO". Mantenha a semântica ouro = marca, violeta = IA.</div>
+
+    <div class="step-h"><div class="n">3</div><h3>Telas existentes</h3></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Aplique o novo visual nas telas que já existem: Dashboard, Produtos, Banco de Conteúdos, Aprovação, Calendário, Relatórios, Monetização, Links, WhatsApp, Integrações. Use os componentes do protótipo (StatCard, Badge, tabela, PhonePreview). Não invente dados — ligue ao que já vem da API/Prisma.</div>
+
+    <div class="step-h"><div class="n">4</div><h3>Papéis: Admin e Operador</h3><span class="meta p-gold">você pediu</span></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Implemente controle de acesso por papel. No Prisma, garanta User.role = 'admin' | 'operador'. Crie/atualize app/(dashboard)/admin/usuarios: listar usuários, cadastrar novo com escolha de papel (Administrador ou Operador), bloquear/remover, e aprovar solicitações de cadastro como Operador ou Admin. Proteja a rota e a API: só admin acessa. Operador NÃO vê Usuários nem Integrações. Use middleware.ts para barrar no servidor.</div>
+
+    <div class="step-h"><div class="n">5</div><h3>Módulos novos</h3><span class="meta p-ia">novos</span></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Crie os módulos novos do protótipo, cada um com tela + modelo Prisma + rotas de API: (1) Radar de Tendências + Analisador, (2) Biblioteca de Vídeos Autorizados com gate podePostar, (3) Séries Fixas, (4) Motor de Decisão (classifica campeão/médio/fraco e sugere ação). Use os schemas Prisma do documento de Handoff técnico. Rode a migration.</div>
+
+    <div class="step-h"><div class="n">6</div><h3>IA conectada de verdade</h3></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Conecte a IA real (a chave que eu já uso no projeto). Faça funcionar de ponta a ponta: Transformador (tendência → 5 ganchos, 5 roteiros, 5 legendas A/B, CTAs, 3 produtos sugeridos), gerador de legendas, análise de tendência e análise de performance. Guarde a chave em variável de ambiente no servidor. Adicione tratamento de erro e limite de uso (não estourar custo).</div>
+
+    <div class="step-h"><div class="n">7</div><h3>Integração TikTok</h3><span class="meta p-gold">você pediu</span></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Implemente a integração TikTok seguindo o documento "Integração TikTok". Comece pelo modo Pacote Manual (gera .zip com vídeo + legenda + hashtags + link + instruções) — esse funciona já. Depois o Login Kit (OAuth) salvando tokens cifrados no model Integracao, e a Content Posting API para o modo automático. A 1ª publicação automática SEMPRE passa pelo painel Aprovar Agora. Use as variáveis TIKTOK_CLIENT_KEY/SECRET/REDIRECT_URI.</div>
+
+    <div class="step-h"><div class="n">8</div><h3>Segurança, estados e deploy</h3></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Deixe pronta para uso: (a) regras de segurança — bloquear postar sem autorização, link quebrado, vídeo sem produto, e promessas absolutas na legenda (compliance); (b) estados de loading, erro e vazio em todas as telas; (c) responsivo no celular; (d) variáveis de ambiente documentadas no .env.example; (e) deploy na Vercel funcionando. Me dê um checklist do que falta configurar.</div>
+
+    <div class="step-h"><div class="n">9</div><h3>Acervo completo: Imagens, Fornecedores, Creators/UGC e Compliance</h3><span class="meta p-gold">você pediu</span></div>
+    <div class="prompt"><span class="lbl">colar no Claude Code</span>Crie os 4 módulos finais do protótipo, cada um com tela + modelo Prisma + rotas de API, ligados à conta atual (contaId):
+
+(1) IMAGENS E CRIATIVOS — galeria de Capa/Carrossel/Banner/Thumbnail com filtro por tipo, clique no card abre detalhe, e overlay "Bloqueado" quando autorizado=false. Cada arte vincula a produto + campanha + fornecedor.
+
+(2) FORNECEDORES — tabela mestre-detalhe (produto, banco de imagens, agência UGC, editor, IA interna). Ações: Renovar contrato, Ver contrato, Coletar assinatura (termo digital). Fornecedor vencido gera pendência no Compliance.
+
+(3) CREATORS E UGC — roster (cachê, nota, exclusivo, cessão) + pipeline kanban Briefing → Produção → Recebido → Autorizado. Briefing e Contratar abrem modal.
+
+(4) COMPLIANCE JURÍDICO — índice de conformidade, checklist automático, termos versionados, logs auditáveis e tabela de conteúdo bloqueado. Cada bloqueio leva (cross-nav) à arte (Imagens) ou ao Fornecedor responsável.
+
+Regras: (a) o gate podePostar só libera conteúdo com autorizado=true E fornecedor/creator com termo vigente; (b) Operador vê Compliance em modo SOMENTE LEITURA e NÃO acessa Fornecedores; (c) módulo não contratado mostra a tela em PRÉVIA (paywall com dados demo) e "Ativar" libera. Use os schemas Prisma abaixo e rode a migration.</div>
+    <div class="prompt" style="border-left-color:var(--violet)"><span class="lbl" style="background:var(--violet);color:white">schema.prisma</span>enum TipoImagem { CAPA CARROSSEL BANNER THUMBNAIL }
+enum OrigemCriativo { IA VIDEO_PROPRIO FORNECEDOR UGC BANCO_LICENCIADO }
+enum StatusCriativo { NOVO RECEBIDO EM_ANALISE APROVADO CAMPEAO BLOQUEADO }
+enum TipoFornecedor { PRODUTO BANCO_IMAGENS AGENCIA_UGC EDITOR IA_INTERNA }
+enum StatusContrato { ATIVO VENCIDO PENDENTE INTERNO }
+enum FaseUGC { BRIEFING PRODUCAO RECEBIDO AUTORIZADO }
+enum StatusDoc { VIGENTE REVISAR VENCIDO }
+enum TipoLog { APROVADO BLOQUEADO RISCO }
+
+model Imagem {
+  id String @id @default(cuid())
+  nome String
+  tipo TipoImagem
+  origem OrigemCriativo
+  slides Int?
+  autorizado Boolean @default(false)
+  status StatusCriativo @default(NOVO)
+  validade DateTime?
+  usos Int @default(0)
+  produtoId String?
+  campanha String?
+  fornecedorId String?
+  fornecedor Fornecedor? @relation(fields:[fornecedorId], references:[id])
+  contaId String
+}
+
+model Fornecedor {
+  id String @id @default(cuid())
+  nome String
+  tipo TipoFornecedor
+  contato String
+  contrato StatusContrato @default(PENDENTE)
+  termo Boolean @default(false)
+  validade DateTime?
+  nichos String[]
+  imagens Imagem[]
+  contaId String
+}
+
+model Creator {
+  id String @id @default(cuid())
+  nome String
+  handle String
+  nichos String[]
+  cache Int
+  termoCessao Boolean @default(false)
+  exclusivo Boolean @default(false)
+  validade DateTime?
+  nota Float?
+  entregas EntregaUGC[]
+  contaId String
+}
+
+model EntregaUGC {
+  id String @id @default(cuid())
+  creatorId String
+  creator Creator @relation(fields:[creatorId], references:[id])
+  produtoId String?
+  fase FaseUGC @default(BRIEFING)
+  prazo DateTime?
+}
+
+model TermoJuridico {
+  id String @id @default(cuid())
+  nome String
+  versao String
+  status StatusDoc @default(VIGENTE)
+  atualizado DateTime @default(now())
+  contaId String
+}
+
+model LogCompliance {
+  id String @id @default(cuid())
+  quem String
+  acao String
+  alvo String
+  tipo TipoLog
+  motivo String?
+  criadoEm DateTime @default(now())
+  contaId String
+}</div>
+  </section>
+
+  <section id="falta">
+    <div class="sec-num">02</div>
+    <h2>O que provavelmente ainda falta (e você pode esquecer)</h2>
+    <p>Coisas que não aparecem no design mas todo produto real precisa. Vale pedir ao Claude Code:</p>
+    <div class="grid2">
+      <div class="card" style="margin-top:0"><h3>Experiência</h3><ul class="check">
+        <li><div class="box"></div><div>Estados de <b>carregando / erro / vazio</b></div></li>
+        <li><div class="box"></div><div><b>Responsivo</b> no celular (você opera do telefone)</div></li>
+        <li><div class="box"></div><div><b>Notificações</b> quando algo precisa de aprovação</div></li>
+        <li><div class="box"></div><div>Recuperação de senha / trocar senha</div></li>
+      </ul></div>
+      <div class="card" style="margin-top:0"><h3>Confiabilidade</h3><ul class="check">
+        <li><div class="box"></div><div><b>Backup</b> do banco de dados</div></li>
+        <li><div class="box"></div><div><b>Limite de custo</b> da IA e da geração de vídeo</div></li>
+        <li><div class="box"></div><div>Fila/retry se a publicação falhar</div></li>
+        <li><div class="box"></div><div>Logs do que foi publicado e por quem</div></li>
+      </ul></div>
+      <div class="card" style="margin-top:0"><h3>Legal &amp; segurança</h3><ul class="check">
+        <li><div class="box"></div><div><b>LGPD</b>: política de privacidade + consentimento</div></li>
+        <li><div class="box"></div><div>Termos das plataformas de afiliados</div></li>
+        <li><div class="box"></div><div>Tokens e chaves <b>cifrados</b>, só no servidor</div></li>
+        <li><div class="box"></div><div>Não copiar vídeo/áudio de terceiros (já no design)</div></li>
+      </ul></div>
+      <div class="card" style="margin-top:0"><h3>Negócio</h3><ul class="check">
+        <li><div class="box"></div><div>Disclosure de <b>publi/afiliado</b> nas legendas</div></li>
+        <li><div class="box"></div><div>Métricas reais vindas do TikTok (views, cliques)</div></li>
+        <li><div class="box"></div><div>Atribuição de venda por link</div></li>
+        <li><div class="box"></div><div>Onboarding rápido para novos operadores</div></li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section id="checklist">
+    <div class="sec-num">03</div>
+    <h2>Checklist "pronta para uso"</h2>
+    <p><span class="pill p-gold">✓ feito no design</span> &nbsp; <span class="pill p-ia">→ pedir ao Claude Code</span></p>
+    <div class="card">
+      <ul class="check">
+        <li class="done"><div class="box"></div><div class="ci"><div><b>Identidade visual e telas</b><small>Marca, tokens, tipografia, 16 telas, fluxo completo</small></div><span class="pill p-gold">design</span></div></li>
+        <li class="done"><div class="box"></div><div class="ci"><div><b>Papéis Admin/Operador (UI)</b><small>Cadastro, aprovação, permissões na interface · Compliance somente leitura p/ operador</small></div><span class="pill p-gold">design</span></div></li>
+        <li class="done"><div class="box"></div><div class="ci"><div><b>Acervo completo + Compliance (UI)</b><small>Imagens, Fornecedores, Creators/UGC e Compliance — com prévia/paywall e cross-nav</small></div><span class="pill p-gold">design</span></div></li>
+        <li class="done"><div class="box"></div><div class="ci"><div><b>Especificação técnica</b><small>Tokens, schemas Prisma, guia TikTok, prompts</small></div><span class="pill p-gold">design</span></div></li>
+        <li><div class="box"></div><div class="ci"><div><b>Login, papéis e proteção de rotas no servidor</b></div><span class="pill p-ia">Claude Code</span></div></li>
+        <li><div class="box"></div><div class="ci"><div><b>IA conectada</b> (roteiros, legendas, análise)</div><span class="pill p-ia">Claude Code</span></div></li>
+        <li><div class="box"></div><div class="ci"><div><b>Banco + migrations dos módulos novos</b><small>Radar, Biblioteca, Séries, Motor de Decisão + Imagens, Fornecedores, Creators, Compliance</small></div><span class="pill p-ia">Claude Code</span></div></li>
+        <li><div class="box"></div><div class="ci"><div><b>TikTok: pacote manual + OAuth + publicação</b></div><span class="pill p-ia">Claude Code</span></div></li>
+        <li><div class="box"></div><div class="ci"><div><b>Segurança, estados de erro, responsivo</b></div><span class="pill p-ia">Claude Code</span></div></li>
+        <li><div class="box"></div><div class="ci"><div><b>Deploy na Vercel + variáveis de ambiente</b></div><span class="pill p-ia">Claude Code</span></div></li>
+        <li><div class="box"></div><div class="ci"><div><b>App TikTok criado e aprovado</b></div><span class="pill p-red">você · portal TikTok</span></div></li>
+      </ul>
+    </div>
+    <div class="callout">Quando os 6 itens em violeta estiverem feitos, a plataforma está <b>pronta para uso no modo manual</b> (publicação na mão). O automático entra assim que o TikTok aprovar seu app.</div>
+    <div class="callout r"><b>Dica de ouro:</b> peça ao Claude Code, ao final, um arquivo <code>STATUS.md</code> listando o que está pronto, o que falta e quais variáveis de ambiente configurar. Assim você nunca perde o fio.</div>
+  </section>
+
+  <div class="foot"><span>Patrono Seller IA · Plano para o Claude Code</span><span>Grupo Patrono · 2026</span></div>
+</div>
+</body>
+</html>

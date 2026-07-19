@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { CheckCircle, X, Clock, AlertTriangle, AlertCircle, Pencil, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { PhonePreview } from '@/components/shared/PhonePreview'
 import { formatDateShort, cn } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
 import type { AlertaCompliance } from '@/types'
@@ -13,6 +14,7 @@ interface Conteudo {
   status: string
   redeSocial: string
   estilo: string
+  videoUrl: string | null
   roteiro: string
   legendaTiktok: string
   legendaInstagram: string
@@ -204,6 +206,18 @@ export default function AprovacaoPage() {
 
                 {expanded === c.id && (
                   <div className="mt-3 space-y-3 pt-3 border-t border-border">
+                    <div className="flex justify-center">
+                      <PhonePreview
+                        videoUrl={c.videoUrl}
+                        label="Vídeo ainda não gerado"
+                        badge={
+                          <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/55 text-white">
+                            {c.redeSocial}
+                          </span>
+                        }
+                        w={130}
+                      />
+                    </div>
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground mb-1.5">ROTEIRO</p>
                       <div className="rounded-lg bg-background border border-border p-3 text-xs text-foreground whitespace-pre-wrap">
