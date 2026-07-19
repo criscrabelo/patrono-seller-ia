@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 import { z } from 'zod'
 
 const produtoSchema = z.object({
@@ -24,13 +25,16 @@ export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const { searchParams } = new URL(req.url)
   const categoria = searchParams.get('categoria')
   const busca = searchParams.get('busca')
 
   const produtos = await prisma.produto.findMany({
     where: {
-      userId: session.user.id,
+      contaId,
       status: { not: 'descartado' },
       ...(categoria && { categoria }),
       ...(busca && { nome: { contains: busca, mode: 'insensitive' } }),
@@ -46,6 +50,9 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const body = await req.json()
   const parsed = produtoSchema.safeParse(body)
 
@@ -54,7 +61,7 @@ export async function POST(req: NextRequest) {
   }
 
   const produto = await prisma.produto.create({
-    data: { ...parsed.data, userId: session.user.id },
+    data: { ...parsed.data, userId: session.user.id, contaId },
   })
 
   return NextResponse.json(produto, { status: 201 })
