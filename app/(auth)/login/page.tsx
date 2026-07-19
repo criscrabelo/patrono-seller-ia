@@ -7,7 +7,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Link from 'next/link'
-import { ShoppingBag, Loader2, AlertCircle } from 'lucide-react'
+import { Loader2, AlertCircle } from 'lucide-react'
+import { BrandMark } from '@/components/shared/BrandMark'
 
 const loginSchema = z.object({
   email: z.string().email('Email inválido'),
@@ -55,8 +56,8 @@ export default function LoginPage() {
     <div className="w-full max-w-sm">
       {/* Logo */}
       <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-accent/10 border border-accent/30 mb-4">
-          <ShoppingBag className="w-7 h-7 text-accent" />
+        <div className="inline-flex justify-center mb-4">
+          <BrandMark size={56} />
         </div>
         <h1 className="text-2xl font-bold text-white">Patrono Seller IA</h1>
         <p className="text-sm text-white/50 mt-1">Seu assistente de vendas inteligente</p>

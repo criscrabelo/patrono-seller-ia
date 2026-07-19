@@ -12,7 +12,6 @@ import {
   Calendar,
   BarChart2,
   Video,
-  ShoppingBag,
   LogOut,
   ChevronRight,
   Plug,
@@ -28,6 +27,7 @@ import {
 import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
 import { useSidebar } from './SidebarContext'
+import { BrandMark } from './BrandMark'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -69,9 +69,7 @@ export function Sidebar() {
       {/* Logo */}
       <div className="flex items-center justify-between gap-2.5 px-4 py-5 border-b border-border">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center">
-            <ShoppingBag className="w-4 h-4 text-accent" />
-          </div>
+          <BrandMark size={32} />
           <div>
             <p className="text-sm font-bold text-white leading-tight">Patrono Seller</p>
             <p className="text-[10px] text-accent font-semibold tracking-wider">IA</p>
