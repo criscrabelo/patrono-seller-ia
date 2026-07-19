@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 import { gerarConteudo } from '@/lib/claude'
 import { z } from 'zod'
 
@@ -29,8 +30,11 @@ export async function POST(req: NextRequest) {
 
   const { produtoId, redeSocial, duracao, estilo, objetivo } = parsed.data
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const produto = await prisma.produto.findFirst({
-    where: { id: produtoId, userId: session.user.id },
+    where: { id: produtoId, contaId },
   })
 
   if (!produto) {
@@ -56,6 +60,7 @@ export async function POST(req: NextRequest) {
 
     const dadosBase = {
       userId: session.user.id,
+      contaId,
       produtoId,
       redeSocial,
       duracao,
