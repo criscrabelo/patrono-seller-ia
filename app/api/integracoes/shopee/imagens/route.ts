@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 
 const CDN = 'https://down-br.img.susercontent.com/file/'
 
@@ -57,12 +58,15 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const body = await req.json()
   const { produtoId } = body
 
   const where = produtoId
-    ? { id: produtoId, userId: session.user.id }
-    : { userId: session.user.id, linkProduto: { contains: 'shopee' } }
+    ? { id: produtoId, contaId }
+    : { contaId, linkProduto: { contains: 'shopee' } }
 
   const produtos = await prisma.produto.findMany({
     where,

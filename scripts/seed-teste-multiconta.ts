@@ -58,11 +58,11 @@ async function main() {
     }
   }
 
+  // contaId de propósito não informado aqui — este script simula o estado
+  // pré-backfill (produção antes da Etapa 1 rodar lá).
   for (const plataforma of PLATAFORMAS) {
-    await prisma.integracao.upsert({
-      where: { userId_plataforma: { userId: user.id, plataforma } },
-      update: {},
-      create: { userId: user.id, plataforma, status: 'conectado', accessToken: 'fake-token' },
+    await prisma.integracao.create({
+      data: { userId: user.id, plataforma, status: 'conectado', accessToken: 'fake-token' },
     })
   }
 

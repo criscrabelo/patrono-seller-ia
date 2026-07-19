@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 import crypto from 'crypto'
 
 const SHOPEE_API = 'https://partner.shopeemobile.com/api/v2'
@@ -25,11 +26,14 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const body = await req.json()
   const { acao } = body // 'gerar_links' | 'sincronizar_produtos'
 
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'shopee' } },
+    where: { contaId_plataforma: { contaId, plataforma: 'shopee' } },
   })
 
   if (!integracao || integracao.status !== 'conectado') {
@@ -42,7 +46,7 @@ export async function POST(req: NextRequest) {
     // Gera links rastreáveis (patrono.link/slug) para todos os produtos Shopee
     const produtos = await prisma.produto.findMany({
       where: {
-        userId: session.user.id,
+        contaId,
         status: 'ativo',
         linkProduto: { not: null },
       },

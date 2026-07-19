@@ -77,10 +77,16 @@ export async function GET(req: NextRequest) {
       continue
     }
 
-    // Com vídeo: precisa do Instagram conectado para publicar o Reels.
-    const integracao = await prisma.integracao.findUnique({
-      where: { userId_plataforma: { userId: c.userId, plataforma: 'instagram' } },
-    })
+    // Com vídeo: precisa do Instagram conectado (da MESMA conta/marca do
+    // conteúdo) para publicar o Reels. Se o conteúdo ainda não tem contaId
+    // (backfill da Etapa 1 não rodou nesta base), não há como saber qual
+    // integração usar — trata como "não conectado" e publica só no app,
+    // em vez de arriscar pegar a integração errada de outra conta.
+    const integracao = c.contaId
+      ? await prisma.integracao.findUnique({
+          where: { contaId_plataforma: { contaId: c.contaId, plataforma: 'instagram' } },
+        })
+      : null
     if (
       !integracao ||
       integracao.status !== 'conectado' ||

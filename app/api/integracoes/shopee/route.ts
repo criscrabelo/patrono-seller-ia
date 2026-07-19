@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 import crypto from 'crypto'
 
 // Shopee Open Platform – base URL
@@ -17,8 +18,11 @@ export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'shopee' } },
+    where: { contaId_plataforma: { contaId, plataforma: 'shopee' } },
   })
 
   if (!integracao) return NextResponse.json(null)
@@ -36,6 +40,9 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
 
   const body = await req.json()
   const { modo, shopId, partnerId, partnerKey, accessToken, nomeLoja, subId } = body
@@ -70,7 +77,7 @@ export async function POST(req: NextRequest) {
   if (modo === 'afiliado') testeOk = true
 
   await prisma.integracao.upsert({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'shopee' } },
+    where: { contaId_plataforma: { contaId, plataforma: 'shopee' } },
     update: {
       status,
       accessToken: accessToken ?? null,
@@ -81,6 +88,7 @@ export async function POST(req: NextRequest) {
     },
     create: {
       userId: session.user.id,
+      contaId,
       plataforma: 'shopee',
       status,
       accessToken: accessToken ?? null,
@@ -102,8 +110,11 @@ export async function DELETE() {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   await prisma.integracao.updateMany({
-    where: { userId: session.user.id, plataforma: 'shopee' },
+    where: { contaId, plataforma: 'shopee' },
     data: { status: 'desconectado', accessToken: null, accountId: null, accountName: null, extraData: {} },
   })
 

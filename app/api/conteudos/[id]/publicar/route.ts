@@ -60,7 +60,7 @@ export async function POST(
   }
 
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'instagram' } },
+    where: { contaId_plataforma: { contaId, plataforma: 'instagram' } },
   })
   if (
     !integracao ||
@@ -199,7 +199,7 @@ export async function POST(
       }),
       isOAuthError
         ? prisma.integracao.updateMany({
-            where: { userId: session.user.id, plataforma: 'instagram' },
+            where: { contaId, plataforma: 'instagram' },
             data: { status: 'desconectado', accessToken: null },
           })
         : Promise.resolve(),
