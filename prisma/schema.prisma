@@ -20,12 +20,37 @@ model User {
   conteudos     Conteudo[]
   integracoes   Integracao[]
   linksDinamicos LinkDinamico[]
+  contas        Conta[]
+}
+
+// Fase A do multi-conta: cada Conta é uma marca/workspace do usuário
+// (ex.: "BoraComprar"). contaId é opcional de propósito: as ~24 rotas que
+// criam Produto/Conteudo/Integracao/LinkDinamico ainda não sabem de qual
+// Conta preencher esse campo (isso é a Etapa 3). Testamos separadamente
+// que virar String obrigatório funciona sem quebrar dados já backfillados
+// (prisma db push aceita, e recusa se algo ainda estiver null) — mas só
+// vamos aplicar essa mudança de fato quando as rotas da Etapa 3 já
+// estiverem escrevendo contaId em todo create(), senão o build quebra.
+// userId continua como está até lá.
+model Conta {
+  id             String         @id @default(cuid())
+  userId         String
+  user           User           @relation(fields: [userId], references: [id])
+  nome           String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  produtos       Produto[]
+  conteudos      Conteudo[]
+  integracoes    Integracao[]
+  linksDinamicos LinkDinamico[]
 }
 
 model LinkDinamico {
   id                String       @id @default(cuid())
   userId            String
   user              User         @relation(fields: [userId], references: [id])
+  contaId           String?
+  conta             Conta?       @relation(fields: [contaId], references: [id])
   produtoId         String
   produto           Produto      @relation(fields: [produtoId], references: [id])
   slug              String       @unique
@@ -58,6 +83,8 @@ model Integracao {
   id           String   @id @default(cuid())
   userId       String
   user         User     @relation(fields: [userId], references: [id])
+  contaId      String?
+  conta        Conta?   @relation(fields: [contaId], references: [id])
   plataforma   String
   status       String   @default("desconectado")
   accessToken  String?  @db.Text
@@ -76,6 +103,8 @@ model Produto {
   id             String     @id @default(cuid())
   userId         String
   user           User       @relation(fields: [userId], references: [id])
+  contaId        String?
+  conta          Conta?     @relation(fields: [contaId], references: [id])
   nome           String
   categoria      String
   preco          Float?
@@ -100,6 +129,8 @@ model Conteudo {
   id                 String    @id @default(cuid())
   userId             String
   user               User      @relation(fields: [userId], references: [id])
+  contaId            String?
+  conta              Conta?    @relation(fields: [contaId], references: [id])
   produtoId          String
   produto            Produto   @relation(fields: [produtoId], references: [id])
   roteiro            String?   @db.Text
