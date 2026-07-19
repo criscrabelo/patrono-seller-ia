@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
     for (const prod of shopeeProds) {
       // Verifica se já existe link Shopee para este produto
       const existing = await prisma.linkDinamico.findFirst({
-        where: { userId: session.user.id, produtoId: prod.id, plataforma: 'shopee' },
+        where: { contaId, produtoId: prod.id, plataforma: 'shopee' },
       })
 
       if (existing) { jaExistiam++; continue }
@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
       await prisma.linkDinamico.create({
         data: {
           userId: session.user.id,
+          contaId,
           produtoId: prod.id,
           slug: gerarSlug(prod.nome, 'shopee'),
           plataforma: 'shopee',

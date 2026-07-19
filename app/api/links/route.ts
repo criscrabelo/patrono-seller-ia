@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 
 const PLATAFORMAS = [
   'tiktok','instagram','youtube','facebook','pinterest','linkedin',
@@ -24,10 +25,13 @@ export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const { searchParams } = new URL(req.url)
   const produtoId = searchParams.get('produtoId')
 
-  const where: Record<string, string> = { userId: session.user.id }
+  const where: Record<string, string> = { contaId }
   if (produtoId) where.produtoId = produtoId
 
   const links = await prisma.linkDinamico.findMany({
@@ -43,11 +47,14 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const body = await req.json()
   const { produtoId, urlDestino, tipo, comissao, plataformas: plats } = body
 
   const produto = await prisma.produto.findFirst({
-    where: { id: produtoId, userId: session.user.id },
+    where: { id: produtoId, contaId },
   })
   if (!produto) return NextResponse.json({ error: 'Produto não encontrado' }, { status: 404 })
 
@@ -59,6 +66,7 @@ export async function POST(req: NextRequest) {
       return prisma.linkDinamico.create({
         data: {
           userId: session.user.id,
+          contaId,
           produtoId,
           slug,
           plataforma,
@@ -78,11 +86,14 @@ export async function PATCH(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const body = await req.json()
   const { id, urlDestino, comissao, ativo } = body
 
   await prisma.linkDinamico.updateMany({
-    where: { id, userId: session.user.id },
+    where: { id, contaId },
     data: {
       ...(urlDestino !== undefined && { urlDestino }),
       ...(comissao !== undefined && { comissao: parseFloat(comissao) }),
