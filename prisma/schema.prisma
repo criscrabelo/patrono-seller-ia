@@ -24,14 +24,13 @@ model User {
 }
 
 // Fase A do multi-conta: cada Conta é uma marca/workspace do usuário
-// (ex.: "BoraComprar"). contaId é opcional de propósito: as ~24 rotas que
-// criam Produto/Conteudo/Integracao/LinkDinamico ainda não sabem de qual
-// Conta preencher esse campo (isso é a Etapa 3). Testamos separadamente
-// que virar String obrigatório funciona sem quebrar dados já backfillados
-// (prisma db push aceita, e recusa se algo ainda estiver null) — mas só
-// vamos aplicar essa mudança de fato quando as rotas da Etapa 3 já
-// estiverem escrevendo contaId em todo create(), senão o build quebra.
-// userId continua como está até lá.
+// (ex.: "BoraComprar"). Etapa 3 (Blocos 1-4) já atualizou todas as rotas
+// que criam Produto/Conteudo/Integracao/LinkDinamico para gravar contaId,
+// então contaId agora é obrigatório. IMPORTANTE para produção: rodar
+// scripts/backfill-contas.ts (com o schema anterior, contaId opcional)
+// contra o banco de produção ANTES de aplicar este `prisma db push` lá —
+// sem isso, o push falha (ou exige --force-reset, que apaga tudo).
+// userId continua sendo gravado em paralelo, só para auditoria.
 model Conta {
   id             String         @id @default(cuid())
   userId         String
@@ -49,8 +48,8 @@ model LinkDinamico {
   id                String       @id @default(cuid())
   userId            String
   user              User         @relation(fields: [userId], references: [id])
-  contaId           String?
-  conta             Conta?       @relation(fields: [contaId], references: [id])
+  contaId           String
+  conta             Conta        @relation(fields: [contaId], references: [id])
   produtoId         String
   produto           Produto      @relation(fields: [produtoId], references: [id])
   slug              String       @unique
@@ -83,8 +82,8 @@ model Integracao {
   id           String   @id @default(cuid())
   userId       String
   user         User     @relation(fields: [userId], references: [id])
-  contaId      String?
-  conta        Conta?   @relation(fields: [contaId], references: [id])
+  contaId      String
+  conta        Conta    @relation(fields: [contaId], references: [id])
   plataforma   String
   status       String   @default("desconectado")
   accessToken  String?  @db.Text
@@ -103,8 +102,8 @@ model Produto {
   id             String     @id @default(cuid())
   userId         String
   user           User       @relation(fields: [userId], references: [id])
-  contaId        String?
-  conta          Conta?     @relation(fields: [contaId], references: [id])
+  contaId        String
+  conta          Conta      @relation(fields: [contaId], references: [id])
   nome           String
   categoria      String
   preco          Float?
@@ -129,8 +128,8 @@ model Conteudo {
   id                 String    @id @default(cuid())
   userId             String
   user               User      @relation(fields: [userId], references: [id])
-  contaId            String?
-  conta              Conta?    @relation(fields: [contaId], references: [id])
+  contaId            String
+  conta              Conta     @relation(fields: [contaId], references: [id])
   produtoId          String
   produto            Produto   @relation(fields: [produtoId], references: [id])
   roteiro            String?   @db.Text

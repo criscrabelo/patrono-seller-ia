@@ -2,6 +2,13 @@
 // que ainda não tem uma, e preenche contaId em Produto/Conteudo/Integracao/
 // LinkDinamico onde ainda estiver nulo. Idempotente — pode rodar de novo
 // sem duplicar Conta nem sobrescrever contaId já preenchido.
+//
+// IMPORTANTE: rode este script ANTES de aplicar o schema atual (contaId
+// obrigatório) contra o banco de destino — ou seja, com `prisma db push`
+// ainda na versão anterior (contaId opcional). Os `as any` abaixo existem
+// só porque o schema.prisma do repositório já está travado como
+// obrigatório (Prisma não gera mais o tipo "contaId: null" pra filtro);
+// o comportamento em runtime (WHERE contaId IS NULL) não muda.
 import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
@@ -22,10 +29,10 @@ async function main() {
     }
 
     const [produtos, conteudos, integracoes, links] = await Promise.all([
-      prisma.produto.updateMany({ where: { userId: user.id, contaId: null }, data: { contaId: conta.id } }),
-      prisma.conteudo.updateMany({ where: { userId: user.id, contaId: null }, data: { contaId: conta.id } }),
-      prisma.integracao.updateMany({ where: { userId: user.id, contaId: null }, data: { contaId: conta.id } }),
-      prisma.linkDinamico.updateMany({ where: { userId: user.id, contaId: null }, data: { contaId: conta.id } }),
+      prisma.produto.updateMany({ where: { userId: user.id, contaId: null } as any, data: { contaId: conta.id } }),
+      prisma.conteudo.updateMany({ where: { userId: user.id, contaId: null } as any, data: { contaId: conta.id } }),
+      prisma.integracao.updateMany({ where: { userId: user.id, contaId: null } as any, data: { contaId: conta.id } }),
+      prisma.linkDinamico.updateMany({ where: { userId: user.id, contaId: null } as any, data: { contaId: conta.id } }),
     ])
     console.log(
       `    produtos+${produtos.count} conteudos+${conteudos.count} integracoes+${integracoes.count} links+${links.count}`
@@ -33,10 +40,10 @@ async function main() {
   }
 
   const [prodSemConta, contSemConta, integSemConta, linkSemConta] = await Promise.all([
-    prisma.produto.count({ where: { contaId: null } }),
-    prisma.conteudo.count({ where: { contaId: null } }),
-    prisma.integracao.count({ where: { contaId: null } }),
-    prisma.linkDinamico.count({ where: { contaId: null } }),
+    prisma.produto.count({ where: { contaId: null } as any }),
+    prisma.conteudo.count({ where: { contaId: null } as any }),
+    prisma.integracao.count({ where: { contaId: null } as any }),
+    prisma.linkDinamico.count({ where: { contaId: null } as any }),
   ])
 
   if (prodSemConta || contSemConta || integSemConta || linkSemConta) {
