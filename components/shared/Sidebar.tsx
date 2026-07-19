@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
 import { useSidebar } from './SidebarContext'
 import { BrandMark } from './BrandMark'
+import { ContaSwitcher } from './ContaSwitcher'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -78,6 +79,11 @@ export function Sidebar() {
         <button onClick={close} className="lg:hidden text-white/40 hover:text-white p-1">
           <X className="w-4 h-4" />
         </button>
+      </div>
+
+      {/* Seletor de marca/conta */}
+      <div className="pt-3 border-b border-border">
+        <ContaSwitcher />
       </div>
 
       {/* Nav */}
