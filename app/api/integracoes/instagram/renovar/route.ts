@@ -2,14 +2,18 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 import { renovarTokenInstagram } from '@/lib/instagram'
 
 export async function POST() {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'instagram' } },
+    where: { contaId_plataforma: { contaId, plataforma: 'instagram' } },
   })
 
   if (!integracao || !integracao.accessToken) {

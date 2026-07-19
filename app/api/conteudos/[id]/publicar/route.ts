@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 import {
   criarContainerReel,
   criarContainerStoryVideo,
@@ -33,8 +34,11 @@ export async function POST(
   const tipoMidia: 'video' | 'imagens' = body.tipoMidia === 'imagens' ? 'imagens' : 'video'
   const destino: 'feed' | 'stories' = body.destino === 'stories' ? 'stories' : 'feed'
 
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const conteudo = await prisma.conteudo.findFirst({
-    where: { id, userId: session.user.id },
+    where: { id, contaId },
     include: { produto: { select: { linkProduto: true, imagens: true } } },
   })
   if (!conteudo) {
@@ -56,7 +60,7 @@ export async function POST(
   }
 
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'instagram' } },
+    where: { contaId_plataforma: { contaId, plataforma: 'instagram' } },
   })
   if (
     !integracao ||
@@ -195,7 +199,7 @@ export async function POST(
       }),
       isOAuthError
         ? prisma.integracao.updateMany({
-            where: { userId: session.user.id, plataforma: 'instagram' },
+            where: { contaId, plataforma: 'instagram' },
             data: { status: 'desconectado', accessToken: null },
           })
         : Promise.resolve(),

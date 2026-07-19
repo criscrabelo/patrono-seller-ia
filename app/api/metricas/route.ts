@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const userId = session.user.id
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
 
   const [
     totalProdutos,
@@ -19,29 +21,29 @@ export async function GET(req: NextRequest) {
     conteudosPorStatus,
     linksDoUsuario,
   ] = await Promise.all([
-    prisma.produto.count({ where: { userId, status: { not: 'descartado' } } }),
-    prisma.conteudo.count({ where: { userId } }),
-    prisma.conteudo.count({ where: { userId, status: 'aguardando_aprovacao' } }),
-    prisma.conteudo.count({ where: { userId, status: 'publicado' } }),
+    prisma.produto.count({ where: { contaId, status: { not: 'descartado' } } }),
+    prisma.conteudo.count({ where: { contaId } }),
+    prisma.conteudo.count({ where: { contaId, status: 'aguardando_aprovacao' } }),
+    prisma.conteudo.count({ where: { contaId, status: 'publicado' } }),
     // Soma TODAS as visualizações, não apenas top 5
     prisma.conteudo.aggregate({
-      where: { userId },
+      where: { contaId },
       _sum: { visualizacoes: true },
     }),
     // Conteúdos recentes de todos os status (não só publicados)
     prisma.conteudo.findMany({
-      where: { userId },
+      where: { contaId },
       orderBy: { createdAt: 'desc' },
       take: 5,
       include: { produto: { select: { nome: true } } },
     }),
     prisma.conteudo.groupBy({
       by: ['status'],
-      where: { userId },
+      where: { contaId },
       _count: { status: true },
     }),
     prisma.linkDinamico.findMany({
-      where: { userId },
+      where: { contaId },
       include: { produto: { select: { nome: true } } },
     }),
   ])

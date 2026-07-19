@@ -20,12 +20,19 @@ async function main() {
 
   console.log('Usuário admin criado:', admin.email)
 
+  const conta =
+    (await prisma.conta.findFirst({ where: { userId: admin.id } })) ??
+    (await prisma.conta.create({ data: { userId: admin.id, nome: 'BoraComprar' } }))
+
+  console.log('Conta:', conta.nome)
+
   const produto1 = await prisma.produto.upsert({
     where: { id: 'produto-exemplo-1' },
     update: {},
     create: {
       id: 'produto-exemplo-1',
       userId: admin.id,
+      contaId: conta.id,
       nome: 'Power Bank 20000mAh',
       categoria: 'Eletronicos',
       preco: 49.9,
@@ -54,6 +61,7 @@ async function main() {
     create: {
       id: 'produto-exemplo-2',
       userId: admin.id,
+      contaId: conta.id,
       nome: 'Fone Bluetooth Premium',
       categoria: 'Eletronicos',
       preco: 89.9,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getContaAtivaId } from '@/lib/conta'
 
 export async function POST(
   req: NextRequest,
@@ -11,6 +12,9 @@ export async function POST(
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   const { id } = await params
+  const contaId = await getContaAtivaId(session.user.id)
+  if (!contaId) return NextResponse.json({ error: 'Nenhuma marca configurada' }, { status: 400 })
+
   const body = await req.json()
   const valor = parseFloat(body.valor)
   if (!valor || valor <= 0) {
@@ -18,7 +22,7 @@ export async function POST(
   }
 
   const link = await prisma.linkDinamico.findFirst({
-    where: { id, userId: session.user.id },
+    where: { id, contaId },
   })
   if (!link) return NextResponse.json({ error: 'Link não encontrado' }, { status: 404 })
 

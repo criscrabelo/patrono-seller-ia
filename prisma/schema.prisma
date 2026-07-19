@@ -20,12 +20,36 @@ model User {
   conteudos     Conteudo[]
   integracoes   Integracao[]
   linksDinamicos LinkDinamico[]
+  contas        Conta[]
+}
+
+// Fase A do multi-conta: cada Conta é uma marca/workspace do usuário
+// (ex.: "BoraComprar"). Etapa 3 (Blocos 1-4) já atualizou todas as rotas
+// que criam Produto/Conteudo/Integracao/LinkDinamico para gravar contaId,
+// então contaId agora é obrigatório. IMPORTANTE para produção: rodar
+// scripts/backfill-contas.ts (com o schema anterior, contaId opcional)
+// contra o banco de produção ANTES de aplicar este `prisma db push` lá —
+// sem isso, o push falha (ou exige --force-reset, que apaga tudo).
+// userId continua sendo gravado em paralelo, só para auditoria.
+model Conta {
+  id             String         @id @default(cuid())
+  userId         String
+  user           User           @relation(fields: [userId], references: [id])
+  nome           String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  produtos       Produto[]
+  conteudos      Conteudo[]
+  integracoes    Integracao[]
+  linksDinamicos LinkDinamico[]
 }
 
 model LinkDinamico {
   id                String       @id @default(cuid())
   userId            String
   user              User         @relation(fields: [userId], references: [id])
+  contaId           String
+  conta             Conta        @relation(fields: [contaId], references: [id])
   produtoId         String
   produto           Produto      @relation(fields: [produtoId], references: [id])
   slug              String       @unique
@@ -58,6 +82,8 @@ model Integracao {
   id           String   @id @default(cuid())
   userId       String
   user         User     @relation(fields: [userId], references: [id])
+  contaId      String
+  conta        Conta    @relation(fields: [contaId], references: [id])
   plataforma   String
   status       String   @default("desconectado")
   accessToken  String?  @db.Text
@@ -69,13 +95,15 @@ model Integracao {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  @@unique([userId, plataforma])
+  @@unique([contaId, plataforma])
 }
 
 model Produto {
   id             String     @id @default(cuid())
   userId         String
   user           User       @relation(fields: [userId], references: [id])
+  contaId        String
+  conta          Conta      @relation(fields: [contaId], references: [id])
   nome           String
   categoria      String
   preco          Float?
@@ -100,6 +128,8 @@ model Conteudo {
   id                 String    @id @default(cuid())
   userId             String
   user               User      @relation(fields: [userId], references: [id])
+  contaId            String
+  conta              Conta     @relation(fields: [contaId], references: [id])
   produtoId          String
   produto            Produto   @relation(fields: [produtoId], references: [id])
   roteiro            String?   @db.Text
