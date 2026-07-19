@@ -62,6 +62,9 @@ export default function LinksPage() {
   const [showForm, setShowForm] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [expandedProd, setExpandedProd] = useState<string | null>(null)
+  const [vendaAbertaId, setVendaAbertaId] = useState<string | null>(null)
+  const [vendaValor, setVendaValor] = useState('')
+  const [registrandoVenda, setRegistrandoVenda] = useState(false)
 
   const [form, setForm] = useState({
     produtoId: '', urlDestino: '', tipo: 'afiliado', comissao: '',
@@ -99,6 +102,28 @@ export default function LinksPage() {
       toast({ title: 'Erro ao gerar links', variant: 'destructive' })
     }
     setGenerating(false)
+  }
+
+  async function registrarVenda(linkId: string) {
+    const valor = parseFloat(vendaValor.replace(',', '.'))
+    if (!valor || valor <= 0) {
+      toast({ title: 'Informe um valor de venda válido', variant: 'destructive' }); return
+    }
+    setRegistrandoVenda(true)
+    const res = await fetch(`/api/links/${linkId}/venda`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ valor }),
+    })
+    if (res.ok) {
+      toast({ title: '✅ Venda registrada!', variant: 'success' })
+      setVendaAbertaId(null)
+      setVendaValor('')
+      fetchAll()
+    } else {
+      toast({ title: 'Erro ao registrar venda', variant: 'destructive' })
+    }
+    setRegistrandoVenda(false)
   }
 
   function togglePlat(id: string) {
@@ -271,21 +296,48 @@ export default function LinksPage() {
                 {isExpanded && (
                   <div className="border-t border-border pt-3 space-y-2">
                     {prodLinks.map(link => (
-                      <div key={link.id} className="flex items-center gap-3 rounded-lg bg-background border border-border px-3 py-2.5">
-                        <span className="text-lg">{PLAT_EMOJI[link.plataforma] ?? '🔗'}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <code className="text-xs text-accent font-mono">
-                              patrono.link/{link.slug}
-                            </code>
-                            <CopyBtn text={`http://localhost:3000/api/l/${link.slug}`} />
+                      <div key={link.id} className="rounded-lg bg-background border border-border px-3 py-2.5 space-y-2">
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">{PLAT_EMOJI[link.plataforma] ?? '🔗'}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <code className="text-xs text-accent font-mono">
+                                patrono.link/{link.slug}
+                              </code>
+                              <CopyBtn text={`http://localhost:3000/api/l/${link.slug}`} />
+                            </div>
+                            <p className="text-[10px] text-muted-foreground capitalize">{link.plataforma} · {link.tipo}</p>
                           </div>
-                          <p className="text-[10px] text-muted-foreground capitalize">{link.plataforma} · {link.tipo}</p>
+                          <div className="text-right shrink-0">
+                            <p className="text-xs font-semibold text-white">{link.cliques} cliques · {link.conversoes} vendas</p>
+                            <p className="text-[10px] text-accent">
+                              {formatCurrency(link.receitaTotal)}
+                              {link.comissao ? ` · ${link.comissao}% comissão` : ''}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => { setVendaAbertaId(vendaAbertaId === link.id ? null : link.id); setVendaValor('') }}
+                            className="text-xs text-accent hover:underline shrink-0"
+                          >
+                            {vendaAbertaId === link.id ? 'Cancelar' : '+ Venda'}
+                          </button>
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-xs font-semibold text-white">{link.cliques} cliques</p>
-                          {link.comissao && <p className="text-[10px] text-accent">{link.comissao}% comissão</p>}
-                        </div>
+
+                        {vendaAbertaId === link.id && (
+                          <div className="flex items-center gap-2 pl-9">
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Valor da venda (R$)"
+                              className={inputCls + ' py-1.5'}
+                              value={vendaValor}
+                              onChange={e => setVendaValor(e.target.value)}
+                            />
+                            <Button size="sm" disabled={registrandoVenda} onClick={() => registrarVenda(link.id)}>
+                              Registrar
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
