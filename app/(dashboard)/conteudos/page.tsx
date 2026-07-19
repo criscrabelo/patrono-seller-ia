@@ -8,6 +8,8 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/shared/StatusBadge'
+import { PhonePreview } from '@/components/shared/PhonePreview'
+import { CarouselPreview } from '@/components/shared/CarouselPreview'
 import { formatDateShort, copyToClipboard } from '@/lib/utils'
 import { LINK_COMPRA } from '@/lib/config'
 import { STATUS_LABELS, type StatusConteudo } from '@/types'
@@ -259,7 +261,11 @@ export default function ConteudosPage() {
   async function publicarInstagram() {
     if (!publicarId) return
     setPublicandoIg(true)
-    const res = await fetch(`/api/conteudos/${publicarId}/publicar`, { method: 'POST' })
+    const res = await fetch(`/api/conteudos/${publicarId}/publicar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tipoMidia: tipoMidiaIg, destino: destinoIg }),
+    })
     const data = await res.json().catch(() => ({}))
     setPublicandoIg(false)
     if (!res.ok) {
@@ -534,6 +540,77 @@ export default function ConteudosPage() {
               </label>
             </div>
 
+            {/* Como vai aparecer */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Como vai aparecer
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <p className="text-[10px] text-muted-foreground">Mídia</p>
+                  <div className="flex rounded-lg border border-border overflow-hidden">
+                    <button
+                      onClick={() => setTipoMidiaIg('video')}
+                      disabled={!conteudoPublicar.videoUrl}
+                      className={`flex-1 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed
+                        ${tipoMidiaIg === 'video' ? 'bg-accent text-primary-dark' : 'text-muted-foreground hover:bg-secondary'}`}
+                    >
+                      Vídeo
+                    </button>
+                    <button
+                      onClick={() => setTipoMidiaIg('imagens')}
+                      disabled={(conteudoPublicar.produto.imagens?.length ?? 0) === 0}
+                      className={`flex-1 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed
+                        ${tipoMidiaIg === 'imagens' ? 'bg-accent text-primary-dark' : 'text-muted-foreground hover:bg-secondary'}`}
+                    >
+                      Imagens
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] text-muted-foreground">Onde publicar</p>
+                  <div className="flex rounded-lg border border-border overflow-hidden">
+                    <button
+                      onClick={() => setDestinoIg('feed')}
+                      className={`flex-1 py-1.5 text-xs font-medium transition-colors
+                        ${destinoIg === 'feed' ? 'bg-accent text-primary-dark' : 'text-muted-foreground hover:bg-secondary'}`}
+                    >
+                      Feed
+                    </button>
+                    <button
+                      onClick={() => setDestinoIg('stories')}
+                      className={`flex-1 py-1.5 text-xs font-medium transition-colors
+                        ${destinoIg === 'stories' ? 'bg-accent text-primary-dark' : 'text-muted-foreground hover:bg-secondary'}`}
+                    >
+                      Stories
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-center pt-1">
+                {tipoMidiaIg === 'video' ? (
+                  <PhonePreview
+                    videoUrl={conteudoPublicar.videoUrl}
+                    label="Sem vídeo ainda"
+                    badge={
+                      <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/55 text-white">
+                        {destinoIg === 'feed' ? 'Reels' : 'Stories'}
+                      </span>
+                    }
+                  />
+                ) : (
+                  <CarouselPreview
+                    slides={conteudoPublicar.produto.imagens ?? []}
+                    badge={
+                      <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/55 text-white">
+                        {destinoIg === 'feed' ? 'Feed' : 'Stories'}
+                      </span>
+                    }
+                  />
+                )}
+              </div>
+            </div>
+
             {/* Legenda */}
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -670,20 +747,31 @@ export default function ConteudosPage() {
                           <span>Último erro: {erro}</span>
                         </div>
                       )}
-                      <Button
-                        className="w-full"
-                        disabled={!conteudoPublicar.videoUrl || publicandoIg || uploadingVideo}
-                        onClick={publicarInstagram}
-                      >
-                        {publicandoIg
-                          ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
-                          : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
-                      </Button>
-                      {!conteudoPublicar.videoUrl && (
-                        <p className="text-[11px] text-muted-foreground">
-                          Envie o vídeo acima para habilitar a publicação.
-                        </p>
-                      )}
+                      {(() => {
+                        const semMidia = tipoMidiaIg === 'video'
+                          ? !conteudoPublicar.videoUrl
+                          : (conteudoPublicar.produto.imagens?.length ?? 0) === 0
+                        return (
+                          <>
+                            <Button
+                              className="w-full"
+                              disabled={semMidia || publicandoIg || uploadingVideo}
+                              onClick={publicarInstagram}
+                            >
+                              {publicandoIg
+                                ? <><Loader2 className="w-4 h-4 animate-spin" />Publicando...</>
+                                : <><Instagram className="w-4 h-4" />Publicar no Instagram agora</>}
+                            </Button>
+                            {semMidia && (
+                              <p className="text-[11px] text-muted-foreground">
+                                {tipoMidiaIg === 'video'
+                                  ? 'Envie o vídeo acima para habilitar a publicação.'
+                                  : 'Este produto não tem imagens cadastradas.'}
+                              </p>
+                            )}
+                          </>
+                        )
+                      })()}
                       {publicandoIg && (
                         <p className="text-[11px] text-muted-foreground">
                           O Instagram pode levar até ~1 minuto processando o vídeo. Não feche esta janela.
