@@ -41,6 +41,35 @@ const TIPOS = [
   { id: 'loja-propria', label: 'Loja Própria', desc: '70-100% margem' },
 ]
 
+const TIPO_LABEL: Record<string, string> = {
+  'afiliado': 'Afiliado',
+  'tiktok-shop': 'TikTok Shop',
+  'loja-propria': 'Loja Própria',
+}
+
+function explicarCalculoVenda(link: LinkDinamico, valorDigitado: string) {
+  const valor = parseFloat(valorDigitado.replace(',', '.'))
+  const valorValido = !isNaN(valor) && valor > 0
+  const tipoLabel = TIPO_LABEL[link.tipo] ?? link.tipo
+
+  if (link.tipo === 'loja-propria') {
+    return {
+      texto: `Este link é do tipo ${tipoLabel}, então o valor total da venda será somado como receita.`,
+      resultado: valorValido ? valor : null,
+    }
+  }
+  if (!link.comissao) {
+    return {
+      texto: `Este link é do tipo ${tipoLabel}, mas não tem comissão (%) definida — a receita registrada será R$ 0,00. Edite a comissão do link antes de registrar a venda.`,
+      resultado: valorValido ? 0 : null,
+    }
+  }
+  return {
+    texto: `Este link é do tipo ${tipoLabel}, então apenas a comissão de ${link.comissao}% sobre o valor da venda será somada como receita.`,
+    resultado: valorValido ? valor * (link.comissao / 100) : null,
+  }
+}
+
 function CopyBtn({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -323,21 +352,32 @@ export default function LinksPage() {
                           </button>
                         </div>
 
-                        {vendaAbertaId === link.id && (
-                          <div className="flex items-center gap-2 pl-9">
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="Valor da venda (R$)"
-                              className={inputCls + ' py-1.5'}
-                              value={vendaValor}
-                              onChange={e => setVendaValor(e.target.value)}
-                            />
-                            <Button size="sm" disabled={registrandoVenda} onClick={() => registrarVenda(link.id)}>
-                              Registrar
-                            </Button>
-                          </div>
-                        )}
+                        {vendaAbertaId === link.id && (() => {
+                          const { texto, resultado } = explicarCalculoVenda(link, vendaValor)
+                          return (
+                            <div className="pl-9 space-y-1.5">
+                              <p className="text-[11px] text-muted-foreground">{texto}</p>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="Valor da venda (R$)"
+                                  className={inputCls + ' py-1.5'}
+                                  value={vendaValor}
+                                  onChange={e => setVendaValor(e.target.value)}
+                                />
+                                <Button size="sm" disabled={registrandoVenda} onClick={() => registrarVenda(link.id)}>
+                                  Registrar
+                                </Button>
+                              </div>
+                              {resultado !== null && (
+                                <p className="text-[11px] text-accent">
+                                  Receita que será somada: <strong>{formatCurrency(resultado)}</strong>
+                                </p>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
                     ))}
                   </div>
