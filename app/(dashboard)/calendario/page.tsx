@@ -10,6 +10,7 @@ import { ptBR } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Conteudo {
   id: string
@@ -31,6 +32,7 @@ const REDE_CORES: Record<string, string> = {
 }
 
 export default function CalendarioPage() {
+  useGuardModulo('calendario')
   const [mes, setMes] = useState(new Date())
   const [conteudos, setConteudos] = useState<Conteudo[]>([])
   const [selecionado, setSelecionado] = useState<Date | null>(null)

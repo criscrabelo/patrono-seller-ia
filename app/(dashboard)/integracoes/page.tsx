@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Integracao {
   plataforma: string
@@ -133,6 +134,7 @@ const PLATAFORMAS: Plataforma[] = [
 ]
 
 export default function IntegracoesPage() {
+  useGuardModulo('integracoes')
   const [integracoes, setIntegracoes] = useState<Integracao[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)

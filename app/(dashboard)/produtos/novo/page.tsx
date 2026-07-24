@@ -9,8 +9,10 @@ import {
   CATEGORIAS, TIPOS_VENDA, ORIGENS_CONTEUDO, PUBLICOS_ALVO,
 } from '@/types'
 import { toast } from '@/hooks/use-toast'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 export default function NovoProdutoPage() {
+  useGuardModulo('produtos')
   const router = useRouter()
   const [step, setStep] = useState(1)
   const [saving, setSaving] = useState(false)

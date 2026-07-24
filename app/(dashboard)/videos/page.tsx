@@ -6,6 +6,7 @@ import { Film, Download, Copy, Sparkles, ExternalLink, CheckCircle } from 'lucid
 import { Button } from '@/components/ui/button'
 import { formatDateShort, copyToClipboard } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface ConteudoComVideo {
   id: string
@@ -17,6 +18,7 @@ interface ConteudoComVideo {
 }
 
 export default function VideosPage() {
+  useGuardModulo('videos')
   const [videos, setVideos] = useState<ConteudoComVideo[]>([])
   const [loading, setLoading] = useState(true)
 

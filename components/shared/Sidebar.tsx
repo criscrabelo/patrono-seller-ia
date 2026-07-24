@@ -23,32 +23,36 @@ import {
   Facebook,
   Film,
   MessageCircle,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
+import { useModulosLiberados } from '@/hooks/useModulosLiberados'
 import { useSidebar } from './SidebarContext'
 import { BrandMark } from './BrandMark'
+import type { ModuloKey } from '@/lib/modulos'
 
-const navItems = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/produtos', label: 'Produtos', icon: Package },
-  { href: '/produtos/imagens', label: 'Importar Imagens', icon: ImagePlus },
-  { href: '/conteudos/gerar', label: 'Gerar Conteúdo', icon: Zap },
-  { href: '/conteudos', label: 'Banco de Conteúdos', icon: Library },
-  { href: '/videos', label: 'Vídeos Gerados', icon: Film },
-  { href: '/aprovacao', label: 'Aprovações', icon: CheckCircle, badge: true },
-  { href: '/calendario', label: 'Calendário', icon: Calendar },
-  { href: '/relatorios', label: 'Relatórios', icon: BarChart2 },
-  { href: '/links', label: 'Links Dinâmicos', icon: Link2 },
-  { href: '/monetizacao', label: 'Monetização', icon: DollarSign },
-  { href: '/integracoes', label: 'Integrações', icon: Plug },
-  { href: '/whatsapp', label: 'WhatsApp em Massa', icon: MessageCircle },
+const navItems: Array<{ href: string; label: string; icon: typeof LayoutDashboard; modulo: ModuloKey; badge?: boolean }> = [
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, modulo: 'dashboard' },
+  { href: '/produtos', label: 'Produtos', icon: Package, modulo: 'produtos' },
+  { href: '/produtos/imagens', label: 'Importar Imagens', icon: ImagePlus, modulo: 'produtos-imagens' },
+  { href: '/conteudos/gerar', label: 'Gerar Conteúdo', icon: Zap, modulo: 'conteudos-gerar' },
+  { href: '/conteudos', label: 'Banco de Conteúdos', icon: Library, modulo: 'conteudos' },
+  { href: '/videos', label: 'Vídeos Gerados', icon: Film, modulo: 'videos' },
+  { href: '/aprovacao', label: 'Aprovações', icon: CheckCircle, modulo: 'aprovacao', badge: true },
+  { href: '/calendario', label: 'Calendário', icon: Calendar, modulo: 'calendario' },
+  { href: '/relatorios', label: 'Relatórios', icon: BarChart2, modulo: 'relatorios' },
+  { href: '/links', label: 'Links Dinâmicos', icon: Link2, modulo: 'links' },
+  { href: '/monetizacao', label: 'Monetização', icon: DollarSign, modulo: 'monetizacao' },
+  { href: '/integracoes', label: 'Integrações', icon: Plug, modulo: 'integracoes' },
+  { href: '/whatsapp', label: 'WhatsApp em Massa', icon: MessageCircle, modulo: 'whatsapp' },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
   const { data: session } = useSession()
   const { count } = usePendingApprovals()
+  const { temAcesso } = useModulosLiberados()
   const { isOpen, close } = useSidebar()
 
   return (
@@ -82,7 +86,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ href, label, icon: Icon, badge }) => {
+        {navItems.filter((item) => temAcesso(item.modulo)).map(({ href, label, icon: Icon, badge }) => {
           const isActive = pathname === href || pathname.startsWith(href + '/')
           return (
             <Link
@@ -102,22 +106,26 @@ export function Sidebar() {
         })}
 
         {/* Separador */}
-        <div className="py-2">
-          <div className="border-t border-border" />
-        </div>
+        {temAcesso('video-seller') && (
+          <div className="py-2">
+            <div className="border-t border-border" />
+          </div>
+        )}
 
         {/* Video Seller */}
-        <Link
-          href="/video-seller"
-          className={cn(
-            'sidebar-item',
-            pathname.startsWith('/video-seller') && 'active'
-          )}
-        >
-          <Video className="w-4 h-4 shrink-0" />
-          <span className="flex-1 text-sm">Video Seller</span>
-          <ChevronRight className="w-3 h-3 opacity-50" />
-        </Link>
+        {temAcesso('video-seller') && (
+          <Link
+            href="/video-seller"
+            className={cn(
+              'sidebar-item',
+              pathname.startsWith('/video-seller') && 'active'
+            )}
+          >
+            <Video className="w-4 h-4 shrink-0" />
+            <span className="flex-1 text-sm">Video Seller</span>
+            <ChevronRight className="w-3 h-3 opacity-50" />
+          </Link>
+        )}
 
         {/* Admin: só para admins */}
         {session?.user?.role === 'admin' && (
@@ -127,10 +135,17 @@ export function Sidebar() {
             </div>
             <Link
               href="/admin/usuarios"
-              className={cn('sidebar-item', pathname.startsWith('/admin') && 'active')}
+              className={cn('sidebar-item', pathname.startsWith('/admin/usuarios') && 'active')}
             >
               <Users className="w-4 h-4 shrink-0" />
               <span className="flex-1 text-sm">Usuários</span>
+            </Link>
+            <Link
+              href="/admin/permissoes"
+              className={cn('sidebar-item', pathname.startsWith('/admin/permissoes') && 'active')}
+            >
+              <SlidersHorizontal className="w-4 h-4 shrink-0" />
+              <span className="flex-1 text-sm">Permissões</span>
             </Link>
           </>
         )}

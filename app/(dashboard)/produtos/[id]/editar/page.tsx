@@ -6,6 +6,7 @@ import { useDropzone } from 'react-dropzone'
 import { X, Upload, Loader2, Save, ImageIcon, Link as LinkIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Produto {
   id: string
@@ -18,6 +19,7 @@ interface Produto {
 }
 
 export default function EditarImagensPage() {
+  useGuardModulo('produtos')
   const router = useRouter()
   const params = useParams()
   const id = params.id as string

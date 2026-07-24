@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 type Modo = 'afiliado' | 'vendedor'
 
@@ -45,6 +46,7 @@ function CopyBtn({ text }: { text: string }) {
 }
 
 export default function ShopeeIntegracaoPage() {
+  useGuardModulo('integracoes')
   const [config, setConfig] = useState<Config | null>(null)
   const [loading, setLoading] = useState(true)
   const [modo, setModo] = useState<Modo>('afiliado')

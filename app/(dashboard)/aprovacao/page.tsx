@@ -8,6 +8,7 @@ import { PhonePreview } from '@/components/shared/PhonePreview'
 import { formatDateShort, cn } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
 import type { AlertaCompliance } from '@/types'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Conteudo {
   id: string
@@ -32,6 +33,7 @@ interface Conteudo {
 }
 
 export default function AprovacaoPage() {
+  useGuardModulo('aprovacao')
   const [conteudos, setConteudos] = useState<Conteudo[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)

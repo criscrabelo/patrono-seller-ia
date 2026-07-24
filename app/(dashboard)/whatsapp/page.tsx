@@ -8,6 +8,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface ConteudoOpcao {
   id: string
@@ -26,6 +27,7 @@ interface ResultadoEnvio {
 type Aba = 'enviar' | 'contatos'
 
 export default function WhatsAppPage() {
+  useGuardModulo('whatsapp')
   const [aba, setAba] = useState<Aba>('enviar')
   const [status, setStatus] = useState<{ configurado: boolean; conectado?: boolean; numero?: string } | null>(null)
   const [carregando, setCarregando] = useState(true)

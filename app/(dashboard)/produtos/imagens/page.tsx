@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { ExternalLink, Check, Loader2, Image as ImageIcon, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Produto {
   id: string
@@ -14,6 +15,7 @@ interface Produto {
 }
 
 export default function ImportarImagensPage() {
+  useGuardModulo('produtos-imagens')
   const [produtos, setProdutos] = useState<Produto[]>([])
   const [loading, setLoading] = useState(true)
   const [urls, setUrls] = useState<Record<string, string>>({})

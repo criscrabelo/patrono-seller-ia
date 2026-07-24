@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { LucroEscala } from '@/components/dashboard/LucroEscala'
 import { formatDateShort } from '@/lib/utils'
 import type { StatusConteudo } from '@/types'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Metricas {
   totalProdutos: number
@@ -39,6 +40,7 @@ interface Metricas {
 }
 
 export default function DashboardPage() {
+  useGuardModulo('dashboard')
   const [metricas, setMetricas] = useState<Metricas | null>(null)
   const [loading, setLoading] = useState(true)
 

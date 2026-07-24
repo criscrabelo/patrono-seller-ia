@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { copyToClipboard } from '@/lib/utils'
 import type { VideoSellerOutput } from '@/types'
 import { toast } from '@/hooks/use-toast'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 const PLATAFORMAS = ['TikTok', 'Instagram Reels', 'YouTube Shorts', 'WhatsApp', 'Marketplace', 'Landing Page']
 const DURACOES = [6, 10, 15, 20, 30, 60]
@@ -35,6 +36,7 @@ function CopyBtn({ text }: { text: string }) {
 }
 
 export default function VideoSellerPage() {
+  useGuardModulo('video-seller')
   const [form, setForm] = useState({
     nome: '',
     descricao: '',

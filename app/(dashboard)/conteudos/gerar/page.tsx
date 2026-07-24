@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { ConteudoPreview } from '@/components/conteudos/ConteudoPreview'
 import { REDES_SOCIAIS, DURACOES, ESTILOS, OBJETIVOS } from '@/types'
 import { toast } from '@/hooks/use-toast'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Produto {
   id: string
@@ -340,6 +341,7 @@ function GerarConteudoInner() {
 }
 
 export default function GerarConteudoPage() {
+  useGuardModulo('conteudos-gerar')
   return (
     <Suspense fallback={<div className="card-stat animate-pulse h-48" />}>
       <GerarConteudoInner />
