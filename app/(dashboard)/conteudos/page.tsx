@@ -28,6 +28,7 @@ interface Conteudo {
   videoUrl: string | null
   videoRequestId: string | null
   videoErro: string | null
+  duracao: number | null
   legendaInstagram: string | null
   hashtags: string[]
   chamadaAcao: string | null
@@ -116,6 +117,15 @@ export default function ConteudosPage() {
     const intervalo = setInterval(tick, 5000)
     return () => { cancelado = true; clearInterval(intervalo) }
   }, [publicarId, conteudos])
+
+  // Ao abrir a modal Postar, parte da duração escolhida em "Gerar Conteúdo"
+  // (cai para 5s se o conteúdo não tiver uma duração válida salva).
+  useEffect(() => {
+    if (!publicarId) return
+    const c = conteudos.find((x) => x.id === publicarId)
+    const DURACOES_VALIDAS = [5, 10, 15, 30]
+    setDuracaoVideoIA(c?.duracao && DURACOES_VALIDAS.includes(c.duracao) ? c.duracao : 5)
+  }, [publicarId])
 
   async function deletar(id: string) {
     if (!confirm('Deseja realmente excluir este conteúdo?')) return
@@ -531,6 +541,33 @@ export default function ConteudosPage() {
                       </button>
                     ))}
                   </div>
+                  {/* Duração: só o Kling permite escolher. O Veo é fixo em ~8s. */}
+                  {motorVideo === 'kling' ? (
+                    <div>
+                      <label className="text-[11px] text-muted-foreground block mb-1">Duração</label>
+                      <div className="flex gap-1.5">
+                        {[5, 10, 15, 30].map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => setDuracaoVideoIA(d)}
+                            disabled={uploadingVideo}
+                            className={`flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors ${
+                              duracaoVideoIA === d
+                                ? 'border-accent bg-accent/10 text-accent'
+                                : 'border-border text-muted-foreground hover:border-accent/40'
+                            }`}
+                          >
+                            {d}s
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      Duração fixa do Google Veo 3: ~8 segundos (com áudio).
+                    </p>
+                  )}
                   <Button
                     variant="outline"
                     className="w-full"
@@ -539,6 +576,7 @@ export default function ConteudosPage() {
                   >
                     <Sparkles className="w-4 h-4" />
                     Gerar vídeo com {motorVideo === 'veo' ? 'Google Veo 3' : 'Kling v3'}
+                    {motorVideo === 'kling' ? ` (${duracaoVideoIA}s)` : ''}
                   </Button>
                 </>
               )}
