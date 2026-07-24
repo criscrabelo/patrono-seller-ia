@@ -220,12 +220,14 @@ export default function UsuariosAdminPage() {
                           </Button>
                         )}
                         {u.status === 'ativo' && (
-                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'bloqueado' })}>
+                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'bloqueado' })}
+                            title="Bloquear usuário">
                             <XCircle className="w-3.5 h-3.5" />
                           </Button>
                         )}
                         {u.status === 'bloqueado' && (
-                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'ativo' })}>
+                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'ativo' })}
+                            title="Ativar usuário">
                             <CheckCircle className="w-3.5 h-3.5" />
                           </Button>
                         )}
