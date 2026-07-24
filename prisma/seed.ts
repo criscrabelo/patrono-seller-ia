@@ -15,6 +15,8 @@ async function main() {
       email: 'admin@patronosellerai.com',
       password: hashedPassword,
       name: 'Administrador',
+      role: 'admin',
+      status: 'ativo',
     },
   })
 
