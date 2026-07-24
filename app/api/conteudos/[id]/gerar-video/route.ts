@@ -33,7 +33,7 @@ export async function POST(
     )
   }
 
-  const motor: MotorVideo = body.motor === 'veo' ? 'veo' : 'kling'
+  const motor: MotorVideo = body.motor === 'veo' || body.motor === 'luma' ? body.motor : 'kling'
 
   const conteudo = await prisma.conteudo.findFirst({
     where: { id, userId: session.user.id },
