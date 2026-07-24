@@ -64,8 +64,8 @@ export function LucroEscala({
               <tr className="border-b border-border">
                 <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Produto</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Conversões</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Ticket Médio</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Comissão</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Comissão Média</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Comissão Total</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Score de Escala</th>
               </tr>
             </thead>
