@@ -54,7 +54,7 @@ export default function ConteudosPage() {
   const [publicandoIg, setPublicandoIg] = useState(false)
   const [gerandoVideoIA, setGerandoVideoIA] = useState(false)
   const [duracaoVideoIA, setDuracaoVideoIA] = useState<number>(5)
-  const [motorVideo, setMotorVideo] = useState<'kling' | 'veo'>('kling')
+  const [motorVideo, setMotorVideo] = useState<'kling' | 'veo' | 'luma'>('kling')
   const [tipoMidiaIg, setTipoMidiaIg] = useState<'video' | 'imagens'>('video')
   const [destinoIg, setDestinoIg] = useState<'feed' | 'stories'>('feed')
   const [adicionandoLegenda, setAdicionandoLegenda] = useState(false)
@@ -522,13 +522,19 @@ export default function ConteudosPage() {
                   {/* Seletor de motor de vídeo */}
                   <div className="flex gap-2">
                     {([
-                      { id: 'kling' as const, nome: 'Kling v3', desc: 'Anima a foto' },
-                      { id: 'veo' as const, nome: 'Google Veo 3', desc: '~8s, com áudio' },
+                      { id: 'kling' as const, nome: 'Kling v3', desc: 'Anima a foto · mais em conta' },
+                      { id: 'veo' as const, nome: 'Google Veo 3', desc: '~8s, com áudio · caro' },
+                      { id: 'luma' as const, nome: 'Luma Ray 2', desc: '5 ou 9s' },
                     ]).map((m) => (
                       <button
                         key={m.id}
                         type="button"
-                        onClick={() => setMotorVideo(m.id)}
+                        onClick={() => {
+                          setMotorVideo(m.id)
+                          // Normaliza a duração pro que cada motor aceita.
+                          if (m.id === 'luma') setDuracaoVideoIA((d) => (d <= 5 ? 5 : 9))
+                          else if (m.id === 'kling') setDuracaoVideoIA((d) => ([5, 10, 15, 30].includes(d) ? d : 5))
+                        }}
                         disabled={uploadingVideo}
                         className={`flex-1 rounded-lg border p-2 text-left transition-colors ${
                           motorVideo === m.id
@@ -541,8 +547,8 @@ export default function ConteudosPage() {
                       </button>
                     ))}
                   </div>
-                  {/* Duração: só o Kling permite escolher. O Veo é fixo em ~8s. */}
-                  {motorVideo === 'kling' ? (
+                  {/* Duração: Kling e Luma permitem escolher; Veo é fixo em ~8s. */}
+                  {motorVideo === 'kling' && (
                     <div>
                       <label className="text-[11px] text-muted-foreground block mb-1">Duração</label>
                       <div className="flex gap-1.5">
@@ -563,7 +569,30 @@ export default function ConteudosPage() {
                         ))}
                       </div>
                     </div>
-                  ) : (
+                  )}
+                  {motorVideo === 'luma' && (
+                    <div>
+                      <label className="text-[11px] text-muted-foreground block mb-1">Duração</label>
+                      <div className="flex gap-1.5">
+                        {[5, 9].map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => setDuracaoVideoIA(d)}
+                            disabled={uploadingVideo}
+                            className={`flex-1 rounded-lg border py-1.5 text-xs font-semibold transition-colors ${
+                              duracaoVideoIA === d
+                                ? 'border-accent bg-accent/10 text-accent'
+                                : 'border-border text-muted-foreground hover:border-accent/40'
+                            }`}
+                          >
+                            {d}s
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {motorVideo === 'veo' && (
                     <p className="text-[11px] text-muted-foreground">
                       Duração fixa do Google Veo 3: ~8 segundos (com áudio).
                     </p>
@@ -575,8 +604,8 @@ export default function ConteudosPage() {
                     onClick={gerarVideoIA}
                   >
                     <Sparkles className="w-4 h-4" />
-                    Gerar vídeo com {motorVideo === 'veo' ? 'Google Veo 3' : 'Kling v3'}
-                    {motorVideo === 'kling' ? ` (${duracaoVideoIA}s)` : ''}
+                    Gerar vídeo com {motorVideo === 'veo' ? 'Google Veo 3' : motorVideo === 'luma' ? 'Luma Ray 2' : 'Kling v3'}
+                    {motorVideo !== 'veo' ? ` (${duracaoVideoIA}s)` : ''}
                   </Button>
                 </>
               )}

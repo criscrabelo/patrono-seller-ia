@@ -6,12 +6,12 @@ const FAL_BASE = 'https://queue.fal.run'
 // ── Registro de motores de vídeo ──────────────────────────────────────
 // Cada motor é um modelo image-to-video no fal.ai (mesma FAL_KEY). O corpo
 // da requisição varia por modelo, então cada um monta o seu.
-export type MotorVideo = 'kling' | 'veo'
+export type MotorVideo = 'kling' | 'veo' | 'luma'
 
 export interface SubmeterVideoParams {
   imageUrl: string
   prompt: string
-  duracaoSegundos?: number // Kling: 5/10/15. Veo 3: ~8s fixo (ignora).
+  duracaoSegundos?: number // Kling: 5/10/15/30. Veo 3: ~8s fixo. Luma: 5 ou 9s (aproxima).
 }
 
 interface ModeloConfig {
@@ -45,6 +45,20 @@ export const MOTORES_VIDEO: Record<MotorVideo, ModeloConfig> = {
       prompt: p.prompt,
       duration: '8s',
       generate_audio: true,
+    }),
+  },
+  luma: {
+    // Luma Ray 2 (image-to-video) via fal.ai. Suporta 5s ou 9s (aceita o mais
+    // próximo do solicitado, arredondando para baixo).
+    // OBS: endpoint/parâmetros precisam de validação contra o fal.ai (não dá
+    // pra testar deste ambiente). Isolado aqui pra correção fácil.
+    path: 'fal-ai/luma-dream-machine/ray-2/image-to-video',
+    label: 'Luma Ray 2',
+    clipeUnico: true,
+    montarBody: (p) => ({
+      image_url: p.imageUrl,
+      prompt: p.prompt,
+      duration: (p.duracaoSegundos ?? 5) <= 5 ? '5s' : '9s',
     }),
   },
 }
