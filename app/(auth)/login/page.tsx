@@ -113,6 +113,11 @@ export default function LoginPage() {
             {errors.password && (
               <p className="text-danger text-xs mt-1">{errors.password.message}</p>
             )}
+            <div className="text-right mt-1.5">
+              <Link href="/esqueci-senha" className="text-xs text-white/50 hover:text-accent transition-colors">
+                Esqueci a senha
+              </Link>
+            </div>
           </div>
 
           {error && (
