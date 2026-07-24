@@ -26,19 +26,33 @@ export async function PATCH(req: NextRequest) {
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 403 })
 
-  const { id, status, role } = await req.json()
+  const { id, status, role, email } = await req.json()
   if (!id) return NextResponse.json({ error: 'ID obrigatório' }, { status: 400 })
 
-  const updated = await prisma.user.update({
-    where: { id },
-    data: {
-      ...(status && { status }),
-      ...(role && { role }),
-    },
-    select: { id: true, name: true, email: true, role: true, status: true },
-  })
+  if (email !== undefined) {
+    const emailNormalizado = String(email).trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalizado)) {
+      return NextResponse.json({ error: 'Email inválido' }, { status: 400 })
+    }
+  }
 
-  return NextResponse.json(updated)
+  try {
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        ...(status && { status }),
+        ...(role && { role }),
+        ...(email !== undefined && { email: String(email).trim().toLowerCase() }),
+      },
+      select: { id: true, name: true, email: true, role: true, status: true },
+    })
+    return NextResponse.json(updated)
+  } catch (e: any) {
+    if (e?.code === 'P2002') {
+      return NextResponse.json({ error: 'Esse email já está em uso por outra conta' }, { status: 409 })
+    }
+    throw e
+  }
 }
 
 export async function DELETE(req: NextRequest) {

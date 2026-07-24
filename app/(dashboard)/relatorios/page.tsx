@@ -5,6 +5,7 @@ import { BarChart2, Eye, Package, Zap, TrendingUp } from 'lucide-react'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDateShort } from '@/lib/utils'
 import type { StatusConteudo } from '@/types'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Metricas {
   totalProdutos: number
@@ -29,6 +30,7 @@ interface Metricas {
 }
 
 export default function RelatoriosPage() {
+  useGuardModulo('relatorios')
   const [metricas, setMetricas] = useState<Metricas | null>(null)
   const [loading, setLoading] = useState(true)
 

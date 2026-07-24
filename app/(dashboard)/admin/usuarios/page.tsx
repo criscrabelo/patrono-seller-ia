@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import { CheckCircle, XCircle, Trash2, Shield, User, Clock, Loader2 } from 'lucide-react'
+import { CheckCircle, XCircle, Trash2, Shield, User, Clock, Loader2, Pencil, Save, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { formatDateShort } from '@/lib/utils'
@@ -28,6 +28,9 @@ export default function UsuariosAdminPage() {
   const router = useRouter()
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [loading, setLoading] = useState(true)
+  const [editandoEmailId, setEditandoEmailId] = useState<string | null>(null)
+  const [emailEditado, setEmailEditado] = useState('')
+  const [salvandoEmail, setSalvandoEmail] = useState(false)
 
   useEffect(() => {
     if (status === 'loading') return
@@ -57,6 +60,39 @@ export default function UsuariosAdminPage() {
       fetchUsuarios()
     } else {
       toast({ title: 'Erro ao atualizar', variant: 'destructive' })
+    }
+  }
+
+  function iniciarEdicaoEmail(u: Usuario) {
+    setEditandoEmailId(u.id)
+    setEmailEditado(u.email)
+  }
+
+  function cancelarEdicaoEmail() {
+    setEditandoEmailId(null)
+    setEmailEditado('')
+  }
+
+  async function salvarEmail(id: string) {
+    const novoEmail = emailEditado.trim()
+    if (!novoEmail) {
+      toast({ title: 'Informe um email', variant: 'destructive' }); return
+    }
+    setSalvandoEmail(true)
+    const res = await fetch('/api/admin/usuarios', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, email: novoEmail }),
+    })
+    setSalvandoEmail(false)
+    if (res.ok) {
+      toast({ title: 'Email atualizado', variant: 'success' })
+      setEditandoEmailId(null)
+      setEmailEditado('')
+      fetchUsuarios()
+    } else {
+      const d = await res.json().catch(() => ({}))
+      toast({ title: d.error || 'Erro ao atualizar email', variant: 'destructive' })
     }
   }
 
@@ -125,16 +161,44 @@ export default function UsuariosAdminPage() {
               const isSelf = u.id === session?.user.id
               return (
                 <div key={u.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
                       {u.role === 'admin' ? <Shield className="w-4 h-4 text-accent" /> : <User className="w-4 h-4 text-muted-foreground" />}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm font-medium text-white">
                         {u.name || '—'}
                         {isSelf && <span className="ml-2 text-[10px] text-accent">(você)</span>}
                       </p>
-                      <p className="text-xs text-muted-foreground">{u.email}</p>
+                      {editandoEmailId === u.id ? (
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <input
+                            autoFocus
+                            type="email"
+                            value={emailEditado}
+                            onChange={(e) => setEmailEditado(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') salvarEmail(u.id) }}
+                            className="rounded-md border border-accent/40 bg-background px-2 py-1 text-xs text-white
+                              focus:outline-none focus:ring-1 focus:ring-accent w-56"
+                          />
+                          <button onClick={() => salvarEmail(u.id)} disabled={salvandoEmail}
+                            className="text-accent hover:text-accent-light p-1 disabled:opacity-50">
+                            <Save className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={cancelarEdicaoEmail} disabled={salvandoEmail}
+                            className="text-muted-foreground hover:text-white p-1">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+                          <button onClick={() => iniciarEdicaoEmail(u)} title="Editar email"
+                            className="text-muted-foreground hover:text-accent shrink-0">
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -156,12 +220,14 @@ export default function UsuariosAdminPage() {
                           </Button>
                         )}
                         {u.status === 'ativo' && (
-                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'bloqueado' })}>
+                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'bloqueado' })}
+                            title="Bloquear usuário">
                             <XCircle className="w-3.5 h-3.5" />
                           </Button>
                         )}
                         {u.status === 'bloqueado' && (
-                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'ativo' })}>
+                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'ativo' })}
+                            title="Ativar usuário">
                             <CheckCircle className="w-3.5 h-3.5" />
                           </Button>
                         )}

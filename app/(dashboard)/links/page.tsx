@@ -5,6 +5,7 @@ import { Copy, Check, Plus, Link2, Zap, TrendingUp, MousePointer, DollarSign, Re
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { formatCurrency } from '@/lib/utils'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Produto { id: string; nome: string; preco: number }
 interface LinkDinamico {
@@ -85,6 +86,7 @@ function CopyBtn({ text }: { text: string }) {
 const PLAT_EMOJI: Record<string, string> = Object.fromEntries(PLATAFORMAS_OPCOES.map(p => [p.id, p.emoji]))
 
 export default function LinksPage() {
+  useGuardModulo('links')
   const [links, setLinks] = useState<LinkDinamico[]>([])
   const [produtos, setProdutos] = useState<Produto[]>([])
   const [loading, setLoading] = useState(true)

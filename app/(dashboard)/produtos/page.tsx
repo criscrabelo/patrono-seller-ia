@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { formatDateShort } from '@/lib/utils'
 import { CATEGORIAS } from '@/types'
 import { toast } from '@/hooks/use-toast'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Produto {
   id: string
@@ -20,6 +21,7 @@ interface Produto {
 }
 
 export default function ProdutosPage() {
+  useGuardModulo('produtos')
   const [produtos, setProdutos] = useState<Produto[]>([])
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState<string | null>(null)

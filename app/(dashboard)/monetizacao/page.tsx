@@ -5,6 +5,7 @@ import { DollarSign, TrendingUp, Users, Zap, Link2, BarChart2, Star, AlertCircle
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { formatCurrency } from '@/lib/utils'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface LinkDinamico {
   id: string; plataforma: string; tipo: string; cliques: number
@@ -34,6 +35,7 @@ const ESTIMATIVAS = [
 ]
 
 export default function MonetizacaoPage() {
+  useGuardModulo('monetizacao')
   const [links, setLinks] = useState<LinkDinamico[]>([])
   const [loading, setLoading] = useState(true)
 

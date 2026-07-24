@@ -15,6 +15,7 @@ import { LINK_COMPRA } from '@/lib/config'
 import { STATUS_LABELS, type StatusConteudo } from '@/types'
 import { toast } from '@/hooks/use-toast'
 import { uploadFile } from '@/lib/supabase'
+import { useGuardModulo } from '@/hooks/useGuardModulo'
 
 interface Conteudo {
   id: string
@@ -38,6 +39,7 @@ interface Conteudo {
 const STATUS_LIST = Object.keys(STATUS_LABELS) as StatusConteudo[]
 
 export default function ConteudosPage() {
+  useGuardModulo('conteudos')
   const [conteudos, setConteudos] = useState<Conteudo[]>([])
   const [loading, setLoading] = useState(true)
   const [filtroStatus, setFiltroStatus] = useState('')

@@ -22,6 +22,20 @@ model User {
   linksDinamicos LinkDinamico[]
 }
 
+// Controle de quais módulos/telas ficam visíveis para cada papel (role).
+// O admin sempre vê tudo (não gera linha aqui); só existe registro pra
+// papéis restringíveis (hoje, só "usuario"). Ausência de linha = liberado
+// por padrão, pra nada quebrar antes de qualquer configuração.
+model ModuloPermissao {
+  id        String   @id @default(cuid())
+  role      String
+  modulo    String
+  liberado  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@unique([role, modulo])
+}
+
 model LinkDinamico {
   id                String       @id @default(cuid())
   userId            String
