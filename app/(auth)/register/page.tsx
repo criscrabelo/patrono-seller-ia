@@ -82,26 +82,26 @@ export default function RegisterPage() {
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-white/70 block mb-1.5">Nome completo</label>
-            <input {...register('name')} placeholder="Seu nome" className={inputClass} />
+            <label htmlFor="name" className="text-sm font-medium text-white/70 block mb-1.5">Nome completo</label>
+            <input {...register('name')} id="name" autoComplete="name" placeholder="Seu nome" className={inputClass} />
             {errors.name && <p className="text-danger text-xs mt-1">{errors.name.message}</p>}
           </div>
 
           <div>
-            <label className="text-sm font-medium text-white/70 block mb-1.5">Email</label>
-            <input {...register('email')} type="email" placeholder="seu@email.com" className={inputClass} />
+            <label htmlFor="email" className="text-sm font-medium text-white/70 block mb-1.5">Email</label>
+            <input {...register('email')} id="email" type="email" autoComplete="username" placeholder="seu@email.com" className={inputClass} />
             {errors.email && <p className="text-danger text-xs mt-1">{errors.email.message}</p>}
           </div>
 
           <div>
-            <label className="text-sm font-medium text-white/70 block mb-1.5">Senha</label>
-            <input {...register('password')} type="password" placeholder="••••••••" className={inputClass} />
+            <label htmlFor="password" className="text-sm font-medium text-white/70 block mb-1.5">Senha</label>
+            <input {...register('password')} id="password" type="password" autoComplete="new-password" placeholder="••••••••" className={inputClass} />
             {errors.password && <p className="text-danger text-xs mt-1">{errors.password.message}</p>}
           </div>
 
           <div>
-            <label className="text-sm font-medium text-white/70 block mb-1.5">Confirmar senha</label>
-            <input {...register('confirmPassword')} type="password" placeholder="••••••••" className={inputClass} />
+            <label htmlFor="confirmPassword" className="text-sm font-medium text-white/70 block mb-1.5">Confirmar senha</label>
+            <input {...register('confirmPassword')} id="confirmPassword" type="password" autoComplete="new-password" placeholder="••••••••" className={inputClass} />
             {errors.confirmPassword && <p className="text-danger text-xs mt-1">{errors.confirmPassword.message}</p>}
           </div>
 
