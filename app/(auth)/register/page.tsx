@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Loader2, AlertCircle, CheckCircle } from 'lucide-react'
+import { Loader2, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react'
 import { BrandMark } from '@/components/shared/BrandMark'
 
 const schema = z.object({
@@ -24,6 +24,8 @@ export default function RegisterPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
 
   const { register, handleSubmit, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
@@ -48,6 +50,20 @@ export default function RegisterPage() {
 
   const inputClass = `w-full rounded-lg border border-border bg-background px-3.5 py-2.5 text-sm
     text-white placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-accent transition-colors`
+  const inputClassSenha = inputClass + ' pr-10'
+
+  const OlhoBtn = ({ show, toggle }: { show: boolean; toggle: () => void }) => (
+    <button
+      type="button"
+      onClick={toggle}
+      tabIndex={-1}
+      title={show ? 'Ocultar senha' : 'Mostrar senha'}
+      aria-label={show ? 'Ocultar senha' : 'Mostrar senha'}
+      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white transition-colors"
+    >
+      {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+    </button>
+  )
 
   if (success) {
     return (
@@ -95,13 +111,19 @@ export default function RegisterPage() {
 
           <div>
             <label htmlFor="password" className="text-sm font-medium text-white/70 block mb-1.5">Senha</label>
-            <input {...register('password')} id="password" type="password" autoComplete="new-password" placeholder="••••••••" className={inputClass} />
+            <div className="relative">
+              <input {...register('password')} id="password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="••••••••" className={inputClassSenha} />
+              <OlhoBtn show={showPassword} toggle={() => setShowPassword((v) => !v)} />
+            </div>
             {errors.password && <p className="text-danger text-xs mt-1">{errors.password.message}</p>}
           </div>
 
           <div>
             <label htmlFor="confirmPassword" className="text-sm font-medium text-white/70 block mb-1.5">Confirmar senha</label>
-            <input {...register('confirmPassword')} id="confirmPassword" type="password" autoComplete="new-password" placeholder="••••••••" className={inputClass} />
+            <div className="relative">
+              <input {...register('confirmPassword')} id="confirmPassword" type={showConfirm ? 'text' : 'password'} autoComplete="new-password" placeholder="••••••••" className={inputClassSenha} />
+              <OlhoBtn show={showConfirm} toggle={() => setShowConfirm((v) => !v)} />
+            </div>
             {errors.confirmPassword && <p className="text-danger text-xs mt-1">{errors.confirmPassword.message}</p>}
           </div>
 

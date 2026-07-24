@@ -31,6 +31,9 @@ export default function UsuariosAdminPage() {
   const [editandoEmailId, setEditandoEmailId] = useState<string | null>(null)
   const [emailEditado, setEmailEditado] = useState('')
   const [salvandoEmail, setSalvandoEmail] = useState(false)
+  const [editandoNomeId, setEditandoNomeId] = useState<string | null>(null)
+  const [nomeEditado, setNomeEditado] = useState('')
+  const [salvandoNome, setSalvandoNome] = useState(false)
 
   useEffect(() => {
     if (status === 'loading') return
@@ -59,7 +62,41 @@ export default function UsuariosAdminPage() {
       toast({ title: 'Usuário atualizado', variant: 'success' })
       fetchUsuarios()
     } else {
-      toast({ title: 'Erro ao atualizar', variant: 'destructive' })
+      const d = await res.json().catch(() => ({}))
+      toast({ title: d.error || 'Erro ao atualizar', variant: 'destructive' })
+    }
+  }
+
+  function iniciarEdicaoNome(u: Usuario) {
+    setEditandoNomeId(u.id)
+    setNomeEditado(u.name || '')
+  }
+
+  function cancelarEdicaoNome() {
+    setEditandoNomeId(null)
+    setNomeEditado('')
+  }
+
+  async function salvarNome(id: string) {
+    const novoNome = nomeEditado.trim()
+    if (!novoNome) {
+      toast({ title: 'Informe um nome', variant: 'destructive' }); return
+    }
+    setSalvandoNome(true)
+    const res = await fetch('/api/admin/usuarios', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name: novoNome }),
+    })
+    setSalvandoNome(false)
+    if (res.ok) {
+      toast({ title: 'Nome atualizado', variant: 'success' })
+      setEditandoNomeId(null)
+      setNomeEditado('')
+      fetchUsuarios()
+    } else {
+      const d = await res.json().catch(() => ({}))
+      toast({ title: d.error || 'Erro ao atualizar nome', variant: 'destructive' })
     }
   }
 
@@ -110,6 +147,7 @@ export default function UsuariosAdminPage() {
 
   const pendentes = usuarios.filter((u) => u.status === 'pendente')
   const demais   = usuarios.filter((u) => u.status !== 'pendente')
+  const totalAdmins = usuarios.filter((u) => u.role === 'admin').length
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -166,10 +204,35 @@ export default function UsuariosAdminPage() {
                       {u.role === 'admin' ? <Shield className="w-4 h-4 text-accent" /> : <User className="w-4 h-4 text-muted-foreground" />}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-white">
-                        {u.name || '—'}
-                        {isSelf && <span className="ml-2 text-[10px] text-accent">(você)</span>}
-                      </p>
+                      {editandoNomeId === u.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            autoFocus
+                            value={nomeEditado}
+                            onChange={(e) => setNomeEditado(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') salvarNome(u.id) }}
+                            className="rounded-md border border-accent/40 bg-background px-2 py-1 text-sm text-white
+                              focus:outline-none focus:ring-1 focus:ring-accent w-56"
+                          />
+                          <button onClick={() => salvarNome(u.id)} disabled={salvandoNome}
+                            className="text-accent hover:text-accent-light p-1 disabled:opacity-50">
+                            <Save className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={cancelarEdicaoNome} disabled={salvandoNome}
+                            className="text-muted-foreground hover:text-white p-1">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-sm font-medium text-white flex items-center gap-1.5">
+                          <span>{u.name || '—'}</span>
+                          {isSelf && <span className="text-[10px] text-accent">(você)</span>}
+                          <button onClick={() => iniciarEdicaoNome(u)} title="Editar nome"
+                            className="text-muted-foreground hover:text-accent shrink-0">
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        </p>
+                      )}
                       {editandoEmailId === u.id ? (
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <input
@@ -205,20 +268,18 @@ export default function UsuariosAdminPage() {
                     <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${st.color}`}>
                       {st.icon}{st.label}
                     </span>
+                    <select
+                      value={u.role}
+                      onChange={(e) => atualizar(u.id, { role: e.target.value })}
+                      title="Classificar papel do usuário"
+                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-white
+                        focus:outline-none focus:ring-1 focus:ring-accent cursor-pointer"
+                    >
+                      <option value="admin">Administrador</option>
+                      <option value="usuario" disabled={u.role === 'admin' && totalAdmins <= 1}>Usuário</option>
+                    </select>
                     {!isSelf && (
                       <>
-                        {u.role !== 'admin' && (
-                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { role: 'admin' })}
-                            title="Promover a admin">
-                            <Shield className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                        {u.role === 'admin' && (
-                          <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { role: 'usuario' })}
-                            title="Remover admin">
-                            <User className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
                         {u.status === 'ativo' && (
                           <Button size="sm" variant="outline" onClick={() => atualizar(u.id, { status: 'bloqueado' })}
                             title="Bloquear usuário">
