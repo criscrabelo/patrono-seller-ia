@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import { CheckCircle, XCircle, Trash2, Shield, User, Clock, Loader2, Pencil, Save, X } from 'lucide-react'
+import { CheckCircle, XCircle, Trash2, Shield, User, Clock, Loader2, Pencil, Save, X, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { formatDateShort } from '@/lib/utils'
@@ -34,6 +34,9 @@ export default function UsuariosAdminPage() {
   const [editandoNomeId, setEditandoNomeId] = useState<string | null>(null)
   const [nomeEditado, setNomeEditado] = useState('')
   const [salvandoNome, setSalvandoNome] = useState(false)
+  const [redefinindoSenhaId, setRedefinindoSenhaId] = useState<string | null>(null)
+  const [senhaNova, setSenhaNova] = useState('')
+  const [salvandoSenha, setSalvandoSenha] = useState(false)
 
   useEffect(() => {
     if (status === 'loading') return
@@ -133,6 +136,36 @@ export default function UsuariosAdminPage() {
     }
   }
 
+  function iniciarReset(id: string) {
+    setRedefinindoSenhaId(id)
+    setSenhaNova('')
+  }
+
+  function cancelarReset() {
+    setRedefinindoSenhaId(null)
+    setSenhaNova('')
+  }
+
+  async function salvarSenhaReset(id: string) {
+    if (senhaNova.length < 6) {
+      toast({ title: 'A senha precisa ter pelo menos 6 caracteres', variant: 'destructive' }); return
+    }
+    setSalvandoSenha(true)
+    const res = await fetch('/api/admin/usuarios', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, password: senhaNova }),
+    })
+    setSalvandoSenha(false)
+    if (res.ok) {
+      toast({ title: 'Senha redefinida com sucesso', variant: 'success' })
+      cancelarReset()
+    } else {
+      const d = await res.json().catch(() => ({}))
+      toast({ title: d.error || 'Erro ao redefinir senha', variant: 'destructive' })
+    }
+  }
+
   async function excluir(id: string, email: string) {
     if (!confirm(`Excluir usuário ${email}? Todos os dados serão perdidos.`)) return
     const res = await fetch(`/api/admin/usuarios?id=${id}`, { method: 'DELETE' })
@@ -198,7 +231,8 @@ export default function UsuariosAdminPage() {
               const st = statusLabel[u.status] ?? statusLabel.bloqueado
               const isSelf = u.id === session?.user.id
               return (
-                <div key={u.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+                <div key={u.id} className="rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
                       {u.role === 'admin' ? <Shield className="w-4 h-4 text-accent" /> : <User className="w-4 h-4 text-muted-foreground" />}
@@ -278,6 +312,11 @@ export default function UsuariosAdminPage() {
                       <option value="admin">Administrador</option>
                       <option value="usuario" disabled={u.role === 'admin' && totalAdmins <= 1}>Usuário</option>
                     </select>
+                    <Button size="sm" variant="outline"
+                      onClick={() => (redefinindoSenhaId === u.id ? cancelarReset() : iniciarReset(u.id))}
+                      title="Redefinir senha">
+                      <KeyRound className="w-3.5 h-3.5" />
+                    </Button>
                     {!isSelf && (
                       <>
                         {u.status === 'ativo' && (
@@ -299,6 +338,30 @@ export default function UsuariosAdminPage() {
                       </>
                     )}
                   </div>
+                  </div>
+                  {redefinindoSenhaId === u.id && (
+                    <div className="mt-3 pt-3 border-t border-border flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 text-accent shrink-0" />
+                      <input
+                        autoFocus
+                        type="text"
+                        value={senhaNova}
+                        onChange={(e) => setSenhaNova(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') salvarSenhaReset(u.id) }}
+                        placeholder="Nova senha (mín. 6 caracteres)"
+                        className="flex-1 rounded-md border border-accent/40 bg-background px-2 py-1 text-sm text-white
+                          placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                      <button onClick={() => salvarSenhaReset(u.id)} disabled={salvandoSenha}
+                        className="text-accent hover:text-accent-light p-1 disabled:opacity-50" title="Salvar senha">
+                        <Save className="w-4 h-4" />
+                      </button>
+                      <button onClick={cancelarReset} disabled={salvandoSenha}
+                        className="text-muted-foreground hover:text-white p-1" title="Cancelar">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               )
             })}
