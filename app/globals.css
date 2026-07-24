@@ -37,6 +37,19 @@
     font-family: 'Inter', sans-serif;
   }
 
+  /* Mantém os campos autopreenchidos pelo Chrome com o fundo escuro do tema
+     (senão o Chrome pinta de azul-claro e some com o ícone de olho e o visual). */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:active {
+    -webkit-text-fill-color: hsl(var(--foreground));
+    -webkit-box-shadow: 0 0 0 1000px hsl(var(--background)) inset;
+    box-shadow: 0 0 0 1000px hsl(var(--background)) inset;
+    caret-color: hsl(var(--foreground));
+    transition: background-color 9999s ease-in-out 0s;
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
