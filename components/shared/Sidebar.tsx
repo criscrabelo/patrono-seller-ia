@@ -153,7 +153,14 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="border-t border-border p-3">
-        <div className="flex items-center gap-2.5 px-2 py-1.5 mb-1">
+        <Link
+          href="/conta"
+          title="Minha conta"
+          className={cn(
+            'flex items-center gap-2.5 px-2 py-1.5 mb-1 rounded-md hover:bg-secondary/60 transition-colors',
+            pathname.startsWith('/conta') && 'bg-secondary/60'
+          )}
+        >
           <div className="w-7 h-7 rounded-full bg-accent/20 flex items-center justify-center">
             <span className="text-xs font-bold text-accent">
               {session?.user?.name?.[0] ?? 'A'}
@@ -165,7 +172,7 @@ export function Sidebar() {
             </p>
             <p className="text-[10px] text-white/40 truncate">{session?.user?.email}</p>
           </div>
-        </div>
+        </Link>
         <a
           href="https://web.facebook.com/profile.php?id=61589588903488"
           target="_blank"
