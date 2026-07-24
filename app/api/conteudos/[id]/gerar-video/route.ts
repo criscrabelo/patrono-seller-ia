@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { submeterGeracaoVideo } from '@/lib/falai'
+import { submeterGeracaoVideo, MOTORES_VIDEO, type MotorVideo } from '@/lib/falai'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -33,6 +33,8 @@ export async function POST(
     )
   }
 
+  const motor: MotorVideo = body.motor === 'veo' ? 'veo' : 'kling'
+
   const conteudo = await prisma.conteudo.findFirst({
     where: { id, userId: session.user.id },
     include: { produto: { select: { imagens: true, nome: true } } },
@@ -57,7 +59,10 @@ export async function POST(
     )
   }
 
-  const { duracaoClipe, numClipes } = planoDeClipes(duracaoSolicitada)
+  // Veo gera um clipe único (~8s com áudio); Kling pode compor vários clipes.
+  const { duracaoClipe, numClipes } = MOTORES_VIDEO[motor].clipeUnico
+    ? { duracaoClipe: duracaoSolicitada, numClipes: 1 }
+    : planoDeClipes(duracaoSolicitada)
 
   try {
     // Submete todos os clipes em paralelo, cada um usando uma imagem diferente
@@ -68,12 +73,13 @@ export async function POST(
           imageUrl: imagens[i % imagens.length],
           prompt,
           duracaoSegundos: duracaoClipe,
-        })
+        }, motor)
       )
     )
 
     const estado = {
       fase: 'gerando_clipes' as const,
+      motor,
       duracaoTotal: duracaoSolicitada,
       clipes: submissoes.map((s) => ({
         requestId: s.requestId,

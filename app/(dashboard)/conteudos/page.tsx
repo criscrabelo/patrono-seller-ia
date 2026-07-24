@@ -53,6 +53,7 @@ export default function ConteudosPage() {
   const [publicandoIg, setPublicandoIg] = useState(false)
   const [gerandoVideoIA, setGerandoVideoIA] = useState(false)
   const [duracaoVideoIA, setDuracaoVideoIA] = useState<number>(5)
+  const [motorVideo, setMotorVideo] = useState<'kling' | 'veo'>('kling')
   const [tipoMidiaIg, setTipoMidiaIg] = useState<'video' | 'imagens'>('video')
   const [destinoIg, setDestinoIg] = useState<'feed' | 'stories'>('feed')
   const [adicionandoLegenda, setAdicionandoLegenda] = useState(false)
@@ -220,7 +221,11 @@ export default function ConteudosPage() {
   async function gerarVideoIA() {
     if (!publicarId) return
     setGerandoVideoIA(true)
-    const res = await fetch(`/api/conteudos/${publicarId}/gerar-video`, { method: 'POST' })
+    const res = await fetch(`/api/conteudos/${publicarId}/gerar-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motor: motorVideo, duracao: duracaoVideoIA }),
+    })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       setGerandoVideoIA(false)
@@ -502,15 +507,38 @@ export default function ConteudosPage() {
               ) : (
                 <>
                   <p className="text-[11px] text-muted-foreground">
-                    Use a IA (Kling v3) gerando a partir da imagem do produto, ou envie um vídeo pronto.
+                    Gere com IA a partir da imagem do produto, ou envie um vídeo pronto.
                   </p>
+                  {/* Seletor de motor de vídeo */}
+                  <div className="flex gap-2">
+                    {([
+                      { id: 'kling' as const, nome: 'Kling v3', desc: 'Anima a foto' },
+                      { id: 'veo' as const, nome: 'Google Veo 3', desc: '~8s, com áudio' },
+                    ]).map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setMotorVideo(m.id)}
+                        disabled={uploadingVideo}
+                        className={`flex-1 rounded-lg border p-2 text-left transition-colors ${
+                          motorVideo === m.id
+                            ? 'border-accent bg-accent/10'
+                            : 'border-border hover:border-accent/40'
+                        }`}
+                      >
+                        <p className={`text-xs font-semibold ${motorVideo === m.id ? 'text-accent' : 'text-white'}`}>{m.nome}</p>
+                        <p className="text-[10px] text-muted-foreground">{m.desc}</p>
+                      </button>
+                    ))}
+                  </div>
                   <Button
                     variant="outline"
                     className="w-full"
                     disabled={uploadingVideo}
                     onClick={gerarVideoIA}
                   >
-                    <Sparkles className="w-4 h-4" />Gerar vídeo com IA (Kling v3)
+                    <Sparkles className="w-4 h-4" />
+                    Gerar vídeo com {motorVideo === 'veo' ? 'Google Veo 3' : 'Kling v3'}
                   </Button>
                 </>
               )}
