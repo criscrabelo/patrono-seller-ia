@@ -2,12 +2,51 @@
 // Documentação: https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video/api
 
 const FAL_BASE = 'https://queue.fal.run'
-const MODEL_PATH = 'fal-ai/kling-video/v3/pro/image-to-video'
+
+// ── Registro de motores de vídeo ──────────────────────────────────────
+// Cada motor é um modelo image-to-video no fal.ai (mesma FAL_KEY). O corpo
+// da requisição varia por modelo, então cada um monta o seu.
+export type MotorVideo = 'kling' | 'veo'
 
 export interface SubmeterVideoParams {
   imageUrl: string
   prompt: string
-  duracaoSegundos?: number // 5 ou 10 (limites do Kling v3), default 10
+  duracaoSegundos?: number // Kling: 5/10/15. Veo 3: ~8s fixo (ignora).
+}
+
+interface ModeloConfig {
+  path: string
+  label: string
+  // Se true, gera um único clipe (sem composição de vários clipes).
+  clipeUnico: boolean
+  montarBody: (p: SubmeterVideoParams) => Record<string, unknown>
+}
+
+export const MOTORES_VIDEO: Record<MotorVideo, ModeloConfig> = {
+  kling: {
+    path: 'fal-ai/kling-video/v3/pro/image-to-video',
+    label: 'Kling v3 Pro',
+    clipeUnico: false,
+    montarBody: (p) => ({
+      image_url: p.imageUrl,
+      prompt: p.prompt,
+      duration: p.duracaoSegundos ?? 10,
+    }),
+  },
+  veo: {
+    // Google Veo 3 (image-to-video) via fal.ai. Gera ~8s com áudio.
+    // OBS: endpoint/parâmetros exatos precisam de validação contra o fal.ai
+    // (não dá pra testar deste ambiente). Isolado aqui pra correção fácil.
+    path: 'fal-ai/veo3/image-to-video',
+    label: 'Google Veo 3',
+    clipeUnico: true,
+    montarBody: (p) => ({
+      image_url: p.imageUrl,
+      prompt: p.prompt,
+      duration: '8s',
+      generate_audio: true,
+    }),
+  },
 }
 
 export interface SubmeterResultado {
@@ -100,14 +139,12 @@ async function falFetch(url: string, init?: RequestInit) {
  * status/resultado fornecidas pelo próprio fal.ai (o caminho varia por
  * modelo, então é mais seguro usar as URLs que ele devolve). */
 export async function submeterGeracaoVideo(
-  params: SubmeterVideoParams
+  params: SubmeterVideoParams,
+  motor: MotorVideo = 'kling'
 ): Promise<SubmeterResultado> {
-  const body = {
-    image_url: params.imageUrl,
-    prompt: params.prompt,
-    duration: params.duracaoSegundos ?? 10,
-  }
-  const data = await falFetch(`${FAL_BASE}/${MODEL_PATH}`, {
+  const modelo = MOTORES_VIDEO[motor] ?? MOTORES_VIDEO.kling
+  const body = modelo.montarBody(params)
+  const data = await falFetch(`${FAL_BASE}/${modelo.path}`, {
     method: 'POST',
     body: JSON.stringify(body),
   })
@@ -123,10 +160,11 @@ export async function submeterGeracaoVideo(
 /** Submete múltiplos jobs em paralelo e retorna um array de resultados. */
 export async function submeterMultiplosClipes(
   params: SubmeterVideoParams,
-  quantidade: number
+  quantidade: number,
+  motor: MotorVideo = 'kling'
 ): Promise<SubmeterResultado[]> {
   return Promise.all(
-    Array.from({ length: quantidade }, () => submeterGeracaoVideo(params))
+    Array.from({ length: quantidade }, () => submeterGeracaoVideo(params, motor))
   )
 }
 
