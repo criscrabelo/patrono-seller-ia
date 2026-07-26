@@ -39,8 +39,8 @@ const PLATAFORMAS: Plataforma[] = [
     tipo: 'oauth',
     urlDocs: 'https://developers.facebook.com/docs/instagram-api',
     campos: [
-      { key: 'accessToken', label: 'Access Token (longa duração)', placeholder: 'EAABsbCS...', secret: true },
-      { key: 'accountId', label: 'Instagram Business Account ID', placeholder: '17841400...' },
+      { key: 'accessToken', label: 'Access Token de longa duração (EAA... ou IGAA...)', placeholder: 'EAABsbCS... ou IGAAxxxx...', secret: true },
+      { key: 'accountId', label: 'Instagram Business Account ID (ou Instagram User ID)', placeholder: '17841400...' },
       { key: 'appId', label: 'Meta App ID (para renovação automática)', placeholder: '123456789012345' },
       { key: 'appSecret', label: 'Meta App Secret (para renovação automática)', placeholder: 'abc123def456...', secret: true },
     ],
