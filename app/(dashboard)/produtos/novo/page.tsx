@@ -10,6 +10,7 @@ import {
 } from '@/types'
 import { toast } from '@/hooks/use-toast'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
+import { useColarArquivos } from '@/hooks/useColarArquivos'
 
 export default function NovoProdutoPage() {
   useGuardModulo('produtos')
@@ -81,6 +82,16 @@ export default function NovoProdutoPage() {
   const { getRootProps: vidProps, getInputProps: vidInput } = useDropzone({
     onDrop: onDropVideos, accept: { 'video/*': [] }, maxFiles: 5,
   })
+
+  // Ctrl+V / Cmd+V cola imagens e vídeos, roteando cada um para a sua lista.
+  const colarArquivos = useCallback((files: File[]) => {
+    const imgs = files.filter((f) => f.type.startsWith('image/'))
+    const vids = files.filter((f) => f.type.startsWith('video/'))
+    if (imgs.length) onDropImages(imgs)
+    if (vids.length) onDropVideos(vids)
+  }, [onDropImages, onDropVideos])
+
+  useColarArquivos(colarArquivos)
 
   async function salvar() {
     if (!form.tipoVenda || !form.origemConteudo) {
@@ -254,6 +265,7 @@ export default function NovoProdutoPage() {
                   <input {...imgInput()} />
                   <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">Arraste imagens ou clique para selecionar</p>
+                  <p className="text-xs text-accent mt-1">Ou cole com Ctrl+V</p>
                 </div>
                 {form.imagens.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-3">
@@ -278,6 +290,7 @@ export default function NovoProdutoPage() {
                   <input {...vidInput()} />
                   <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">Arraste vídeos ou clique para selecionar</p>
+                  <p className="text-xs text-accent mt-1">Ou cole com Ctrl+V</p>
                 </div>
                 {form.videos.length > 0 && (
                   <div className="flex flex-col gap-2 mt-3">
