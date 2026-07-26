@@ -11,6 +11,7 @@ import {
 import { toast } from '@/hooks/use-toast'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
 import { useColarArquivos } from '@/hooks/useColarArquivos'
+import { enviarMidia } from '@/lib/upload-midia'
 
 export default function NovoProdutoPage() {
   useGuardModulo('produtos')
@@ -48,33 +49,34 @@ export default function NovoProdutoPage() {
     }))
   }
 
+  // Upload direto do navegador → Supabase (a rota /api/upload passaria pela
+  // Vercel, que corta requisições acima de 4,5 MB e barraria os vídeos).
+  const enviarLista = useCallback(async (arquivos: File[]) => {
+    const urls: string[] = []
+    for (const file of arquivos) {
+      try {
+        urls.push(await enviarMidia(file, 'novos'))
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Falha no upload'
+        toast({ title: `Erro em ${file.name}`, description: msg, variant: 'destructive' })
+      }
+    }
+    return urls
+  }, [])
+
   const onDropImages = useCallback(async (files: File[]) => {
     setUploading(true)
-    const urls: string[] = []
-    for (const file of files.slice(0, 10 - form.imagens.length)) {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch('/api/upload', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (data.url) urls.push(data.url)
-    }
-    setForm((f) => ({ ...f, imagens: [...f.imagens, ...urls] }))
+    const urls = await enviarLista(files.slice(0, 10 - form.imagens.length))
+    if (urls.length) setForm((f) => ({ ...f, imagens: [...f.imagens, ...urls] }))
     setUploading(false)
-  }, [form.imagens])
+  }, [form.imagens, enviarLista])
 
   const onDropVideos = useCallback(async (files: File[]) => {
     setUploading(true)
-    const urls: string[] = []
-    for (const file of files.slice(0, 5 - form.videos.length)) {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch('/api/upload', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (data.url) urls.push(data.url)
-    }
-    setForm((f) => ({ ...f, videos: [...f.videos, ...urls] }))
+    const urls = await enviarLista(files.slice(0, 5 - form.videos.length))
+    if (urls.length) setForm((f) => ({ ...f, videos: [...f.videos, ...urls] }))
     setUploading(false)
-  }, [form.videos])
+  }, [form.videos, enviarLista])
 
   const { getRootProps: imgProps, getInputProps: imgInput } = useDropzone({
     onDrop: onDropImages, accept: { 'image/*': [] }, maxFiles: 10,
@@ -283,7 +285,7 @@ export default function NovoProdutoPage() {
               </div>
               <div>
                 <label className="text-xs text-muted-foreground mb-2 block">
-                  Vídeos (máx. 5, 100MB cada)
+                  Vídeos (máx. 5, 500MB cada)
                 </label>
                 <div {...vidProps()} className="border-2 border-dashed border-border rounded-xl p-6
                   text-center cursor-pointer hover:border-accent/50 transition-colors">
