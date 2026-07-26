@@ -3,9 +3,24 @@
 // configurados na página de Integrações.
 
 const API_VERSION = 'v21.0'
-// Instagram API com Login do Instagram (graph.instagram.com) — usada quando
-// o app é configurado com "API setup with Instagram login".
-const BASE = `https://graph.instagram.com/${API_VERSION}`
+
+// A Meta tem DOIS fluxos diferentes para publicar no Instagram, cada um com
+// seu próprio host e formato de token:
+//
+//  - "Instagram API with Instagram login"  -> graph.instagram.com, token IGAA.../IGQ...
+//  - "Instagram API with Facebook login"   -> graph.facebook.com,  token EAA...
+//
+// Aceitamos os dois: o host é escolhido pelo prefixo do token, então o
+// usuário pode colar o que obteve em qualquer um dos fluxos.
+function apiBase(accessToken: string): string {
+  const host = accessToken.startsWith('IG') ? 'graph.instagram.com' : 'graph.facebook.com'
+  return `https://${host}/${API_VERSION}`
+}
+
+/** True se o token é do fluxo "Instagram login" (e não do Facebook login). */
+function isTokenInstagram(accessToken: string): boolean {
+  return accessToken.startsWith('IG')
+}
 
 export interface PublicarReelParams {
   accessToken: string
@@ -36,7 +51,7 @@ export async function publicarReelInstagram({
   legenda,
 }: PublicarReelParams): Promise<string> {
   // 1. Cria o container de mídia (REELS)
-  const criar = await fbFetch(`${BASE}/${igUserId}/media`, {
+  const criar = await fbFetch(`${apiBase(accessToken)}/${igUserId}/media`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -56,7 +71,7 @@ export async function publicarReelInstagram({
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise((r) => setTimeout(r, INTERVALO))
     const status = await fbFetch(
-      `${BASE}/${containerId}?fields=status_code&access_token=${encodeURIComponent(accessToken)}`
+      `${apiBase(accessToken)}/${containerId}?fields=status_code&access_token=${encodeURIComponent(accessToken)}`
     )
     if (status.status_code === 'FINISHED') {
       pronto = true
@@ -73,7 +88,7 @@ export async function publicarReelInstagram({
   }
 
   // 3. Publica o container
-  const publicar = await fbFetch(`${BASE}/${igUserId}/media_publish`, {
+  const publicar = await fbFetch(`${apiBase(accessToken)}/${igUserId}/media_publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -93,7 +108,7 @@ export async function criarContainerReel(params: {
   videoUrl: string
   legenda: string
 }): Promise<string> {
-  const criar = await fbFetch(`${BASE}/${params.igUserId}/media`, {
+  const criar = await fbFetch(`${apiBase(params.accessToken)}/${params.igUserId}/media`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -114,7 +129,7 @@ export async function statusContainer(params: {
   containerId: string
 }): Promise<string> {
   const data = await fbFetch(
-    `${BASE}/${params.containerId}?fields=status_code&access_token=${encodeURIComponent(params.accessToken)}`
+    `${apiBase(params.accessToken)}/${params.containerId}?fields=status_code&access_token=${encodeURIComponent(params.accessToken)}`
   )
   return (data.status_code as string) || 'IN_PROGRESS'
 }
@@ -125,7 +140,7 @@ export async function publicarContainer(params: {
   igUserId: string
   containerId: string
 }): Promise<string> {
-  const publicar = await fbFetch(`${BASE}/${params.igUserId}/media_publish`, {
+  const publicar = await fbFetch(`${apiBase(params.accessToken)}/${params.igUserId}/media_publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -144,7 +159,7 @@ async function postarMedia(
   accessToken: string,
   campos: Record<string, unknown>
 ): Promise<string> {
-  const data = await fbFetch(`${BASE}/${igUserId}/media`, {
+  const data = await fbFetch(`${apiBase(accessToken)}/${igUserId}/media`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...campos, access_token: accessToken }),
@@ -233,7 +248,9 @@ export function montarLegenda(
 }
 
 /**
- * Renova um token de longa duração do Instagram usando o grant fb_exchange_token.
+ * Renova um token de longa duração, usando o fluxo correto para cada tipo:
+ *  - Instagram login (IGAA...): grant ig_refresh_token (não precisa de app id/secret)
+ *  - Facebook login (EAA...):   grant fb_exchange_token (exige app id + secret)
  * Retorna o novo token e quantos segundos até expirar (~5184000 = 60 dias).
  */
 export async function renovarTokenInstagram(params: {
@@ -241,12 +258,28 @@ export async function renovarTokenInstagram(params: {
   appId?: string
   appSecret?: string
 }): Promise<{ accessToken: string; expiresIn: number }> {
-  // Instagram Login API: renova o token de longa duração via ig_refresh_token.
-  // Não precisa de appId/appSecret — basta o token atual (válido, com +24h de vida).
-  const url =
-    `https://graph.instagram.com/refresh_access_token` +
-    `?grant_type=ig_refresh_token` +
-    `&access_token=${encodeURIComponent(params.accessToken)}`
+  let url: string
+
+  if (isTokenInstagram(params.accessToken)) {
+    // Instagram Login API: basta o token atual (válido, com +24h de vida).
+    url =
+      `https://graph.instagram.com/refresh_access_token` +
+      `?grant_type=ig_refresh_token` +
+      `&access_token=${encodeURIComponent(params.accessToken)}`
+  } else {
+    // Facebook Login: troca o token atual por um novo de longa duração.
+    if (!params.appId || !params.appSecret) {
+      throw new Error(
+        'Para renovar um token do Facebook (EAA...) é preciso informar o Meta App ID e o App Secret.'
+      )
+    }
+    url =
+      `https://graph.facebook.com/${API_VERSION}/oauth/access_token` +
+      `?grant_type=fb_exchange_token` +
+      `&client_id=${encodeURIComponent(params.appId)}` +
+      `&client_secret=${encodeURIComponent(params.appSecret)}` +
+      `&fb_exchange_token=${encodeURIComponent(params.accessToken)}`
+  }
 
   const data = await fbFetch(url)
 
@@ -257,5 +290,51 @@ export async function renovarTokenInstagram(params: {
   return {
     accessToken: data.access_token as string,
     expiresIn: (data.expires_in as number) ?? 5184000,
+  }
+}
+
+/**
+ * Verifica se o token realmente funciona, consultando a conta na API da Meta.
+ * Usado ao conectar, para não salvar como "conectado" um token morto/inválido.
+ * Retorna o nome de usuário da conta quando dá certo.
+ */
+export async function validarCredenciaisInstagram(params: {
+  accessToken: string
+  igUserId: string
+}): Promise<{ username?: string }> {
+  const data = await fbFetch(
+    `${apiBase(params.accessToken)}/${params.igUserId}` +
+      `?fields=username&access_token=${encodeURIComponent(params.accessToken)}`
+  )
+  return { username: data.username as string | undefined }
+}
+
+/**
+ * Descobre quando o token expira DE VERDADE, em vez de assumir 60 dias.
+ * Só funciona para tokens do Facebook (EAA...) com App ID + Secret, via
+ * debug_token. Retorna null quando não é possível descobrir — aí quem chama
+ * decide o fallback.
+ */
+export async function descobrirExpiracaoToken(params: {
+  accessToken: string
+  appId?: string
+  appSecret?: string
+}): Promise<Date | null> {
+  if (isTokenInstagram(params.accessToken)) return null
+  if (!params.appId || !params.appSecret) return null
+
+  try {
+    const data = await fbFetch(
+      `https://graph.facebook.com/${API_VERSION}/debug_token` +
+        `?input_token=${encodeURIComponent(params.accessToken)}` +
+        `&access_token=${encodeURIComponent(`${params.appId}|${params.appSecret}`)}`
+    )
+    const expiresAt = (data?.data as { expires_at?: number } | undefined)?.expires_at
+    // expires_at 0 (ou ausente) = token sem prazo de validade.
+    if (typeof expiresAt !== 'number' || expiresAt === 0) return null
+    return new Date(expiresAt * 1000)
+  } catch {
+    // debug_token é um extra: se falhar, não impede a conexão.
+    return null
   }
 }
