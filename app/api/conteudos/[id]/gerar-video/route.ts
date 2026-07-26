@@ -24,16 +24,22 @@ export async function POST(
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   const body = await req.json().catch(() => ({}))
+  const motor: MotorVideo = body.motor === 'veo' || body.motor === 'luma' ? body.motor : 'kling'
   const duracaoSolicitada = Number(body.duracao) || 5
-  const DURACOES_VALIDAS = [5, 10, 15, 30]
-  if (!DURACOES_VALIDAS.includes(duracaoSolicitada)) {
+
+  // Cada motor aceita durações diferentes; Veo é fixo (ignora o valor).
+  const DURACOES_VALIDAS_POR_MOTOR: Record<MotorVideo, number[] | null> = {
+    kling: [5, 10, 15, 30],
+    veo: null,
+    luma: [5, 9],
+  }
+  const duracoesValidas = DURACOES_VALIDAS_POR_MOTOR[motor]
+  if (duracoesValidas && !duracoesValidas.includes(duracaoSolicitada)) {
     return NextResponse.json(
-      { error: 'Duração inválida (use 5, 10, 15 ou 30 segundos)' },
+      { error: `Duração inválida para ${MOTORES_VIDEO[motor].label} (use ${duracoesValidas.join(', ')} segundos)` },
       { status: 400 }
     )
   }
-
-  const motor: MotorVideo = body.motor === 'veo' || body.motor === 'luma' ? body.motor : 'kling'
 
   const conteudo = await prisma.conteudo.findFirst({
     where: { id, userId: session.user.id },
