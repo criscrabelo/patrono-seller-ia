@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { useDropzone } from 'react-dropzone'
-import { X, Upload, Loader2, Save, ImageIcon, Link as LinkIcon } from 'lucide-react'
+import { X, Upload, Loader2, Save, ImageIcon, Link as LinkIcon, Film } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
+import { useColarArquivos } from '@/hooks/useColarArquivos'
 
 interface Produto {
   id: string
@@ -14,9 +15,13 @@ interface Produto {
   categoria: string
   preco: number
   imagens: string[]
+  videos: string[]
   descricao: string
   linkProduto: string | null
 }
+
+const MAX_IMAGENS = 10
+const MAX_VIDEOS = 5
 
 export default function EditarImagensPage() {
   useGuardModulo('produtos')
@@ -26,6 +31,7 @@ export default function EditarImagensPage() {
 
   const [produto, setProduto] = useState<Produto | null>(null)
   const [imagens, setImagens] = useState<string[]>([])
+  const [videos, setVideos] = useState<string[]>([])
   const [urlInput, setUrlInput] = useState('')
   const [linkProduto, setLinkProduto] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -38,30 +44,74 @@ export default function EditarImagensPage() {
       .then((p) => {
         setProduto(p)
         setImagens(p.imagens ?? [])
+        setVideos(p.videos ?? [])
         setLinkProduto(p.linkProduto ?? '')
         setLoading(false)
       })
   }, [id])
 
-  const onDrop = useCallback(async (files: File[]) => {
-    setUploading(true)
-    const urls: string[] = []
-    for (const file of files.slice(0, 10 - imagens.length)) {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch('/api/upload', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (data.url) urls.push(data.url)
-      else toast({ title: `Erro: ${data.error}`, variant: 'destructive' })
+  // Envia arquivos, separando imagens de vídeos e respeitando os limites.
+  const enviarArquivos = useCallback(async (files: File[]) => {
+    const novasImagens = files.filter((f) => f.type.startsWith('image/'))
+    const novosVideos = files.filter((f) => f.type.startsWith('video/'))
+    if (novasImagens.length === 0 && novosVideos.length === 0) {
+      toast({ title: 'Envie apenas imagens ou vídeos', variant: 'destructive' })
+      return
     }
-    setImagens((prev) => [...prev, ...urls])
-    setUploading(false)
-  }, [imagens])
+
+    setUploading(true)
+    try {
+      const enviar = async (arquivos: File[]) => {
+        const urls: string[] = []
+        for (const file of arquivos) {
+          const fd = new FormData()
+          fd.append('file', file)
+          const res = await fetch('/api/upload', { method: 'POST', body: fd })
+          const data = await res.json()
+          if (data.url) urls.push(data.url)
+          else toast({ title: `Erro: ${data.error}`, variant: 'destructive' })
+        }
+        return urls
+      }
+
+      if (novasImagens.length > 0) {
+        const espaco = MAX_IMAGENS - imagens.length
+        if (espaco <= 0) {
+          toast({ title: `Limite de ${MAX_IMAGENS} imagens atingido`, variant: 'destructive' })
+        } else {
+          const urls = await enviar(novasImagens.slice(0, espaco))
+          if (urls.length) setImagens((prev) => [...prev, ...urls])
+        }
+      }
+
+      if (novosVideos.length > 0) {
+        const espaco = MAX_VIDEOS - videos.length
+        if (espaco <= 0) {
+          toast({ title: `Limite de ${MAX_VIDEOS} vídeos atingido`, variant: 'destructive' })
+        } else {
+          const urls = await enviar(novosVideos.slice(0, espaco))
+          if (urls.length) setVideos((prev) => [...prev, ...urls])
+        }
+      }
+    } finally {
+      setUploading(false)
+    }
+  }, [imagens, videos])
+
+  // Ctrl+V / Cmd+V cola imagens e vídeos direto na página. Desligado enquanto
+  // o produto carrega, pois o fetch inicial sobrescreveria o que foi colado.
+  useColarArquivos(enviarArquivos, !loading)
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
+    onDrop: enviarArquivos,
     accept: { 'image/*': [] },
-    maxFiles: 10,
+    maxFiles: MAX_IMAGENS,
+  })
+
+  const vid = useDropzone({
+    onDrop: enviarArquivos,
+    accept: { 'video/*': [] },
+    maxFiles: MAX_VIDEOS,
   })
 
   function adicionarUrl() {
@@ -74,7 +124,7 @@ export default function EditarImagensPage() {
 
   async function salvar() {
     setSaving(true)
-    const patch: Record<string, unknown> = { imagens }
+    const patch: Record<string, unknown> = { imagens, videos }
     if (linkProduto.trim()) patch.linkProduto = linkProduto.trim()
 
     const res = await fetch(`/api/produtos/${id}`, {
@@ -145,10 +195,45 @@ export default function EditarImagensPage() {
               : <p className="text-sm text-muted-foreground">Arraste imagens ou clique para selecionar</p>
             }
             <p className="text-xs text-muted-foreground mt-1">JPG, PNG, WEBP — até 10MB cada</p>
+            <p className="text-xs text-accent mt-1">Você também pode colar com Ctrl+V</p>
           </div>
           {uploading && (
             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
               <Loader2 className="w-4 h-4 animate-spin" /> Enviando...
+            </div>
+          )}
+        </div>
+
+        {/* Vídeos */}
+        <div>
+          <label className="text-xs text-muted-foreground mb-2 block flex items-center gap-1">
+            <Film className="w-3 h-3" /> Vídeos (máx. {MAX_VIDEOS})
+          </label>
+          <div {...vid.getRootProps()} className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors
+            ${vid.isDragActive ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/50'}`}>
+            <input {...vid.getInputProps()} />
+            <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+            {vid.isDragActive
+              ? <p className="text-sm text-accent">Solte os vídeos aqui...</p>
+              : <p className="text-sm text-muted-foreground">Arraste vídeos ou clique para selecionar</p>
+            }
+            <p className="text-xs text-muted-foreground mt-1">MP4, MOV, WEBM — até 100MB cada</p>
+            <p className="text-xs text-accent mt-1">Você também pode colar com Ctrl+V</p>
+          </div>
+          {videos.length > 0 && (
+            <div className="flex flex-col gap-2 mt-3">
+              {videos.map((url, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-lg border border-border p-2">
+                  <Film className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <span className="text-xs text-muted-foreground flex-1 truncate">{url}</span>
+                  <button
+                    onClick={() => setVideos((prev) => prev.filter((_, j) => j !== i))}
+                    title="Remover vídeo"
+                  >
+                    <X className="w-4 h-4 text-danger" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </div>
