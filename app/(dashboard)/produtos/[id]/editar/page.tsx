@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
 import { useColarArquivos } from '@/hooks/useColarArquivos'
+import { enviarMidia } from '@/lib/upload-midia'
 
 interface Produto {
   id: string
@@ -61,15 +62,17 @@ export default function EditarImagensPage() {
 
     setUploading(true)
     try {
+      // Upload direto do navegador → Supabase (a rota /api/upload passaria pela
+      // Vercel, que corta requisições acima de 4,5 MB e barraria os vídeos).
       const enviar = async (arquivos: File[]) => {
         const urls: string[] = []
         for (const file of arquivos) {
-          const fd = new FormData()
-          fd.append('file', file)
-          const res = await fetch('/api/upload', { method: 'POST', body: fd })
-          const data = await res.json()
-          if (data.url) urls.push(data.url)
-          else toast({ title: `Erro: ${data.error}`, variant: 'destructive' })
+          try {
+            urls.push(await enviarMidia(file, id))
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Falha no upload'
+            toast({ title: `Erro em ${file.name}`, description: msg, variant: 'destructive' })
+          }
         }
         return urls
       }
@@ -217,7 +220,7 @@ export default function EditarImagensPage() {
               ? <p className="text-sm text-accent">Solte os vídeos aqui...</p>
               : <p className="text-sm text-muted-foreground">Arraste vídeos ou clique para selecionar</p>
             }
-            <p className="text-xs text-muted-foreground mt-1">MP4, MOV, WEBM — até 100MB cada</p>
+            <p className="text-xs text-muted-foreground mt-1">MP4, MOV, WEBM — até 500MB cada</p>
             <p className="text-xs text-accent mt-1">Você também pode colar com Ctrl+V</p>
           </div>
           {videos.length > 0 && (
