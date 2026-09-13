@@ -19,6 +19,10 @@ const registrarSchema = z.object({
   status: z.enum(['PENDING', 'CONFIRMED', 'CANCELLED']),
   expectedCommission: z.number().nonnegative().optional(),
   notes: z.string().optional(),
+  // Idempotência persistente (Rodada 4) — ver lib/vendas-comissoes.ts
+  // `registrarResultado()`. A tela gera esta chave uma vez por tentativa
+  // de envio e reenvia a mesma em cada retry.
+  idempotencyKey: z.string().min(1).optional(),
 })
 
 export async function GET(req: NextRequest) {
@@ -79,6 +83,7 @@ export async function POST(req: NextRequest) {
     status: parsed.data.status,
     expectedCommission: parsed.data.expectedCommission ?? null,
     notes: parsed.data.notes ?? null,
+    idempotencyKey: parsed.data.idempotencyKey ?? null,
   })
 
   return NextResponse.json(resultado, { status: 201 })

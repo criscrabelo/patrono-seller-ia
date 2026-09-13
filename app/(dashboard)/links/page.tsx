@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Copy, Check, Plus, Link2, Zap, TrendingUp, MousePointer, DollarSign, RefreshCw, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
@@ -96,6 +96,9 @@ export default function LinksPage() {
   const [vendaAbertaId, setVendaAbertaId] = useState<string | null>(null)
   const [vendaValor, setVendaValor] = useState('')
   const [registrandoVenda, setRegistrandoVenda] = useState(false)
+  // Idempotência persistente (Rodada 4): uma chave por tentativa de envio,
+  // reenviada em cada retry — ver lib/vendas-comissoes.ts `registrarResultado()`.
+  const vendaIdempotencyKeyRef = useRef<string | null>(null)
 
   const [form, setForm] = useState({
     produtoId: '', urlDestino: '', tipo: 'afiliado', comissao: '',
@@ -141,18 +144,21 @@ export default function LinksPage() {
       toast({ title: 'Informe um valor de venda válido', variant: 'destructive' }); return
     }
     setRegistrandoVenda(true)
+    if (!vendaIdempotencyKeyRef.current) vendaIdempotencyKeyRef.current = crypto.randomUUID()
     const res = await fetch(`/api/links/${linkId}/venda`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ valor }),
+      body: JSON.stringify({ valor, idempotencyKey: vendaIdempotencyKeyRef.current }),
     })
     if (res.ok) {
       toast({ title: '✅ Venda registrada!', variant: 'success' })
       setVendaAbertaId(null)
       setVendaValor('')
+      vendaIdempotencyKeyRef.current = null
       fetchAll()
     } else {
       toast({ title: 'Erro ao registrar venda', variant: 'destructive' })
+      // Mantém a mesma chave: um novo clique é retry da mesma tentativa.
     }
     setRegistrandoVenda(false)
   }
@@ -347,7 +353,11 @@ export default function LinksPage() {
                             </p>
                           </div>
                           <button
-                            onClick={() => { setVendaAbertaId(vendaAbertaId === link.id ? null : link.id); setVendaValor('') }}
+                            onClick={() => {
+                              setVendaAbertaId(vendaAbertaId === link.id ? null : link.id)
+                              setVendaValor('')
+                              vendaIdempotencyKeyRef.current = null
+                            }}
                             className="text-xs text-accent hover:underline shrink-0"
                           >
                             {vendaAbertaId === link.id ? 'Cancelar' : '+ Venda'}

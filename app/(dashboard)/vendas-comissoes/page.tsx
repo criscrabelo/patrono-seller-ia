@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Receipt, Plus, Loader2, DollarSign } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
@@ -39,6 +39,11 @@ export default function VendasComissoesPage() {
   const [form, setForm] = useState({
     productId: '', affiliateProgramId: '', amount: '', status: 'CONFIRMED', expectedCommission: '', notes: '',
   })
+  // Idempotência persistente (Rodada 4): gerada uma vez por tentativa de
+  // envio e reenviada em cada retry (clique repetido, timeout, refresh de
+  // rede) até o servidor confirmar — nunca duas vendas pelo mesmo envio.
+  // Só é trocada depois de um sucesso ou quando a usuária cancela o form.
+  const idempotencyKeyRef = useRef<string | null>(null)
 
   useEffect(() => { fetchAll() }, [])
 
@@ -61,6 +66,7 @@ export default function VendasComissoesPage() {
     if (!form.productId) { setErro('Selecione um produto para continuar'); return }
     setErro('')
     setSalvando(true)
+    if (!idempotencyKeyRef.current) idempotencyKeyRef.current = crypto.randomUUID()
     const res = await fetch('/api/vendas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -71,16 +77,21 @@ export default function VendasComissoesPage() {
         status: form.status,
         expectedCommission: form.expectedCommission ? parseFloat(form.expectedCommission.replace(',', '.')) : undefined,
         notes: form.notes || undefined,
+        idempotencyKey: idempotencyKeyRef.current,
       }),
     })
     if (res.ok) {
       toast({ title: 'Resultado registrado com sucesso', variant: 'success' })
       setShowForm(false)
       setForm({ productId: '', affiliateProgramId: '', amount: '', status: 'CONFIRMED', expectedCommission: '', notes: '' })
+      idempotencyKeyRef.current = null // próximo registro é uma operação nova, ganha chave nova
       fetchAll()
     } else {
       const data = await res.json().catch(() => ({}))
       setErro(data.error ?? 'Não foi possível registrar. Tente novamente.')
+      // Mantém a mesma chave: um novo clique em "Registrar" é um RETRY da
+      // mesma tentativa, não deve gerar uma segunda venda se o servidor já
+      // tiver processado o primeiro envio.
     }
     setSalvando(false)
   }
@@ -90,14 +101,14 @@ export default function VendasComissoesPage() {
 
   return (
     <div className="space-y-6 w-full max-w-5xl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-bold text-white flex items-center gap-2">
             <Receipt className="w-5 h-5 text-accent" /> Vendas e Comissões
           </h1>
           <p className="text-sm text-muted-foreground mt-1">Registre resultados manuais e acompanhe suas comissões.</p>
         </div>
-        <Button onClick={() => setShowForm((s) => !s)}>
+        <Button onClick={() => setShowForm((s) => !s)} className="shrink-0">
           <Plus className="w-4 h-4" /> Registrar resultado
         </Button>
       </div>
@@ -147,7 +158,7 @@ export default function VendasComissoesPage() {
             <Button onClick={registrar} disabled={salvando}>
               {salvando ? <><Loader2 className="w-4 h-4 animate-spin" />Salvando resultado...</> : 'Registrar'}
             </Button>
-            <Button variant="outline" onClick={() => setShowForm(false)} disabled={salvando}>Cancelar</Button>
+            <Button variant="outline" onClick={() => { setShowForm(false); idempotencyKeyRef.current = null }} disabled={salvando}>Cancelar</Button>
           </div>
         </div>
       )}

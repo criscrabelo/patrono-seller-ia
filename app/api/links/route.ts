@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { registrarAuditoria } from '@/lib/audit-log'
+import { resumoPorLink } from '@/lib/vendas-comissoes'
 
 const PLATAFORMAS = [
   'tiktok','instagram','youtube','facebook','pinterest','linkedin',
@@ -37,7 +38,19 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  return NextResponse.json(links)
+  // Rodada 4 — `conversoes`/`receitaTotal` gravados no LinkDinamico são
+  // DEPRECATED_LEGACY (nunca mais incrementados por operações novas). A
+  // tela "Meus Links" continua recebendo esses mesmos campos na resposta,
+  // mas agora calculados a partir de Sale (fonte única) — nunca somando as
+  // duas fontes.
+  const porLink = await resumoPorLink(session.user.workspaceId)
+  const linksComDadosReais = links.map((link) => ({
+    ...link,
+    conversoes: porLink.get(link.id)?.conversoes ?? 0,
+    receitaTotal: porLink.get(link.id)?.receitaTotal ?? 0,
+  }))
+
+  return NextResponse.json(linksComDadosReais)
 }
 
 export async function POST(req: NextRequest) {

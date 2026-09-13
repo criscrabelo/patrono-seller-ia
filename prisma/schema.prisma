@@ -98,7 +98,14 @@ model LinkDinamico {
   comissao          Float?
   precoAtual        Float?
   cliques           Int          @default(0)
+  // DEPRECATED_LEGACY (Rodada 4): não é mais incrementado por nenhuma
+  // operação nova nem lido por nenhum indicador novo. Sale/Commission são
+  // a fonte única de vendas/comissões estruturadas — ver
+  // DOCUMENTACAO-PATRONO-SELLER.md §10.1. Mantido só para não quebrar
+  // registros antigos que dependiam dele antes desta rodada; não remover
+  // sem migrar qualquer leitura remanescente primeiro.
   conversoes        Int          @default(0)
+  // DEPRECATED_LEGACY (Rodada 4) — ver `conversoes` acima.
   receitaTotal      Float        @default(0)
   ativo             Boolean      @default(true)
   ultimaAtualizacao DateTime     @default(now())
@@ -299,11 +306,22 @@ model Sale {
 
   notes String? @db.Text
 
+  // Idempotência persistente (Rodada 4): a mesma operação lógica de
+  // "registrar resultado" reenviada — duplo clique, retry de rede, timeout,
+  // refresh — nunca cria uma segunda Sale/Commission. A tela gera esta
+  // chave uma vez por tentativa de envio (ex.: crypto.randomUUID()) e a
+  // reenvia em cada retry até ter sucesso; o servidor localiza a Sale já
+  // criada com a mesma chave em vez de criar outra. Única por workspace;
+  // opcional porque nem toda chamada (ex.: um script interno) precisa
+  // gerar uma.
+  idempotencyKey String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   commissions Commission[]
 
+  @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId])
   @@index([workspaceId, status])
 }

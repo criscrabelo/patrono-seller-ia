@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { registrarResultado } from '@/lib/vendas-comissoes'
 
 export async function POST(
   req: NextRequest,
@@ -16,6 +17,10 @@ export async function POST(
   if (!valor || valor <= 0) {
     return NextResponse.json({ error: 'Informe um valor de venda válido' }, { status: 400 })
   }
+  // Idempotência persistente (Rodada 4): a tela gera esta chave uma vez por
+  // tentativa de envio e reenvia a mesma em cada retry — ver
+  // lib/vendas-comissoes.ts `registrarResultado()`.
+  const idempotencyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey : null
 
   const link = await prisma.linkDinamico.findFirst({
     where: { id, workspaceId: session.user.workspaceId },
@@ -28,82 +33,26 @@ export async function POST(
     ? valor
     : valor * ((link.comissao ?? 0) / 100)
 
-  // Proteção contra duplo clique: o mesmo envio do formulário não pode
-  // criar duas vendas. Se já existe uma Sale idêntica (mesmo link e valor)
-  // registrada nos últimos 5 segundos, devolve ela em vez de duplicar.
-  const janela = new Date(Date.now() - 5000)
-  const duplicata = await prisma.sale.findFirst({
-    where: { workspaceId: session.user.workspaceId, linkId: link.id, amount: valor, createdAt: { gte: janela } },
-    orderBy: { createdAt: 'desc' },
-    include: { commissions: true },
-  })
-  if (duplicata) {
-    return NextResponse.json({
-      link,
-      sale: duplicata,
-      commission: duplicata.commissions[0] ?? null,
-      duplicado: true,
-    })
-  }
-
-  // Sale, Commission e o contador legado do link são gravados numa única
-  // transação: nunca pode existir uma Commission órfã de uma Sale que
-  // falhou ao ser criada, nem o contador incrementar sem a venda estruturada
-  // existir (e vice-versa).
-  //
-  // Sale/Commission são a FONTE ÚNICA para Resultados, Vendas e Comissões e
-  // "primeira comissão" a partir desta rodada. O contador em LinkDinamico
-  // (conversoes/receitaTotal) continua sendo escrito aqui só por
-  // compatibilidade com as telas antigas "Meus Links"/"Monetização" — nenhum
-  // indicador novo volta a somá-lo.
-  const { atualizado, sale, commission } = await prisma.$transaction(async (tx) => {
-    const atualizado = await tx.linkDinamico.update({
-      where: { id: link.id },
-      data: {
-        conversoes: { increment: 1 },
-        receitaTotal: { increment: receitaGanha },
-        ultimaAtualizacao: new Date(),
-      },
-    })
-
-    const sale = await tx.sale.create({
-      data: {
-        workspaceId: session.user.workspaceId,
-        productId: link.produtoId,
-        linkId: link.id,
-        amount: valor,
-        status: 'CONFIRMED',
-        source: 'manual',
-      },
-    })
-
-    // Venda ≠ comissão: a venda acima já nasce CONFIRMED (é um valor que a
-    // própria usuária está confirmando), mas a comissão sobre ela nasce
-    // EXPECTED — nunca CONFIRMED/RECEIVED automaticamente.
-    const commission = await tx.commission.create({
-      data: {
-        workspaceId: session.user.workspaceId,
-        saleId: sale.id,
-        productId: link.produtoId,
-        expectedAmount: receitaGanha,
-        status: 'EXPECTED',
-        expectedAt: new Date(),
-      },
-    })
-
-    await tx.auditLog.create({
-      data: {
-        workspaceId: session.user.workspaceId,
-        userId: session.user.id,
-        action: 'venda.registrada',
-        entityType: 'Sale',
-        entityId: sale.id,
-        metadata: { linkId: link.id, valor, comissaoPrevista: receitaGanha },
-      },
-    })
-
-    return { atualizado, sale, commission }
+  // Sale/Commission são a fonte única (Rodada 3/4) — o contador legado em
+  // LinkDinamico (conversoes/receitaTotal, DEPRECATED_LEGACY) NÃO é mais
+  // incrementado aqui. A tela "Meus Links" já lê o resumo calculado a
+  // partir de Sale (GET /api/links, via lib/vendas-comissoes.ts
+  // `resumoPorLink`), então nada muda visualmente para quem usa a tela.
+  const resultado = await registrarResultado({
+    workspaceId: session.user.workspaceId,
+    actorUserId: session.user.id,
+    productId: link.produtoId,
+    linkId: link.id,
+    amount: valor,
+    status: 'CONFIRMED',
+    expectedCommission: receitaGanha,
+    idempotencyKey,
   })
 
-  return NextResponse.json({ link: atualizado, sale, commission, duplicado: false })
+  return NextResponse.json({
+    link,
+    sale: resultado.sale,
+    commission: resultado.commission,
+    duplicado: resultado.duplicado,
+  })
 }

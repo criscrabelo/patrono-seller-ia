@@ -1,16 +1,17 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { registrarAuditoria } from '@/lib/audit-log'
 
 /**
  * `Sale`/`Commission` são a FONTE ÚNICA de vendas e comissões do MVP.
  *
- * O contador legado em `LinkDinamico` (`conversoes`/`receitaTotal`) segue
- * existindo no schema e continua sendo escrito por `POST /api/links/[id]/venda`
- * — só por compatibilidade com as telas antigas "Meus Links" e
- * "Monetização", que ainda o exibem e não fazem parte desta rodada. Nenhuma
- * leitura NOVA (Dashboard/Resultados, Vendas e Comissões, primeira
- * comissão) soma esse contador — todas leem exclusivamente `Sale`/
- * `Commission` daqui pra frente. Nunca somar os dois.
+ * O contador legado em `LinkDinamico` (`conversoes`/`receitaTotal`) está
+ * marcado `DEPRECATED_LEGACY` no schema desde a Rodada 4: nenhuma operação
+ * nova o incrementa mais, e nenhuma leitura nova o soma. As telas "Meus
+ * Links" e "Monetização" migraram para ler o resumo por link calculado
+ * aqui (`resumoPorLink`), a partir de `Sale`. A coluna continua existindo
+ * no schema só para não quebrar quem já dependia dela antes desta rodada —
+ * não é removida enquanto houver esse risco. Nunca somar legado + Sale.
  *
  * Regra de negócio central: venda ≠ comissão.
  * - Uma venda tem estado próprio: PENDING | CONFIRMED | CANCELLED.
@@ -116,6 +117,42 @@ export async function lucroEscalaPorProduto(workspaceId: string) {
 }
 
 /**
+ * Resumo por link (Rodada 4) — substitui a leitura de
+ * `LinkDinamico.conversoes`/`receitaTotal` (DEPRECATED_LEGACY) nas telas
+ * "Meus Links" e "Monetização". Conversões = Sale CONFIRMED com esse
+ * `linkId`; receita = soma dos valores de venda dessas Sales (Sale
+ * CANCELLED nunca entra). Cliques continuam vindo do próprio
+ * `LinkDinamico.cliques` (fonte de tracking, não muda nesta rodada).
+ */
+export async function resumoPorLink(workspaceId: string): Promise<Map<string, { conversoes: number; receitaTotal: number }>> {
+  const vendas = await prisma.sale.findMany({
+    where: { workspaceId, status: 'CONFIRMED', linkId: { not: null } },
+    select: {
+      linkId: true,
+      commissions: { select: { status: true, expectedAmount: true, confirmedAmount: true, receivedAmount: true } },
+    },
+  })
+
+  const mapa = new Map<string, { conversoes: number; receitaTotal: number }>()
+  for (const venda of vendas) {
+    if (!venda.linkId) continue
+    const atual = mapa.get(venda.linkId) ?? { conversoes: 0, receitaTotal: 0 }
+    atual.conversoes += 1
+    // Mesma lógica de "receita reconhecida" do ranking por produto: usa o
+    // valor já confirmado/recebido quando existir, senão o previsto (é o
+    // que a tela "Meus Links" já mostrava antes — a comissão calculada na
+    // hora do registro, guardada como `expectedAmount`).
+    atual.receitaTotal += venda.commissions.reduce((soma, c) => {
+      if (c.status === 'RECEIVED') return soma + (c.receivedAmount ?? 0)
+      if (c.status === 'CONFIRMED') return soma + (c.confirmedAmount ?? 0)
+      return soma + (c.expectedAmount ?? 0)
+    }, 0)
+    mapa.set(venda.linkId, atual)
+  }
+  return mapa
+}
+
+/**
  * "Primeira comissão" — condição de negócio do fluxo aprovado (design_handoff
  * §2: "...Registrar venda/comissão → Primeira comissão"). O handoff não dá
  * uma regra numérica além do nome da etapa; a leitura mais defensável do
@@ -169,6 +206,14 @@ type RegistrarResultadoInput = {
   status: 'PENDING' | 'CONFIRMED' | 'CANCELLED'
   expectedCommission?: number | null
   notes?: string | null
+  // Idempotência persistente (Rodada 4). A tela gera esta chave UMA VEZ por
+  // tentativa de envio (ex.: crypto.randomUUID() ao abrir o formulário) e
+  // reenvia a MESMA chave em cada retry — clique repetido, timeout, refresh,
+  // retry de rede — até o envio ter sucesso. Sem isso, a janela de 5s usada
+  // como fallback abaixo não é garantia financeira suficiente (dois envios
+  // separados por mais de 5s, ou uma race condition entre duas chamadas
+  // simultâneas, ainda poderiam duplicar).
+  idempotencyKey?: string | null
 }
 
 /**
@@ -177,71 +222,106 @@ type RegistrarResultadoInput = {
  * numa única transação — nunca existe Commission órfã de uma Sale que
  * falhou ao ser criada.
  *
- * Proteção contra duplo clique: se já existe uma Sale idêntica (mesmo
- * workspace, produto, valor e status) criada nos últimos 5 segundos, essa
- * chamada devolve o registro existente em vez de criar um segundo — sem
- * exigir nenhum campo novo no formulário nem nova dependência.
+ * Idempotência em duas camadas:
+ * 1. Persistente (principal): se `idempotencyKey` é enviada e já existe uma
+ *    Sale com essa chave neste workspace, devolve ela — nunca cria outra.
+ *    Reforçada por uma constraint UNIQUE no banco (`@@unique([workspaceId,
+ *    idempotencyKey])`), então mesmo duas chamadas simultâneas com a mesma
+ *    chave (race condition) não conseguem criar duas Sales: a segunda
+ *    esbarra na constraint e busca a que a primeira já criou.
+ * 2. Best-effort por janela de tempo (fallback, mantido da Rodada 3): sem
+ *    chave, uma Sale idêntica (mesmo produto, valor, status) criada nos
+ *    últimos 5 segundos ainda é detectada como duplicata — cobre chamadas
+ *    antigas que não enviam chave, mas não é garantia forte sozinha.
  */
 export async function registrarResultado(input: RegistrarResultadoInput) {
-  const janela = new Date(Date.now() - 5000)
-  const duplicata = await prisma.sale.findFirst({
-    where: {
-      workspaceId: input.workspaceId,
-      productId: input.productId,
-      amount: input.amount ?? null,
-      status: input.status,
-      createdAt: { gte: janela },
-    },
-    orderBy: { createdAt: 'desc' },
-    include: { commissions: true },
-  })
-  if (duplicata) {
-    return { sale: duplicata, commission: duplicata.commissions[0] ?? null, duplicado: true }
-  }
-
-  const { sale, commission } = await prisma.$transaction(async (tx) => {
-    const sale = await tx.sale.create({
-      data: {
+  if (input.idempotencyKey) {
+    const existente = await prisma.sale.findUnique({
+      where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey } },
+      include: { commissions: true },
+    })
+    if (existente) {
+      return { sale: existente, commission: existente.commissions[0] ?? null, duplicado: true }
+    }
+  } else {
+    const janela = new Date(Date.now() - 5000)
+    const duplicata = await prisma.sale.findFirst({
+      where: {
         workspaceId: input.workspaceId,
         productId: input.productId,
-        affiliateProgramId: input.affiliateProgramId ?? null,
-        linkId: input.linkId ?? null,
-        contentId: input.contentId ?? null,
-        date: input.date ?? new Date(),
         amount: input.amount ?? null,
         status: input.status,
-        source: 'manual',
-        notes: input.notes ?? null,
+        createdAt: { gte: janela },
       },
+      orderBy: { createdAt: 'desc' },
+      include: { commissions: true },
+    })
+    if (duplicata) {
+      return { sale: duplicata, commission: duplicata.commissions[0] ?? null, duplicado: true }
+    }
+  }
+
+  try {
+    const { sale, commission } = await prisma.$transaction(async (tx) => {
+      const sale = await tx.sale.create({
+        data: {
+          workspaceId: input.workspaceId,
+          productId: input.productId,
+          affiliateProgramId: input.affiliateProgramId ?? null,
+          linkId: input.linkId ?? null,
+          contentId: input.contentId ?? null,
+          date: input.date ?? new Date(),
+          amount: input.amount ?? null,
+          status: input.status,
+          source: 'manual',
+          notes: input.notes ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
+        },
+      })
+
+      const commission = await tx.commission.create({
+        data: {
+          workspaceId: input.workspaceId,
+          saleId: sale.id,
+          productId: input.productId,
+          affiliateProgramId: input.affiliateProgramId ?? null,
+          expectedAmount: input.expectedCommission ?? null,
+          status: 'EXPECTED',
+          expectedAt: new Date(),
+        },
+      })
+
+      await tx.auditLog.create({
+        data: {
+          workspaceId: input.workspaceId,
+          userId: input.actorUserId,
+          action: 'venda.criada',
+          entityType: 'Sale',
+          entityId: sale.id,
+          metadata: { productId: input.productId, status: sale.status, amount: sale.amount },
+        },
+      })
+
+      return { sale, commission }
     })
 
-    const commission = await tx.commission.create({
-      data: {
-        workspaceId: input.workspaceId,
-        saleId: sale.id,
-        productId: input.productId,
-        affiliateProgramId: input.affiliateProgramId ?? null,
-        expectedAmount: input.expectedCommission ?? null,
-        status: 'EXPECTED',
-        expectedAt: new Date(),
-      },
-    })
-
-    await tx.auditLog.create({
-      data: {
-        workspaceId: input.workspaceId,
-        userId: input.actorUserId,
-        action: 'venda.criada',
-        entityType: 'Sale',
-        entityId: sale.id,
-        metadata: { productId: input.productId, status: sale.status, amount: sale.amount },
-      },
-    })
-
-    return { sale, commission }
-  })
-
-  return { sale, commission, duplicado: false }
+    return { sale, commission, duplicado: false }
+  } catch (e) {
+    // Race condition: duas chamadas com a MESMA idempotencyKey chegaram ao
+    // mesmo tempo. A constraint única do banco rejeita a segunda — em vez
+    // de propagar o erro, busca e devolve a Sale que a primeira criou.
+    const violouUnicidade = e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002'
+    if (violouUnicidade && input.idempotencyKey) {
+      const existente = await prisma.sale.findUnique({
+        where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey } },
+        include: { commissions: true },
+      })
+      if (existente) {
+        return { sale: existente, commission: existente.commissions[0] ?? null, duplicado: true }
+      }
+    }
+    throw e
+  }
 }
 
 /** Altera o status de uma venda (PENDING/CONFIRMED/CANCELLED), com auditoria. */
