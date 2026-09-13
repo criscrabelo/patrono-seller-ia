@@ -1,6 +1,6 @@
 # Documentação — Patrono Seller (MVP Afiliada)
 
-**Última atualização:** 13/09/2026 — Rodada 3 do P0 (segurança final do P0, fonte única de vendas/comissões, Meus Programas).
+**Última atualização:** 14/09/2026 — Rodada 4 do P0 (fechamento da fundação + princípio Automation First).
 
 Este documento registra o **estado real** do projeto. Nada aqui descreve algo planejado como se já existisse — o que está pendente é dito explicitamente.
 
@@ -61,16 +61,18 @@ Modelos hoje (`prisma/schema.prisma`):
 | `Workspace` | fronteira de isolamento de dados (ver seção 8) |
 | `ModuloPermissao` | quais telas cada papel (role) vê |
 | `Produto` | produto cadastrado para divulgar |
-| `LinkDinamico` | link de afiliada por produto/plataforma; contador de cliques/conversões |
+| `LinkDinamico` | link de afiliada por produto/plataforma; cliques ainda são fonte de tracking aqui, mas `conversoes`/`receitaTotal` são `DEPRECATED_LEGACY` (seção 10.1) |
 | `EventoLink` | evento individual de clique num link |
 | `Conteudo` | roteiro/legendas/vídeo gerado para um produto |
 | `Integracao` | credencial de uma integração real (Instagram, Shopee, WhatsApp) por workspace |
-| `AffiliateProgram` | **novo** — Programa × Operação × Integração (seção 9) |
-| `Sale` | **novo** — venda, separada de comissão (seção 10) |
-| `Commission` | **novo** — comissão, separada de venda (seção 10) |
-| `AuditLog` | **novo** — auditoria de operações de escrita (seção 11) |
+| `AffiliateProgram` | Programa × Operação × Integração (seção 9) |
+| `Sale` | venda, separada de comissão; `idempotencyKey` desde a Rodada 4 (seção 10.2) |
+| `Commission` | comissão, separada de venda (seção 10) |
+| `AuditLog` | auditoria de operações de escrita (seção 11) |
 
 Migrations em `prisma/migrations/`, aplicadas com `prisma migrate deploy` (ver seção 13).
+
+Arquitetura de automação (sem tabela própria ainda — só tipos/registros em memória): `lib/affiliate-provider-capabilities.ts`, `lib/channel-registry.ts`, `lib/tiktok-preflight.ts`, `lib/automation.ts`, `lib/affiliate-discovery.ts`, `lib/creative-factory.ts`, `lib/learning-engine.ts` — ver seção 18 (Princípio Automation First).
 
 ## 7. Middleware / rotas públicas e protegidas
 
@@ -135,19 +137,31 @@ Regra de negócio: **venda ≠ comissão**. Modelados como entidades separadas:
 
 Testado em `tests/programa-venda-comissao.test.ts` e `tests/fonte-unica-vendas.test.ts`: registrar venda não cria comissão recebida automaticamente; prevista≠confirmada≠recebida; venda cancelada não entra nos totais; contador legado nunca se soma ao total estruturado; duplo clique não duplica a venda; transação Sale+Commission é atômica.
 
-### 10.1 Fonte única e o contador legado
+### 10.1 Fonte única e o contador legado — finalizado na Rodada 4
 
-O contador em `LinkDinamico` (`conversoes`/`receitaTotal`) **continua no schema e continua sendo escrito** por `POST /api/links/[id]/venda` — só por compatibilidade com as telas antigas "Meus Links" (`/links`) e "Monetização" (`/monetizacao`), que ainda o exibem e não fazem parte do escopo desta rodada. Removê-lo agora quebraria essas duas telas sem necessidade.
+`LinkDinamico.conversoes`/`receitaTotal` estão marcados **`DEPRECATED_LEGACY`** no schema (comentário no `prisma/schema.prisma`) desde a Rodada 4. O que mudou:
 
-**O que muda de fato:** nenhuma leitura nova soma esse contador. O Dashboard, o card de primeira comissão e as telas novas leem exclusivamente `Sale`/`Commission`. Isso foi verificado com um teste explícito (`tests/fonte-unica-vendas.test.ts`, "Caso 2"): um link com contador legado = 1 mais uma `Sale CONFIRMED` nova resulta em **1** venda estruturada, nunca 2 — o legado não contamina a contagem nova.
+- **Nenhuma operação nova incrementa mais essas colunas.** `POST /api/links/[id]/venda` foi reescrito para chamar `registrarResultado()` (a mesma função de `POST /api/vendas`) — só grava em `Sale`/`Commission`.
+- **As telas "Meus Links" (`/links`) e "Monetização" (`/monetizacao`) foram migradas.** `GET /api/links` agora sobrepõe os campos `conversoes`/`receitaTotal` da resposta com valores calculados a partir de `Sale` (`lib/vendas-comissoes.ts` → `resumoPorLink()`) — a tela não mudou visualmente (mesmos campos, mesmo layout), só a fonte dos números mudou por baixo.
+- **A coluna não foi removida** — continua no schema, sem uso operacional, só para não quebrar quem eventualmente ainda dependa dela por fora do código (ex.: uma consulta manual ao banco). Não há indício de leitura remanescente no código.
 
-Nenhum dado legado com valor > 0 foi encontrado ou transformado nesta rodada (o ambiente de desenvolvimento não tem acesso ao banco de produção). Se isso for encontrado depois, a regra já está registrada: **nunca** transformar automaticamente um número agregado em registros `Sale` individuais com datas/produtos/comissões inventadas — isso criaria dado falso. Um contador legado > 0 sem lastro estruturado deve ficar documentado como **DADO LEGADO AGREGADO**, nunca misturado com vendas estruturadas.
+Nenhum dado legado com valor > 0 foi encontrado ou transformado nesta rodada (o ambiente de desenvolvimento não tem acesso ao banco de produção). Se isso for encontrado depois, a regra permanece: **nunca** transformar automaticamente um número agregado em registros `Sale` individuais com datas/produtos/comissões inventadas — isso criaria dado falso. Um contador legado > 0 sem lastro estruturado deve ficar documentado como **DADO LEGADO AGREGADO**, nunca misturado com vendas estruturadas.
+
+### 10.2 Idempotência persistente (Rodada 4)
+
+A janela de 5 segundos da Rodada 3 (best-effort, por tempo) não é garantia financeira suficiente — retry de rede após 5s ou duas chamadas verdadeiramente concorrentes ainda poderiam duplicar. Substituída/complementada por idempotência persistente:
+
+- `Sale.idempotencyKey` (nova coluna, `String?`, `@@unique([workspaceId, idempotencyKey])`) — a tela gera essa chave **uma vez por tentativa de envio** (`crypto.randomUUID()`) e reenvia a **mesma chave** em cada retry (clique repetido, timeout, refresh) até o servidor confirmar. Só troca de chave depois de um sucesso ou de a usuária cancelar o formulário (`app/(dashboard)/vendas-comissoes/page.tsx`, `app/(dashboard)/links/page.tsx`).
+- `registrarResultado()` (`lib/vendas-comissoes.ts`) localiza a `Sale` já criada com a mesma chave em vez de criar outra. Sob concorrência real (duas chamadas simultâneas com a mesma chave), a constraint única do banco rejeita a segunda escrita — capturada (`Prisma.PrismaClientKnownRequestError`, código `P2002`) e tratada buscando a `Sale` que a primeira criou, nunca propagando erro para a usuária.
+- Chamadas sem `idempotencyKey` continuam cobertas pela janela de 5s da Rodada 3, como camada extra — não como garantia principal.
+
+Testado em `tests/idempotencia-vendas.test.ts`: mesma chave com corpos diferentes devolve a `Sale` original; chaves diferentes criam vendas diferentes; **concorrência real** (`Promise.all`, sem `await` entre as chamadas) cria só uma `Sale`; chamadas sem chave continuam funcionando pelo fallback.
 
 ## 11. Auditoria (`AuditLog`)
 
 `lib/audit-log.ts` — `registrarAuditoria()`. Uma tabela simples no mesmo Postgres, sem serviço externo. Falha ao gravar o log **nunca** derruba a operação que está sendo registrada (só loga o erro no console).
 
-**Eventos registrados hoje:** `produto.criado`, `produto.alterado`, `produto.descartado`, `link.criado`, `venda.registrada`, `venda.alterada`, `venda.cancelada`, `comissao.confirmada`, `comissao.recebida`, `comissao.alterada`, `conteudo.aprovado` (via PATCH de status), `publicacao.marcada` (via PATCH de status), `integracao.conectada`, `programa.criado`/`programa.alterado` (quando `upsertPrograma` recebe `actorUserId`).
+**Eventos registrados hoje:** `produto.criado`, `produto.alterado`, `produto.descartado`, `link.criado`, `venda.criada`, `venda.alterada`, `venda.cancelada`, `comissao.confirmada`, `comissao.recebida`, `comissao.alterada`, `conteudo.aprovado` (via PATCH de status), `publicacao.marcada` (via PATCH de status), `integracao.conectada`, `programa.criado`/`programa.alterado` (quando `upsertPrograma` recebe `actorUserId`).
 
 **Nunca gravado:** senha, token, segredo — `metadata` carrega só campos como nomes, IDs, valores monetários. Testado em `tests/audit-log.test.mjs` (confere que a criação/alteração de um produto gera log, e que o `metadata` não contém as palavras senha/password/token/secret).
 
@@ -171,7 +185,9 @@ O projeto não usava `prisma migrate` até esta rodada — o schema ia para prod
 
   **Nenhum dado existente é apagado.** Testado localmente contra um banco com dados reais (4 usuárias, 1 produto, 1 link) antes de aplicar — o backfill foi conferido linha a linha.
 
-**Para aplicar em produção:** rodar `npx prisma migrate resolve --applied 20260101000000_baseline_pre_workspace` uma única vez (marca o estado atual como baseline, sem executar SQL), depois `npx prisma migrate deploy` (aplica a migração de verdade). Fazer backup do banco antes, como sempre.
+**Para aplicar em produção:** rodar `npx prisma migrate resolve --applied 20260101000000_baseline_pre_workspace` uma única vez (marca o estado atual como baseline, sem executar SQL), depois `npx prisma migrate deploy` (aplica todas as migrações pendentes, incluindo a da Rodada 4 abaixo). Fazer backup do banco antes, como sempre.
+
+- `prisma/migrations/20260914000000_sale_idempotency_key/` (Rodada 4) — adiciona `Sale.idempotencyKey` (nula) + índice único `(workspaceId, idempotencyKey)`. Aditiva e segura: coluna nova nula não afeta linhas existentes (Postgres trata múltiplos `NULL` como distintos entre si num índice único, então não há conflito com dados antigos). **Não aplicada em produção nesta rodada** — só testada localmente contra o banco de teste com dados reais (77 usuárias, 73 vendas já existentes no momento do teste).
 
 ## 14. Testes existentes
 
@@ -184,12 +200,14 @@ Framework: `node --test` (nativo do Node, zero dependência nova) para arquivos 
 | `tests/isolamento-workspace.test.mjs` | Duas contas não conseguem ler nem escrever uma na outra (produtos) | 8 |
 | `tests/audit-log.test.mjs` | Criar/alterar produto gera log de auditoria correto, sem dado sensível | 2 |
 | `tests/programa-venda-comissao.test.ts` | Programa×Operação×Integração; venda≠comissão; venda cancelada não conta | 9 |
-| `tests/cron-seguranca.test.mjs` **(novo)** | `/api/cron/publicar` recusa sem segredo, com segredo errado, e com sessão comum; executa só com o segredo certo; nunca ecoa o segredo | 6 |
-| `tests/fonte-unica-vendas.test.ts` **(novo)** | `Sale`/`Commission` como fonte única; contador legado nunca se soma; duplo clique não duplica; transação Sale+Commission | 8 |
-| `tests/isolamento-programas-vendas.test.mjs` **(novo)** | Isolamento de workspace estendido a Programas, Vendas e Comissões (leitura e escrita cruzada) | 6 |
-| `tests/primeira-comissao.test.mjs` **(novo)** | Progresso da primeira comissão com dados reais; workspace vazio não concluído; reload não depende de localStorage | 3 |
+| `tests/cron-seguranca.test.mjs` | `/api/cron/publicar` recusa sem segredo, com segredo errado, e com sessão comum; executa só com o segredo certo; nunca ecoa o segredo | 6 |
+| `tests/fonte-unica-vendas.test.ts` | `Sale`/`Commission` como fonte única; contador legado nunca se soma; duplo clique não duplica; transação Sale+Commission | 8 |
+| `tests/isolamento-programas-vendas.test.mjs` | Isolamento de workspace estendido a Programas, Vendas e Comissões (leitura e escrita cruzada) | 6 |
+| `tests/primeira-comissao.test.mjs` | Progresso da primeira comissão com dados reais; workspace vazio não concluído; reload não depende de localStorage | 3 |
+| `tests/idempotencia-vendas.test.ts` | Idempotência persistente: mesma chave nunca duplica (mesmo com corpos diferentes); concorrência real (`Promise.all`) cria só uma `Sale`; fallback por janela de tempo continua funcionando | 4 |
+| `tests/capabilities-e-automacao.test.ts` | Todo provider tem capability; nenhum permite scraping; toda capability tem fonte/data/confiança; provider desconhecido nunca é tratado como disponível; canais (TikTok exige consentimento e não hardcoda duração; Instagram já publica de verdade); constantes de automação (pipeline, modos, motivos de ação humana); Learning Engine com dados reais (workspace vazio vazio; venda ligada a conteúdo aparece no resumo) | 15 |
 
-**Total: 84 testes, todos passando.** (Eram 59 no início desta rodada.)
+**Total: 103 testes, todos passando.** (Eram 84 no início desta rodada.)
 
 Comandos: `npm test` (tudo), ou os `npm run test:<nome>` individuais listados em `package.json`. O teste de cron precisa da mesma `CRON_SECRET` no ambiente do servidor e do teste (ex.: `CRON_SECRET=algum-valor npm run test:cron`, com o servidor também subido com essa variável).
 
@@ -213,33 +231,88 @@ Cadastro manual de programa/produto/link, publicação manual assistida, registr
 
 Dentro do app real, telas avançadas como `/video-seller`, `/monetizacao`, `/whatsapp` já existem mas não fazem parte da jornada mínima do MVP Afiliada — continuam navegáveis, não foram removidas.
 
-## 18. Riscos conhecidos
+## 18. Princípio Automation First (Rodada 4)
+
+O objetivo do produto é a usuária **não precisar operar a plataforma no dia a dia** — a experiência principal deve, no futuro, ser automática. O modo manual **permanece como fallback permanente**, nunca removido: ele é o que já funciona hoje e o que continua funcionando quando uma automação ainda não existe, falha, ou a própria plataforma externa exige uma pessoa.
+
+Nesta rodada, nada disso passou a rodar sozinho — é a fundação: tipos, interfaces, registros de capability e uma métrica determinística real, para que a automação de verdade (rodadas futuras) tenha uma arquitetura já pensada em vez de decidir tudo às pressas.
+
+### 18.1 Provider Capability Registry (`lib/affiliate-provider-capabilities.ts`)
+
+Estende o `AffiliateProviderRegistry` (Rodada 3) com o que cada provider **realmente permite automatizar hoje** — separado do catálogo básico porque muda com frequência e precisa de reverificação. Campos: `affiliateProgramAvailable`, `productCatalogAccess`, `bestSellerData`, `trendData`, `commissionData`, `affiliateLinkGeneration`, `salesImport`, `commissionImport`, `webhook`, `officialApi`, `authorizedImport`, `automatedDiscovery`, `automatedPublishing`, `requiresUserConsent`, `scrapingAllowed` (**sempre `false`**, tipado como literal `false` — nunca uma automação lê "true" daqui), `commercialContentRules`, `lastVerifiedAt`, `sourceType`, `status`, `confidence`.
+
+`status` usa a nomenclatura pedida: `SUPPORTED_MANUAL | OFFICIAL_API_AVAILABLE | AUTHORIZATION_REQUIRED | PARTNER_ACCESS_REQUIRED | NOT_VERIFIED | NOT_AVAILABLE | BLOCKED_BY_POLICY`. Cadastrado para os 19 providers do catálogo (Amazon Associados, Mercado Livre, Shopee, TikTok Shop, Hotmart, Renner, Riachuelo, Netshoes, Sephora/Rakuten, Rakuten Advertising, Awin, Impact, CJ Affiliate, Lomadee, Monetizze, Eduzz, Kiwify, Magalu Parceiro, Outro). **Nenhum campo foi confirmado contra uma chamada de API ao vivo** (ambiente sem acesso à internet externa) — por isso nenhuma entrada tem `sourceType: OFFICIAL_API`, e a maioria tem `confidence: LOW` ou `MEDIUM`. Detalhe por provider em `REGRAS-PROVIDERS-E-CANAIS.md`.
+
+`capacidadeOuDesconhecida()` garante que um provider sem capability cadastrada nunca é tratado como disponível — tudo `false`/`NOT_VERIFIED` por padrão.
+
+`GET /api/programas/providers` expõe o catálogo já com a capability embutida; a tela "Meus Programas" só **traduz** o `status` num rótulo (`CAPABILITY_LABEL`), nunca decide sozinha se um provider "tem API".
+
+### 18.2 Channel Registry (`lib/channel-registry.ts`)
+
+Conceito separado de provider de afiliados: canal é **para onde publico**, não **onde encontro o produto**. Cobre Instagram, TikTok, YouTube, Facebook, Pinterest, com `ChannelCapability` (post de imagem/carrossel/vídeo curto/Reel/Story, publicação automática, upload como rascunho, analytics, exigência de consentimento explícito, disclosure comercial, tamanho/proporção/codec/duração de mídia, política de marca d'água). Instagram é o único com `autoPublish: true` — é o único canal com integração real já implementada (`lib/instagram.ts`, rodadas anteriores). TikTok tem `durationRulesSeconds: null` **de propósito**: a duração permitida varia por conta e deve vir da própria API quando implementada, nunca de um número fixo no código.
+
+### 18.3 TikTok Preflight (`lib/tiktok-preflight.ts`)
+
+`TikTokPreflightValidator` — interface real (`TikTokPreflightNotConfigured` como implementação atual, sempre devolvendo `NOT_VERIFIED` porque nenhuma credencial está configurada). Existe para nunca inventar limite de duração/formato: quando implementado de verdade, consulta a própria API (creator info) antes de publicar.
+
+### 18.4 Pipeline de validação e o termo `PREVALIDATED` (`lib/automation.ts`)
+
+`STATUS_PIPELINE`: `DRAFT → GENERATED → TECHNICALLY_VALID → COMMERCIAL_RULES_VALID → CHANNEL_VALID → READY_TO_PUBLISH → REQUIRES_USER_CONSENT / BLOCKED_BY_POLICY → PUBLISHING → PUBLISHED → FAILED`. Regra fixada: nunca dizer "validado pelo TikTok" (ou qualquer canal) antes de uma resposta real da API oficial — a nossa própria pré-validação interna se chama `PREVALIDATED`, termo diferente de propósito.
+
+### 18.5 Modo de automação e fila de exceção
+
+`AutomationMode`: `MANUAL | ASSISTED | AUTOMATIC`. O objetivo é `AUTOMATIC`; uma tarefa pode cair para `ASSISTED` quando a própria plataforma exige consentimento (nunca cai para `MANUAL` silenciosamente — sempre registra o motivo).
+
+`HumanActionRequired`: fila só para o que realmente precisa de uma pessoa — `TIKTOK_CONSENT`, `TOKEN_EXPIRED`, `EXTERNAL_APPROVAL`, `PROGRAM_REGISTRATION`, `IDENTITY_VERIFICATION`, `ACCOUNT_SUSPENDED`, `AMBIGUOUS_RULE`, `MISSING_AUTHORIZED_MEDIA`. A Home futura deve mostrar "Preciso de você em 1 item" — nunca transformar a usuária em operadora do dia a dia.
+
+`AutomationJob`/`AutomationOrchestrator`: tipos para o ciclo completo (descobrir → pontuar → selecionar → gerar → validar → publicar → coletar métricas → aprender → repetir). Nesta rodada, **nenhum ciclo roda de verdade** — só a interface, reaproveitando a stack existente (Postgres + Vercel Cron) quando isso for implementado, sem contratar scheduler externo.
+
+### 18.6 Opportunity Radar (`lib/affiliate-discovery.ts`, ampliado)
+
+`OpportunitySource.getCandidates()`, `OpportunityScorer.score()/rank()`, `AffiliateOpportunity` com origem tipada — `OrigemOportunidade`: `OFFICIAL_API | AUTHORIZED_PARTNER_API | AFFILIATE_PORTAL_IMPORT | USER_PROVIDED | MANUAL`. **`SCRAPED_UNOFFICIAL` não existe de propósito** — nunca é uma fonte aceita. Campos desconhecidos ficam `null`/`undefined`, nunca um número inventado.
+
+### 18.7 Creative Factory (`lib/creative-factory.ts`)
+
+`ImageGeneratorProvider`, `VideoGeneratorProvider`, `TextGeneratorProvider`, `VoiceGeneratorProvider`, `RendererProvider` — interfaces desacopladas; nenhuma contrata gerador pago, nenhuma faz Anthropic/fal.ai dependência obrigatória (ambos continuam existindo como recursos **opcionais** já usados no projeto). `MediaAsset` registra proveniência/autorização de cada mídia (`PRIORIDADE_FONTE_MIDIA`: oficial autorizada → API oficial → mídia do programa de afiliados → enviada pela usuária → gerada legitimamente). `textoDisclosure()` gera o texto de "conteúdo de afiliado" configurável por tipo. **Nenhuma prova de conceito de renderização foi implementada nesta rodada** — decisão deliberada para não aumentar o escopo sem necessidade (o próprio pedido permitia isso).
+
+### 18.8 Learning Engine (`lib/learning-engine.ts`) — com dados reais
+
+Diferente dos itens acima, este **já calcula de verdade**, com os dados que já existem: `resumoPorConteudo()` e `resumoPorCanal()` usam `Sale.contentId` (já existente desde a Rodada 3) para somar cliques (`Conteudo.cliquesLink`), vendas confirmadas e comissão reconhecida por conteúdo e por canal (`Conteudo.redeSocial`). **Não é machine learning** — são métricas determinísticas simples, documentadas assim de propósito. Resultado por formato/hook/CTA fica pendente: o `Conteudo` ainda não guarda esses campos de forma estruturada.
+
+### 18.9 Não implementado nesta rodada (por decisão explícita do pedido)
+
+Nenhuma integração real (Amazon PA-API, Mercado Livre, Shopee, TikTok, Instagram além do que já existia, redes de afiliação); nenhum ciclo de automação rodando; nenhuma renderização de vídeo/imagem programática; nenhum cadastro automático em programa de afiliados. Tudo isso é arquitetura pronta para ser preenchida, não simulação de que já funciona.
+
+## 19. Riscos conhecidos
 
 - **Auditoria de segredos hardcoded (Rodada 3):** revisado o projeto por padrões de chave/token/senha embutidos no código. Não foi encontrada nenhuma credencial de serviço real hardcoded. Encontrados: três scripts de fixture em `scripts/` (`seed-teste-*.ts`) que criavam usuária/produto de teste sem a mesma trava de produção do `prisma/seed.ts` — corrigido, agora todos usam `lib/seed-guard.ts` (`verificarAmbienteDeSeed`) e se recusam a rodar contra um banco que não pareça local.
 - **fal.ai é uma dependência paga** (vídeo por IA) — ver `STACK-CUSTO-ZERO.md`. Os motores Veo e Luma nunca foram verificados contra uma geração real (ambiente de desenvolvimento bloqueia acesso à internet externa).
-- **O contador legado de `LinkDinamico` continua sendo escrito** por `POST /api/links/[id]/venda`, só por compatibilidade com `/links` e `/monetizacao` (fora do escopo desta rodada). Nenhum indicador novo o lê, mas ele não foi removido do schema — ver seção 10.1.
-- **Homologação visual mobile (375/390/414px) continua pendente.** Não foi objetivo desta rodada.
+- **O contador legado de `LinkDinamico` continua no schema**, marcado `DEPRECATED_LEGACY`, sem uso operacional (ver seção 10.1). Não removido por segurança, não por necessidade real identificada.
 - **Multi-usuária por workspace não existe.** Se duas pessoas precisarem compartilhar os mesmos dados (hoje cada conta é isolada por padrão), o modelo de `Workspace` já tem a estrutura (`members: User[]`), mas nada no fluxo de registro/convite usa isso ainda.
 - **`Integracao.userId` continua sendo gravado** nas criações (para saber quem conectou), mas a leitura/atualização já é 100% por `workspaceId`.
 - **A regra de "primeira comissão" (CONFIRMED ou RECEIVED) é uma interpretação, não um número confirmado pelo Design.** Ver seção 15.1 — revisável.
-- **`AffiliateProviderRegistry` tem dados verificados em 13/09/2026** (`lastVerifiedAt` de cada provider) — programas de afiliados mudam de regra/comissão/disponibilidade com frequência; nada aqui foi validado contra uma fonte ao vivo (ambiente de desenvolvimento sem acesso à internet externa), então o catálogo deve ser reconferido periodicamente antes de orientar a usuária a aderir a um programa específico.
+- **Nenhuma capability de provider/canal foi verificada contra uma chamada de API ao vivo.** Ver `REGRAS-PROVIDERS-E-CANAIS.md` — todo `sourceType`/`confidence` reflete isso; reconferir antes de qualquer automação real.
 
-## 19. Pendências (próximos itens do P0/P1)
+## 20. Pendências (próximos itens do P0/P1)
 
-- Homologação visual real em Desktop + 375/390/414px (Login, menu mobile, Vendas e Comissões, celebração da primeira comissão, Configurações — nunca inspecionados visualmente).
-- Migrar de vez `/links` e `/monetizacao` para `Sale`/`Commission` e então poder remover o contador legado do schema (hoje mantido só por compatibilidade com essas duas telas).
-- Evoluir o cadastro de "Meus Programas" com o restante dos campos do Design que não foram confirmados linha a linha (o handoff textual não detalha o formulário completo).
-- `AffiliateProgramDiscoveryEngine`/`OpportunityScorer` (`lib/affiliate-discovery.ts`) — hoje só os tipos existem; a lógica de descoberta automática de programas/oportunidades por fonte oficial é trabalho futuro, fora do escopo de custo-zero sem uma fonte de dados definida.
+- Registrar credenciais e implementar de fato ao menos um provider com API oficial documentada (Hotmart e Amazon Associados são os candidatos mais claros) e um canal (TikTok Content Posting API).
+- Implementar o `AutomationOrchestrator`/`AutomationJob` de verdade (hoje só a interface) reaproveitando Postgres + Vercel Cron.
+- Prova de conceito de `RendererProvider` gratuito (FFmpeg/templates) — deliberadamente não feita nesta rodada.
+- Resultado por formato/hook/CTA no Learning Engine — precisa de campos estruturados novos em `Conteudo` (Design ainda não pediu isso).
+- Evoluir o cadastro de "Meus Programas" com o restante dos campos do Design que não foram confirmados linha a linha.
 - Decidir e documentar a evolução para workspace com múltiplas usuárias (convite de equipe), se/quando isso for necessário.
+- Aplicar em produção a migração `20260914000000_sale_idempotency_key` (não aplicada nesta rodada — só testada localmente).
 
-## 20. Decisões já tomadas
+## 21. Decisões já tomadas
 
 - **Caminho A (adaptar o app real existente), não B (pivotar/recomeçar).** Confirmado pelo `design_handoff` (§H: "arquitetura evolutiva, sem reescrita destrutiva").
-- **`/api/cron/publicar` recusa por padrão sem `CRON_SECRET`** — a rota não fica aberta se a variável não estiver configurada (Rodada 3).
-- **`Sale`/`Commission` são a fonte única de vendas/comissões**; o contador legado de `LinkDinamico` continua sendo escrito só por compatibilidade com telas antigas, nunca lido pelos indicadores novos (Rodada 3).
+- **`/api/cron/publicar` recusa por padrão sem `CRON_SECRET`** (Rodada 3).
+- **`Sale`/`Commission` são a fonte única de vendas/comissões**; o contador legado de `LinkDinamico` foi finalizado — nenhuma operação nova o incrementa, `/links` e `/monetizacao` migraram para ler dele via `Sale` (Rodada 4).
+- **Idempotência de vendas é persistente (`Sale.idempotencyKey`), não só por janela de tempo** (Rodada 4).
 - **"Primeira comissão" = primeira `Commission` `CONFIRMED` ou `RECEIVED`** — decisão registrada, revisável (Rodada 3, seção 15.1).
-- **Catálogo de providers de afiliação não se limita a 5 marketplaces** — `AffiliateProviderRegistry` cobre marketplaces, redes de afiliação (Awin, Rakuten, Impact, CJ, Lomadee) e programas próprios de varejo/moda/beleza, extensível sem reconstrução (Rodada 3).
+- **Catálogo de providers de afiliação não se limita a 5 marketplaces**, e agora tem capability própria por provider — `scrapingAllowed` é sempre `false` (Rodada 3/4).
+- **Scraping nunca é uma automação aceita**, em nenhum provider, nenhuma exceção (Rodada 4).
+- **Automação nunca contorna consentimento pessoal, CPF, dados bancários ou aprovação externa** — vira item de `HumanActionRequired` (Rodada 4).
 - **1 usuária = 1 workspace** nesta fase (não há workspace compartilhado por equipe ainda).
 - **`Workspace.ownerId` sem chave estrangeira** (evita ciclo de criação); `User.workspaceId` é quem de fato isola os dados.
-- **Contador de `LinkDinamico` mantido** ao lado de `Sale`/`Commission` — para não alterar o que o Dashboard já mostra até a tela migrar de vez.
 - **Prisma Migrate a partir de agora**, não mais `db push`, para qualquer mudança que precise transformar dados existentes.
