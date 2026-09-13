@@ -1,6 +1,6 @@
 # Documentação — Patrono Seller (MVP Afiliada)
 
-**Última atualização:** 13/09/2026 — Rodada 2 do P0 (fundação de dados: workspace, Programa×Operação×Integração, Venda×Comissão, auditoria).
+**Última atualização:** 13/09/2026 — Rodada 3 do P0 (segurança final do P0, fonte única de vendas/comissões, Meus Programas).
 
 Este documento registra o **estado real** do projeto. Nada aqui descreve algo planejado como se já existisse — o que está pendente é dito explicitamente.
 
@@ -78,7 +78,9 @@ Migrations em `prisma/migrations/`, aplicadas com `prisma migrate deploy` (ver s
 
 **Rotas públicas** (não exigem sessão):
 - Telas: `/login`, `/register`, `/esqueci-senha`, `/redefinir-senha`
-- APIs: tudo sob `/api/auth/*` (NextAuth), `/api/l/*` (redirecionamento de link de afiliada), `/api/cron/*` (autenticado por `CRON_SECRET`, não por sessão)
+- APIs: tudo sob `/api/auth/*` (NextAuth), `/api/l/*` (redirecionamento de link de afiliada), `/api/cron/*` (sem sessão de usuária, mas **não é pública de fato** — ver abaixo)
+
+**`/api/cron/publicar` — segurança revisada na Rodada 3.** Não ter sessão de usuária não significa aceitar chamadas públicas. Antes, a checagem de `CRON_SECRET` só rodava `if (secret)` — ou seja, se a variável de ambiente não estivesse configurada em produção, a rota ficava **aberta por padrão**. Corrigido: agora a rota **recusa (401)** sempre que `CRON_SECRET` não está configurado, e sempre exige `Authorization: Bearer <CRON_SECRET>` correto (é o header que a própria Vercel Cron envia automaticamente quando a env var existe no projeto). Uma sessão de usuária comum autenticada não substitui o segredo. Testado em `tests/cron-seguranca.test.mjs`.
 
 **Todo o resto exige sessão.** Uma tela nova nasce protegida automaticamente — não é preciso lembrar de adicioná-la a uma lista.
 
@@ -108,7 +110,13 @@ Distinção de negócio aprovada (`design_handoff` §6) — **não são sinônim
 
 `upsertPrograma()` **recusa** marcar `integrationStatus: 'CONNECTED'` a menos que já exista uma `Integracao` real com `status: 'conectado'` para a mesma plataforma no mesmo workspace — nunca finge uma conexão que não existe (testado em `tests/programa-venda-comissao.test.ts`).
 
-**Pendência:** ainda não existe tela nem rota de API pública para "Meus Programas" — isso é P1, não desta rodada. O modelo e a função já estão prontos para quando essa tela for construída.
+**Implementado na Rodada 3:** tela e API reais de "Meus Programas".
+- `app/api/programas/route.ts` — `GET` lista os programas do workspace; `POST` cadastra/edita (usa `upsertPrograma`, sempre com `operationMode: 'MANUAL'` fixo — o campo nem é aceito no corpo da requisição, então a tela não tem como pedir integração real). Conta/link de acesso/observações vão para `notes` (o Design não pede senha da plataforma externa).
+- `app/(dashboard)/programas/page.tsx` — lista os programas cadastrados (Programa/Operação/Integração sempre exibidos separadamente) e permite cadastrar um novo a partir do catálogo de providers.
+- `lib/affiliate-providers.ts` — **`AffiliateProviderRegistry`**: catálogo de providers conhecidos (marketplaces, redes de afiliação, programas próprios de varejo/moda/beleza — não só as 5 plataformas originalmente citadas). Cada entrada carrega metadado público (categoria, país, URL oficial, tipo de programa, método de geração de link, disponibilidade de API/catálogo/tracking, restrições, canais permitidos, regras de conteúdo, fonte das regras, `lastVerifiedAt`). Adicionar um provider novo é só adicionar uma entrada no array — não exige mudar nenhuma outra parte do sistema. **Nenhum dado da usuária** (status da conta dela) mora aqui — isso é `AffiliateProgram`.
+- `lib/affiliate-discovery.ts` — **arquitetura futura, não implementada.** Só os tipos (`AffiliateOpportunity`, `OpportunityScorer`, `AffiliateProgramDiscoveryEngine`) documentando o contrato para quando a descoberta automática de programas/oportunidades for construída de verdade — sem nenhuma lógica, sem chamada de rede. Direção registrada: descobrir programa → avaliar oportunidade → orientar/automatizar adesão → encontrar produtos → criar conteúdo → publicar → medir → vender → aprender. Regras já fixadas para quando isso for implementado: só fontes oficiais/autorizadas; nunca assumir que um programa continua disponível para sempre; nunca contornar aceite pessoal, CPF, dados bancários ou qualquer confirmação que só a usuária pode dar.
+
+Nenhuma integração real foi criada nesta rodada (nenhum token, nenhum OAuth, nenhuma conexão simulada). Testado em `tests/isolamento-programas-vendas.test.mjs`.
 
 ## 10. Venda × Comissão
 
@@ -117,17 +125,29 @@ Regra de negócio: **venda ≠ comissão**. Modelados como entidades separadas:
 - **`Sale`**: `status` = `PENDING | CONFIRMED | CANCELLED`. Campos: `productId`, `affiliateProgramId`, `linkId`, `contentId` (todos opcionais — nem toda venda vem de um link/conteúdo específico), `date`, `amount`, `source` (`manual` hoje; `webhook` reservado para integrações futuras), `notes`.
 - **`Commission`**: `status` = `EXPECTED | CONFIRMED | RECEIVED`. Campos: `expectedAmount`, `confirmedAmount`, `receivedAmount` (três valores independentes, não um só sendo sobrescrito), `expectedAt`/`confirmedAt`/`receivedAt`, `saleId` opcional (uma comissão pode não estar ligada a uma venda registrada individualmente).
 
-**Onde isso já está ligado:** `POST /api/links/[id]/venda` (registrar uma venda manual em um link) agora cria, além do contador que já existia em `LinkDinamico` (mantido por compatibilidade com o Dashboard/Lucro e Escala atual), um registro `Sale` (`CONFIRMED`) e um `Commission` (`EXPECTED`) de verdade.
+**`Sale`/`Commission` são a fonte única a partir da Rodada 3.** Nenhum indicador novo (Dashboard, "Resultados", "Vendas e Comissões", primeira comissão) soma o contador legado (`LinkDinamico.conversoes`/`receitaTotal`) — só `Sale`/`Commission`. Ver seção 10.1 (Fonte única e o contador legado) para o detalhe completo dessa decisão.
 
-`lib/vendas-comissoes.ts` fornece `resumoVendas()` e `resumoComissoes()` — leituras agregadas por status, já excluindo da soma qualquer comissão cuja venda foi cancelada. Ainda não estão ligadas a nenhuma tela (a tela "Vendas e Comissões" do design é P1).
+**Implementado na Rodada 3:**
+- `POST /api/links/[id]/venda` (registrar venda a partir de um link) — agora transacional: `Sale`, `Commission` e o `AuditLog` são criados numa única transação (`prisma.$transaction`) — nunca existe `Commission` órfã de uma `Sale` que falhou. Tem proteção contra duplo clique: se uma `Sale` idêntica (mesmo link e valor) foi criada nos últimos 5 segundos, devolve ela em vez de criar outra.
+- `POST /api/vendas` — "Registrar resultado" geral (produto + programa/link/conteúdo opcionais + data + valor + status + observações), usado pela tela "Vendas e Comissões". Mesma proteção contra duplo clique e mesma transação (`lib/vendas-comissoes.ts` → `registrarResultado()`).
+- `PATCH /api/vendas` e `PATCH /api/comissoes` — alteram status de venda (`atualizarStatusVenda`) e de comissão (`atualizarComissao`), cada alteração gerando log de auditoria (`venda.alterada`/`venda.cancelada`, `comissao.confirmada`/`comissao.recebida`/`comissao.alterada`).
+- `lib/vendas-comissoes.ts` — `resumoVendas()`, `resumoComissoes()` (já existiam), mais `lucroEscalaPorProduto()` (ranking por produto: cliques vêm de `LinkDinamico`/tracking, vendas e receita vêm de `Sale` `CONFIRMED` + `Commission` `CONFIRMED`/`RECEIVED` associada — nunca de venda `CANCELLED`) e `primeiraComissao()` (ver seção 15.1).
 
-Testado em `tests/programa-venda-comissao.test.ts`: registrar venda não cria comissão recebida automaticamente; prevista≠confirmada≠recebida; venda cancelada não entra nos totais.
+Testado em `tests/programa-venda-comissao.test.ts` e `tests/fonte-unica-vendas.test.ts`: registrar venda não cria comissão recebida automaticamente; prevista≠confirmada≠recebida; venda cancelada não entra nos totais; contador legado nunca se soma ao total estruturado; duplo clique não duplica a venda; transação Sale+Commission é atômica.
+
+### 10.1 Fonte única e o contador legado
+
+O contador em `LinkDinamico` (`conversoes`/`receitaTotal`) **continua no schema e continua sendo escrito** por `POST /api/links/[id]/venda` — só por compatibilidade com as telas antigas "Meus Links" (`/links`) e "Monetização" (`/monetizacao`), que ainda o exibem e não fazem parte do escopo desta rodada. Removê-lo agora quebraria essas duas telas sem necessidade.
+
+**O que muda de fato:** nenhuma leitura nova soma esse contador. O Dashboard, o card de primeira comissão e as telas novas leem exclusivamente `Sale`/`Commission`. Isso foi verificado com um teste explícito (`tests/fonte-unica-vendas.test.ts`, "Caso 2"): um link com contador legado = 1 mais uma `Sale CONFIRMED` nova resulta em **1** venda estruturada, nunca 2 — o legado não contamina a contagem nova.
+
+Nenhum dado legado com valor > 0 foi encontrado ou transformado nesta rodada (o ambiente de desenvolvimento não tem acesso ao banco de produção). Se isso for encontrado depois, a regra já está registrada: **nunca** transformar automaticamente um número agregado em registros `Sale` individuais com datas/produtos/comissões inventadas — isso criaria dado falso. Um contador legado > 0 sem lastro estruturado deve ficar documentado como **DADO LEGADO AGREGADO**, nunca misturado com vendas estruturadas.
 
 ## 11. Auditoria (`AuditLog`)
 
 `lib/audit-log.ts` — `registrarAuditoria()`. Uma tabela simples no mesmo Postgres, sem serviço externo. Falha ao gravar o log **nunca** derruba a operação que está sendo registrada (só loga o erro no console).
 
-**Eventos registrados hoje:** `produto.criado`, `produto.alterado`, `produto.descartado`, `link.criado`, `venda.registrada`, `conteudo.aprovado` (via PATCH de status), `publicacao.marcada` (via PATCH de status), `integracao.conectada`, `programa.criado`/`programa.alterado` (quando `upsertPrograma` recebe `actorUserId`).
+**Eventos registrados hoje:** `produto.criado`, `produto.alterado`, `produto.descartado`, `link.criado`, `venda.registrada`, `venda.alterada`, `venda.cancelada`, `comissao.confirmada`, `comissao.recebida`, `comissao.alterada`, `conteudo.aprovado` (via PATCH de status), `publicacao.marcada` (via PATCH de status), `integracao.conectada`, `programa.criado`/`programa.alterado` (quando `upsertPrograma` recebe `actorUserId`).
 
 **Nunca gravado:** senha, token, segredo — `metadata` carrega só campos como nomes, IDs, valores monetários. Testado em `tests/audit-log.test.mjs` (confere que a criação/alteração de um produto gera log, e que o `metadata` não contém as palavras senha/password/token/secret).
 
@@ -160,18 +180,28 @@ Framework: `node --test` (nativo do Node, zero dependência nova) para arquivos 
 | Arquivo | O que cobre | Testes |
 |---|---|---|
 | `tests/protecao-rotas.test.mjs` | Toda tela/API protegida exige sessão; públicas continuam abertas; link de afiliada nunca pede login | 35 |
-| `tests/estado-zerado.test.mjs` | Conta nova nasce com tudo zerado (produtos, links, conteúdos, integrações, métricas) | 5 |
+| `tests/estado-zerado.test.mjs` | Conta nova nasce com tudo zerado (produtos, links, conteúdos, integrações, programas, vendas, comissões, métricas, primeira comissão) | 7 |
 | `tests/isolamento-workspace.test.mjs` | Duas contas não conseguem ler nem escrever uma na outra (produtos) | 8 |
 | `tests/audit-log.test.mjs` | Criar/alterar produto gera log de auditoria correto, sem dado sensível | 2 |
 | `tests/programa-venda-comissao.test.ts` | Programa×Operação×Integração; venda≠comissão; venda cancelada não conta | 9 |
+| `tests/cron-seguranca.test.mjs` **(novo)** | `/api/cron/publicar` recusa sem segredo, com segredo errado, e com sessão comum; executa só com o segredo certo; nunca ecoa o segredo | 6 |
+| `tests/fonte-unica-vendas.test.ts` **(novo)** | `Sale`/`Commission` como fonte única; contador legado nunca se soma; duplo clique não duplica; transação Sale+Commission | 8 |
+| `tests/isolamento-programas-vendas.test.mjs` **(novo)** | Isolamento de workspace estendido a Programas, Vendas e Comissões (leitura e escrita cruzada) | 6 |
+| `tests/primeira-comissao.test.mjs` **(novo)** | Progresso da primeira comissão com dados reais; workspace vazio não concluído; reload não depende de localStorage | 3 |
 
-**Total: 59 testes, todos passando.** (Eram 40 antes desta rodada.)
+**Total: 84 testes, todos passando.** (Eram 59 no início desta rodada.)
 
-Comandos: `npm test` (tudo), ou `npm run test:rotas` / `test:zerado` / `test:isolamento` / `test:audit-log` / `test:programa-venda-comissao` individualmente.
+Comandos: `npm test` (tudo), ou os `npm run test:<nome>` individuais listados em `package.json`. O teste de cron precisa da mesma `CRON_SECRET` no ambiente do servidor e do teste (ex.: `CRON_SECRET=algum-valor npm run test:cron`, com o servidor também subido com essa variável).
 
 ## 15. Regra "zero significa zero"
 
-Uma conta nova começa com 0 produtos, 0 links, 0 cliques, 0 vendas, R$ 0,00 de comissão (prevista/confirmada/recebida) e 0 publicações. `prisma/seed.ts` cria **só** o primeiro administrador — nada de produto/link/venda de exemplo (uma versão anterior criava dois produtos fictícios; removidos na Rodada 1). O seed se recusa a rodar contra um banco que não pareça local, a menos que `PERMITIR_SEED_PRODUCAO=sim` seja passado explicitamente.
+Uma conta nova começa com 0 produtos, 0 links, 0 cliques, 0 vendas, R$ 0,00 de comissão (prevista/confirmada/recebida), 0 publicações, 0 programas cadastrados e nenhuma etapa de "primeira comissão" concluída. `prisma/seed.ts` cria **só** o primeiro administrador — nada de produto/link/venda de exemplo (uma versão anterior criava dois produtos fictícios; removidos na Rodada 1). O seed (e agora também os scripts de fixture em `scripts/`, unificados em `lib/seed-guard.ts` nesta rodada) se recusam a rodar contra um banco que não pareça local, a menos que `PERMITIR_SEED_PRODUCAO=sim` seja passado explicitamente.
+
+### 15.1 Primeira comissão (card real, sem hardcode)
+
+`lib/vendas-comissoes.ts` → `primeiraComissao(workspaceId)`. O `design_handoff` nomeia a etapa final do fluxo ("...Registrar venda/comissão → **Primeira comissão**") mas não dá uma regra numérica exata além disso. Decisão registrada (não é um número inventado, é a leitura mais conservadora do texto disponível — revisável se o Design especificar outra regra): a etapa se completa quando existe **ao menos uma `Commission` `CONFIRMED` ou `RECEIVED`** — uma comissão apenas `EXPECTED` ainda é previsão, não é "a comissão" que a etapa nomeia.
+
+O card `PrimeiraComissaoCard` (`components/dashboard/PrimeiraComissao.tsx`, no Dashboard) mostra valor/produto/plataforma/data reais da comissão encontrada — nunca hardcoded, nunca inventado quando não existe. Testado em `tests/primeira-comissao.test.mjs`.
 
 ## 16. Funcionamento manual é oficial
 
@@ -185,23 +215,30 @@ Dentro do app real, telas avançadas como `/video-seller`, `/monetizacao`, `/wha
 
 ## 18. Riscos conhecidos
 
+- **Auditoria de segredos hardcoded (Rodada 3):** revisado o projeto por padrões de chave/token/senha embutidos no código. Não foi encontrada nenhuma credencial de serviço real hardcoded. Encontrados: três scripts de fixture em `scripts/` (`seed-teste-*.ts`) que criavam usuária/produto de teste sem a mesma trava de produção do `prisma/seed.ts` — corrigido, agora todos usam `lib/seed-guard.ts` (`verificarAmbienteDeSeed`) e se recusam a rodar contra um banco que não pareça local.
 - **fal.ai é uma dependência paga** (vídeo por IA) — ver `STACK-CUSTO-ZERO.md`. Os motores Veo e Luma nunca foram verificados contra uma geração real (ambiente de desenvolvimento bloqueia acesso à internet externa).
-- **`Sale`/`Commission` ainda não têm tela própria.** Só há um ponto de entrada (`POST /api/links/[id]/venda`), que grava nas duas tabelas novas e no contador antigo simultaneamente — funciona, mas é uma duplicação de fonte de verdade até a tela "Vendas e Comissões" migrar de vez para o novo modelo.
+- **O contador legado de `LinkDinamico` continua sendo escrito** por `POST /api/links/[id]/venda`, só por compatibilidade com `/links` e `/monetizacao` (fora do escopo desta rodada). Nenhum indicador novo o lê, mas ele não foi removido do schema — ver seção 10.1.
 - **Homologação visual mobile (375/390/414px) continua pendente.** Não foi objetivo desta rodada.
 - **Multi-usuária por workspace não existe.** Se duas pessoas precisarem compartilhar os mesmos dados (hoje cada conta é isolada por padrão), o modelo de `Workspace` já tem a estrutura (`members: User[]`), mas nada no fluxo de registro/convite usa isso ainda.
 - **`Integracao.userId` continua sendo gravado** nas criações (para saber quem conectou), mas a leitura/atualização já é 100% por `workspaceId`.
+- **A regra de "primeira comissão" (CONFIRMED ou RECEIVED) é uma interpretação, não um número confirmado pelo Design.** Ver seção 15.1 — revisável.
+- **`AffiliateProviderRegistry` tem dados verificados em 13/09/2026** (`lastVerifiedAt` de cada provider) — programas de afiliados mudam de regra/comissão/disponibilidade com frequência; nada aqui foi validado contra uma fonte ao vivo (ambiente de desenvolvimento sem acesso à internet externa), então o catálogo deve ser reconferido periodicamente antes de orientar a usuária a aderir a um programa específico.
 
 ## 19. Pendências (próximos itens do P0/P1)
 
-- Tela e API de "Meus Programas" (usar `upsertPrograma`).
-- Tela "Vendas e Comissões" migrando para `Sale`/`Commission` como fonte única (hoje o Dashboard ainda lê o contador de `LinkDinamico`).
 - Homologação visual real em Desktop + 375/390/414px (Login, menu mobile, Vendas e Comissões, celebração da primeira comissão, Configurações — nunca inspecionados visualmente).
-- Estados de carregamento/erro genéricos em todas as operações de escrita (o design já define o padrão; falta aplicar).
+- Migrar de vez `/links` e `/monetizacao` para `Sale`/`Commission` e então poder remover o contador legado do schema (hoje mantido só por compatibilidade com essas duas telas).
+- Evoluir o cadastro de "Meus Programas" com o restante dos campos do Design que não foram confirmados linha a linha (o handoff textual não detalha o formulário completo).
+- `AffiliateProgramDiscoveryEngine`/`OpportunityScorer` (`lib/affiliate-discovery.ts`) — hoje só os tipos existem; a lógica de descoberta automática de programas/oportunidades por fonte oficial é trabalho futuro, fora do escopo de custo-zero sem uma fonte de dados definida.
 - Decidir e documentar a evolução para workspace com múltiplas usuárias (convite de equipe), se/quando isso for necessário.
 
 ## 20. Decisões já tomadas
 
 - **Caminho A (adaptar o app real existente), não B (pivotar/recomeçar).** Confirmado pelo `design_handoff` (§H: "arquitetura evolutiva, sem reescrita destrutiva").
+- **`/api/cron/publicar` recusa por padrão sem `CRON_SECRET`** — a rota não fica aberta se a variável não estiver configurada (Rodada 3).
+- **`Sale`/`Commission` são a fonte única de vendas/comissões**; o contador legado de `LinkDinamico` continua sendo escrito só por compatibilidade com telas antigas, nunca lido pelos indicadores novos (Rodada 3).
+- **"Primeira comissão" = primeira `Commission` `CONFIRMED` ou `RECEIVED`** — decisão registrada, revisável (Rodada 3, seção 15.1).
+- **Catálogo de providers de afiliação não se limita a 5 marketplaces** — `AffiliateProviderRegistry` cobre marketplaces, redes de afiliação (Awin, Rakuten, Impact, CJ, Lomadee) e programas próprios de varejo/moda/beleza, extensível sem reconstrução (Rodada 3).
 - **1 usuária = 1 workspace** nesta fase (não há workspace compartilhado por equipe ainda).
 - **`Workspace.ownerId` sem chave estrangeira** (evita ciclo de criação); `User.workspaceId` é quem de fato isola os dados.
 - **Contador de `LinkDinamico` mantido** ao lado de `Sale`/`Commission` — para não alterar o que o Dashboard já mostra até a tela migrar de vez.
