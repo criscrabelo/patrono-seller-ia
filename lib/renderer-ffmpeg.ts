@@ -153,6 +153,68 @@ export class RendererFFmpeg implements RendererProvider {
   }
 
   /**
+   * Renderer TikTok (Rodada 6, regra 26) — vídeo vertical com movimento mais
+   * forte que o Reel padrão, "cortes" entre hook/legenda/CTA via timing de
+   * drawtext (`enable='between(t,...)'`) e CTA queimado no final. NUNCA
+   * aceita um asset de watermark do Instagram — cada canal gera seu próprio
+   * arquivo final (regra 29), por isso esta função não tem parâmetro de
+   * watermark: se algum dia precisar de um watermark próprio do TikTok,
+   * será um parâmetro novo e explícito, nunca reaproveitado do Instagram.
+   */
+  async renderTikTokVideo(params: {
+    imagemUrl: string
+    hook: string
+    legendaVisual: string
+    cta: string
+    duracaoSegundos?: number
+  }): Promise<{ url: string; durationSeconds: number }> {
+    const duracaoSegundos = params.duracaoSegundos ?? 8
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const tmp = tmpdir()
+    const entrada = join(tmp, `renderer-tiktok-in-${id}.jpg`)
+    const saida = join(tmp, `renderer-tiktok-out-${id}.mp4`)
+
+    const ctaInicioSegundos = Math.max(duracaoSegundos - 2, 0)
+
+    try {
+      await baixarImagem(params.imagemUrl, entrada)
+
+      const fps = 30
+      const totalFrames = duracaoSegundos * fps
+      const hookTexto = escaparTextoDrawtext(params.hook)
+      const legendaTexto = escaparTextoDrawtext(params.legendaVisual)
+      const ctaTexto = escaparTextoDrawtext(params.cta)
+
+      const filtros = [
+        `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920`,
+        // Movimento mais acentuado que o Reel padrão — próprio do TikTok.
+        `zoompan=z='min(zoom+0.0015,1.25)':d=${totalFrames}:s=1080x1920:fps=${fps}`,
+        `drawtext=text='${hookTexto}':fontcolor=white:fontsize=60:box=1:boxcolor=black@0.6:boxborderw=18:x=(w-text_w)/2:y=h*0.1:enable='between(t,0,2)'`,
+        `drawtext=text='${legendaTexto}':fontcolor=white:fontsize=48:box=1:boxcolor=black@0.5:boxborderw=14:x=(w-text_w)/2:y=h*0.82:enable='between(t,2,${ctaInicioSegundos})'`,
+        `drawtext=text='${ctaTexto}':fontcolor=white:fontsize=56:box=1:boxcolor=black@0.7:boxborderw=18:x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t,${ctaInicioSegundos})'`,
+      ].join(',')
+
+      await execFileAsync(ffmpegBin(), [
+        '-loop', '1',
+        '-i', entrada,
+        '-vf', filtros,
+        '-t', String(duracaoSegundos),
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+        '-y',
+        saida,
+      ])
+
+      const buffer = await readFile(saida)
+      const url = await uploadBuffer(buffer, BUCKET_RENDERS, `tiktok-${id}.mp4`, 'video/mp4')
+      return { url, durationSeconds: duracaoSegundos }
+    } finally {
+      await Promise.allSettled([unlink(entrada), unlink(saida)])
+    }
+  }
+
+  /**
    * Carrossel — mínimo 3 cards (Hook, Produto/benefício, CTA). Cada card usa
    * a mesma imagem autorizada com um overlay diferente; nunca inventa texto
    * — cada `cards[].texto` vem de quem chama.

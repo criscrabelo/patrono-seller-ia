@@ -94,3 +94,45 @@ export function textoDisclosure(tipo: 'afiliado' | 'parceria' | 'publicidade' = 
   }
   return textos[tipo]
 }
+
+/**
+ * Preset TIKTOK_FIRST (Rodada 6, regra 25) — o TikTok passou a ser o canal
+ * prioritário nº 1; o conteúdo gerado para ele precisa ser criado
+ * especificamente para o formato/tom do TikTok, nunca um reaproveitamento
+ * automático do Reel do Instagram (formato/ritmo/hook são diferentes).
+ *
+ * Só usa fatos presentes em `fonte` — nunca inventa benefício, desconto,
+ * característica, certificação ou prazo. Preço só entra se vier com
+ * timestamp; sem isso, usa a chamada genérica "confira o preço atual".
+ */
+export interface FonteFatualProduto {
+  nome: string
+  categoria: string
+  preco: number | null
+  precoConsultadoEm: string | null
+  isAffiliate: boolean
+}
+
+export interface PacoteCriativoTikTokFirst {
+  hooks: [string, string, string]
+  caption: string
+  cta: string
+  hashtags: string[]
+  disclosure: string | null
+}
+
+export function gerarPacoteCriativoTikTokFirst(fonte: FonteFatualProduto): PacoteCriativoTikTokFirst {
+  const precoTexto = fonte.preco != null && fonte.precoConsultadoEm ? `R$ ${fonte.preco.toFixed(2)} (consultado em ${fonte.precoConsultadoEm})` : 'confira o preço atual'
+
+  const hooks: [string, string, string] = [
+    `Achei isso: ${fonte.nome}`,
+    `Você já viu ${fonte.nome}?`,
+    `${fonte.categoria}: ${fonte.nome}`,
+  ]
+  const cta = 'Link na bio/comentário fixado.'
+  const caption = `${fonte.nome} — ${precoTexto}.`
+  const hashtags = ['#tiktokmademebuyit', `#${fonte.categoria.replace(/\s+/g, '').toLowerCase()}`].filter(Boolean)
+  const disclosure = fonte.isAffiliate ? textoDisclosure('afiliado') : null
+
+  return { hooks, caption, cta, hashtags, disclosure }
+}
