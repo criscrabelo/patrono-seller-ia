@@ -153,7 +153,13 @@ export class TikTokPublisher {
     return { publishId, status: 'PUBLISHING' }
   }
 
-  /** Consulta o status oficial — só aqui um vídeo vira ACCEPTED_BY_TIKTOK de verdade. */
+  /**
+   * Consulta o status oficial — só aqui um vídeo vira ACCEPTED_BY_TIKTOK de
+   * verdade. Um timeout do NOSSO polling nunca vira FAILED sozinho — aqui
+   * só mapeamos o que a própria API respondeu; quem chama decide reagendar
+   * a consulta em vez de desistir (regra 13: "não transformar timeout local
+   * em falha definitiva").
+   */
   async statusPublicacao(creds: TikTokCredentials, publishId: string): Promise<TikTokPublicationStatus> {
     const data = await tiktokFetch('https://open.tiktokapis.com/v2/post/publish/status/fetch/', creds.accessToken, {
       method: 'POST',
@@ -164,6 +170,48 @@ export class TikTokPublisher {
     if (status === 'FAILED') return 'REJECTED_BY_TIKTOK'
     if (status === 'PROCESSING_DOWNLOAD' || status === 'PROCESSING_UPLOAD' || status === 'SEND_TO_USER_INBOX') return 'PUBLISHING'
     return 'FAILED'
+  }
+
+  /**
+   * Photo Post (Rodada 6, regra 12) — mesma Content Posting API, `post_mode:
+   * PHOTO`. Base real para Carrossel/Photo Post automático no TikTok.
+   */
+  async publicarFotos(params: {
+    creds: TikTokCredentials
+    photoUrls: string[]
+    coverIndex: number
+    description: string
+    disclosure: TikTokDisclosureFlags
+    privacyLevel: string
+    autoAddMusic?: boolean
+  }): Promise<TikTokPublishResult> {
+    if (params.photoUrls.length === 0) throw new Error('Photo Post precisa de pelo menos uma foto.')
+    if (params.coverIndex < 0 || params.coverIndex >= params.photoUrls.length) {
+      throw new Error('coverIndex fora do intervalo de fotos enviadas.')
+    }
+    const init = await tiktokFetch('https://open.tiktokapis.com/v2/post/publish/content/init/', params.creds.accessToken, {
+      method: 'POST',
+      body: JSON.stringify({
+        post_info: {
+          title: params.description,
+          privacy_level: params.privacyLevel,
+          disable_comment: false,
+          brand_content_toggle: params.disclosure.brandedContent,
+          brand_organic_toggle: params.disclosure.yourBrand,
+          auto_add_music: params.autoAddMusic ?? false,
+        },
+        source_info: {
+          source: 'PULL_FROM_URL',
+          photo_cover_index: params.coverIndex,
+          photo_images: params.photoUrls,
+        },
+        post_mode: 'DIRECT_POST',
+        media_type: 'PHOTO',
+      }),
+    })
+    const publishId = init?.data?.publish_id as string | undefined
+    if (!publishId) throw new Error('TikTok não retornou publish_id para o Photo Post')
+    return { publishId, status: 'PUBLISHING' }
   }
 }
 
