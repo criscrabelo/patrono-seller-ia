@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { registrarAuditoria } from '@/lib/audit-log'
 
 export async function POST(
   req: NextRequest,
@@ -18,7 +19,7 @@ export async function POST(
   }
 
   const link = await prisma.linkDinamico.findFirst({
-    where: { id, userId: session.user.id },
+    where: { id, workspaceId: session.user.workspaceId },
   })
   if (!link) return NextResponse.json({ error: 'Link não encontrado' }, { status: 404 })
 
@@ -28,6 +29,8 @@ export async function POST(
     ? valor
     : valor * ((link.comissao ?? 0) / 100)
 
+  // Contador do link (fonte hoje do Dashboard/Lucro e Escala — mantido como
+  // está para não alterar o que a tela já mostra).
   const atualizado = await prisma.linkDinamico.update({
     where: { id },
     data: {
@@ -37,5 +40,42 @@ export async function POST(
     },
   })
 
-  return NextResponse.json(atualizado)
+  // Registro estruturado da venda e da comissão (venda ≠ comissão: uma
+  // venda registrada aqui começa como CONFIRMED — é um valor que a própria
+  // usuária está informando que recebeu — mas a comissão sobre ela começa
+  // como EXPECTED, nunca como recebida automaticamente). Este é o modelo
+  // que a tela "Vendas e Comissões" vai passar a usar; o contador acima
+  // continua alimentando o Dashboard atual enquanto isso não migra.
+  const sale = await prisma.sale.create({
+    data: {
+      workspaceId: session.user.workspaceId,
+      productId: link.produtoId,
+      linkId: link.id,
+      amount: valor,
+      status: 'CONFIRMED',
+      source: 'manual',
+    },
+  })
+
+  const commission = await prisma.commission.create({
+    data: {
+      workspaceId: session.user.workspaceId,
+      saleId: sale.id,
+      productId: link.produtoId,
+      expectedAmount: receitaGanha,
+      status: 'EXPECTED',
+      expectedAt: new Date(),
+    },
+  })
+
+  await registrarAuditoria({
+    workspaceId: session.user.workspaceId,
+    userId: session.user.id,
+    action: 'venda.registrada',
+    entityType: 'Sale',
+    entityId: sale.id,
+    metadata: { linkId: link.id, valor, comissaoPrevista: receitaGanha },
+  })
+
+  return NextResponse.json({ link: atualizado, sale, commission })
 }
