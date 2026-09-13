@@ -37,6 +37,16 @@ model Workspace {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ── Autopilot (Rodada 5) ──────────────────────────────────────────
+  // Kill switch: "PAUSAR AUTOMAÇÃO" por workspace. Nenhum job novo publica
+  // enquanto true; jobs em andamento devem respeitar isso antes da etapa
+  // externa (ver lib/autopilot.ts).
+  automationPaused Boolean @default(true)
+  // MANUAL: nada automático. DRY_RUN: roda o ciclo até READY_TO_PUBLISH mas
+  // nunca chama publicação real. AUTOMATIC: pode publicar de verdade quando
+  // todas as pré-condições da Rodada 5 forem atendidas.
+  automationMode String @default("MANUAL")
+
   produtos          Produto[]
   linksDinamicos    LinkDinamico[]
   integracoes       Integracao[]
