@@ -117,6 +117,10 @@ Ver `TIKTOK-INTEGRATION.md` para o detalhamento completo. Resumo do que virou in
 - **AudioUsagePolicy** (`lib/audio-policy.ts`) — sem API de biblioteca autorizada, o conteúdo sai sem música.
 - **`dryRunTikTokAutopilot()`** (`lib/tiktok-autopilot.ts`) — os 7 passos até `READY_TO_PUBLISH`, nunca chama Direct Post.
 
+## 15.2 Complemento — Digital Twin (fundações)
+
+Ver `DIGITAL-TWIN.md`. Preparação para o Patrono gerar vídeos com a aparência e a voz consistentes da própria proprietária, primeiro uso otimizado para TikTok. `podeGerarComDigitalTwin()` (`lib/digital-twin.ts`) exige perfil habilitado, voz habilitada, e ambos os consentimentos (`IdentityConsent`/`VoiceConsent`) `GRANTED` e não expirados — checado a cada geração, nunca só no cadastro. `validarPresenterMode()` bloqueia depoimento pessoal não verídico ("eu usei", "eu testei"). `decidirAIContentDisclosure()` exige disclosure de IA sempre que houver avatar sintético, voz clonada ou lip sync — além do (não em vez do) disclosure comercial. Kill switch "DESATIVAR MEU AVATAR" já modelado. Nenhum provider de voz/avatar/lip sync foi implementado ou contratado.
+
 ## 16. O que ainda não existe
 
 Nenhuma credencial real (Amazon, Mercado Livre, TikTok) foi configurada ou inventada nesta rodada — tudo funciona em modo "aguardando configuração" até a usuária conectar. `runAutopilot` ainda não cria `Produto`/`Conteudo`/`Sale` reais no banco por padrão — usa um `AutopilotStore` injetável (testável sem banco), com uma implementação Prisma pronta para ligar quando o fluxo completo de persistência for desenhado. `TikTokShopAffiliateProvider` aguarda confirmação de API oficial de afiliados. App do TikTok Channel ainda não foi submetido para auditoria (`TIKTOK-APP-AUDIT-CHECKLIST.md`) — nenhum item do checklist foi executado nesta rodada.
