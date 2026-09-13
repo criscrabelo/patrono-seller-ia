@@ -26,6 +26,20 @@ export type PreflightStatus =
   | 'REQUIRES_USER_CONSENT' // tudo pronto, falta só a usuária autorizar (exigência da própria plataforma)
   | 'BLOCKED_BY_POLICY' // a API recusou por regra de conteúdo/conta
 
+/**
+ * Status de publicação (Rodada 5, prioridade TikTok). `PREVALIDATED_FOR_TIKTOK`
+ * é SÓ a nossa própria pré-validação interna — nunca deve ser confundido
+ * com aceitação real. Só depois de uma resposta de verdade da API oficial
+ * é que o status vira `ACCEPTED_BY_TIKTOK` (ou `REJECTED_BY_TIKTOK`).
+ * Nunca dizer "validado pelo TikTok" antes disso.
+ */
+export type TikTokPublicationStatus =
+  | 'PREVALIDATED_FOR_TIKTOK'
+  | 'PUBLISHING'
+  | 'ACCEPTED_BY_TIKTOK'
+  | 'REJECTED_BY_TIKTOK'
+  | 'FAILED'
+
 export interface TikTokPreflightResult {
   status: PreflightStatus
   creatorInfo: TikTokCreatorInfo | null
@@ -57,4 +71,26 @@ export class TikTokPreflightNotConfigured implements TikTokPreflightValidator {
       motivo: 'Nenhuma credencial do TikTok configurada — nenhuma chamada foi feita.',
     }
   }
+}
+
+/**
+ * TikTokHumanConsentGate — quando a própria plataforma exige consentimento
+ * explícito, o Patrono faz TODO o resto sozinho (roteiro, mídia, preflight,
+ * disclosure) e só então pede a autorização mínima. Nunca transforma essa
+ * exigência num fluxo manual maior — a usuária só vê:
+ * "Conteúdo pronto. Autorizar publicação no TikTok."
+ */
+export interface ConsentGateResult {
+  liberadoParaPublicarSozinho: boolean
+  mensagemParaUsuaria: string | null
+}
+
+export function tiktokHumanConsentGate(preflight: TikTokPreflightResult): ConsentGateResult {
+  if (preflight.status === 'BLOCKED_BY_POLICY') {
+    return { liberadoParaPublicarSozinho: false, mensagemParaUsuaria: null } // não é consentimento, é bloqueio — vira HumanActionRequired diferente
+  }
+  if (preflight.status === 'REQUIRES_USER_CONSENT') {
+    return { liberadoParaPublicarSozinho: false, mensagemParaUsuaria: 'Conteúdo pronto. Autorizar publicação no TikTok.' }
+  }
+  return { liberadoParaPublicarSozinho: preflight.status === 'TECHNICALLY_VALID', mensagemParaUsuaria: null }
 }
