@@ -98,6 +98,24 @@ describe('Conta recém-criada', () => {
     assert.deepEqual(await r.json(), [], 'integração apareceu sozinha')
   })
 
+  test('não tem nenhum programa cadastrado', async () => {
+    const r = await comSessao('/api/programas')
+    assert.equal(r.status, 200)
+    assert.deepEqual(await r.json(), [], 'programa apareceu sozinho')
+  })
+
+  test('não tem nenhuma venda nem comissão', async () => {
+    const rVendas = await comSessao('/api/vendas')
+    assert.equal(rVendas.status, 200)
+    assert.deepEqual(await rVendas.json(), [], 'venda apareceu sozinha')
+
+    const rComissoes = await comSessao('/api/comissoes')
+    assert.equal(rComissoes.status, 200)
+    const dataComissoes = await rComissoes.json()
+    assert.deepEqual(dataComissoes.comissoes, [], 'comissão apareceu sozinha')
+    assert.deepEqual(dataComissoes.resumo, { prevista: 0, confirmada: 0, recebida: 0 })
+  })
+
   test('todos os números do painel são zero', async () => {
     const r = await comSessao('/api/metricas')
     assert.equal(r.status, 200)
@@ -110,7 +128,24 @@ describe('Conta recém-criada', () => {
     assert.equal(m.comissaoTotal ?? 0, 0, 'comissão')
     assert.deepEqual(m.lucroEscala ?? [], [], 'lucro e escala')
 
-    // Nenhum número do painel pode vir diferente de zero numa conta nova.
+    // Resultados (Sale/Commission) — tudo zerado, incluindo cliques/vendas/
+    // as três comissões (prevista/confirmada/recebida).
+    assert.deepEqual(m.resultados, {
+      vendasConfirmadas: 0,
+      vendasPendentes: 0,
+      vendasCanceladas: 0,
+      comissaoPrevista: 0,
+      comissaoConfirmada: 0,
+      comissaoRecebida: 0,
+    }, 'resultados deveriam nascer zerados')
+
+    // Primeira comissão / celebração: nada concluído numa conta nova, e
+    // nenhum dado de comissão inventado.
+    assert.equal(m.primeiraComissao.concluida, false, 'celebração não deveria estar concluída')
+    assert.ok(!('comissao' in m.primeiraComissao), 'não deveria existir comissão numa etapa não concluída')
+
+    // Nenhum número do painel (no nível raiz) pode vir diferente de zero
+    // numa conta nova.
     for (const [chave, valor] of Object.entries(m)) {
       if (typeof valor === 'number') {
         assert.equal(valor, 0, `"${chave}" veio ${valor} numa conta nova`)

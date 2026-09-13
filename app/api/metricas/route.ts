@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { lucroEscalaPorProduto, resumoVendas, resumoComissoes, primeiraComissao } from '@/lib/vendas-comissoes'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -17,7 +18,10 @@ export async function GET(req: NextRequest) {
     somaVisualizacoes,
     conteudosRecentes,
     conteudosPorStatus,
-    linksDoUsuario,
+    produtosComVenda,
+    vendas,
+    comissoes,
+    primeira,
   ] = await Promise.all([
     prisma.produto.count({ where: { workspaceId, status: { not: 'descartado' } } }),
     prisma.conteudo.count({ where: { workspaceId } }),
@@ -40,13 +44,17 @@ export async function GET(req: NextRequest) {
       where: { workspaceId },
       _count: { status: true },
     }),
-    prisma.linkDinamico.findMany({
-      where: { workspaceId },
-      include: { produto: { select: { nome: true } } },
-    }),
+    // Fonte única de vendas/comissões por produto (Rodada 3) — nunca mais
+    // soma o contador legado de LinkDinamico. Cliques continuam vindo dos
+    // links (fonte de tracking); vendas e receita vêm de Sale/Commission.
+    lucroEscalaPorProduto(workspaceId),
+    resumoVendas(workspaceId),
+    resumoComissoes(workspaceId),
+    primeiraComissao(workspaceId),
   ])
 
-  const { lucroEscala, comissaoTotal } = calcularLucroEscala(linksDoUsuario)
+  const lucroEscala = calcularScoreEscala(produtosComVenda)
+  const comissaoTotal = comissoes.confirmada + comissoes.recebida
 
   return NextResponse.json({
     totalProdutos,
@@ -58,45 +66,42 @@ export async function GET(req: NextRequest) {
     conteudosPorStatus,
     lucroEscala,
     comissaoTotal,
+    // "Resultados" (design_handoff §I) — cliques permanecem na fonte de
+    // links/tracking; vendas confirmadas e comissão confirmada/recebida
+    // vêm de Sale/Commission, nunca do contador legado.
+    resultados: {
+      vendasConfirmadas: vendas.CONFIRMED,
+      vendasPendentes: vendas.PENDING,
+      vendasCanceladas: vendas.CANCELLED,
+      comissaoPrevista: comissoes.prevista,
+      comissaoConfirmada: comissoes.confirmada,
+      comissaoRecebida: comissoes.recebida,
+    },
+    primeiraComissao: primeira,
   })
 }
 
-type LinkComProduto = {
+type ProdutoComVenda = {
   produtoId: string
+  nome: string
   cliques: number
   conversoes: number
   receitaTotal: number
-  produto: { nome: string }
 }
 
 // Score de Escala (0-100): metade pelo desempenho de conversão, metade pela receita
 // gerada em relação ao produto que mais rendeu. 15% de conversão já vale os 50 pontos
 // da metade de conversão — acima disso não soma mais.
-function calcularLucroEscala(links: LinkComProduto[]) {
-  const porProduto = new Map<string, { nome: string; cliques: number; conversoes: number; receitaTotal: number }>()
+function calcularScoreEscala(produtos: ProdutoComVenda[]) {
+  const maxReceita = Math.max(0, ...produtos.map((p) => p.receitaTotal))
 
-  for (const link of links) {
-    const atual = porProduto.get(link.produtoId) ?? {
-      nome: link.produto.nome,
-      cliques: 0,
-      conversoes: 0,
-      receitaTotal: 0,
-    }
-    atual.cliques += link.cliques
-    atual.conversoes += link.conversoes
-    atual.receitaTotal += link.receitaTotal
-    porProduto.set(link.produtoId, atual)
-  }
-
-  const maxReceita = Math.max(0, ...[...porProduto.values()].map((p) => p.receitaTotal))
-
-  const lucroEscala = [...porProduto.entries()]
-    .map(([produtoId, p]) => {
+  return produtos
+    .map((p) => {
       const taxaConversao = p.cliques > 0 ? p.conversoes / p.cliques : 0
       const receitaRelativa = maxReceita > 0 ? p.receitaTotal / maxReceita : 0
       const scoreEscala = Math.round(Math.min(1, taxaConversao / 0.15) * 50 + receitaRelativa * 50)
       return {
-        produtoId,
+        produtoId: p.produtoId,
         nome: p.nome,
         cliques: p.cliques,
         conversoes: p.conversoes,
@@ -108,10 +113,6 @@ function calcularLucroEscala(links: LinkComProduto[]) {
       }
     })
     .sort((a, b) => b.scoreEscala - a.scoreEscala)
-
-  const comissaoTotal = lucroEscala.reduce((s, p) => s + p.receitaTotal, 0)
-
-  return { lucroEscala, comissaoTotal }
 }
 
 function faixaEscala(score: number) {
