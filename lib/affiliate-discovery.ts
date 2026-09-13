@@ -15,37 +15,66 @@
  * - Usar SOMENTE fontes oficiais ou autorizadas (nunca raspar/violar termos).
  * - Nunca assumir que um programa continua disponível para sempre —
  *   `AffiliateProvider.lastVerifiedAt`/`fonteDasRegras` (lib/affiliate-providers.ts)
- *   já existem para isso.
+ *   já existem para isso; `AffiliateProviderCapability.lastVerifiedAt`
+ *   (lib/affiliate-provider-capabilities.ts) idem para o que é permitido.
  * - Nunca contornar exigência de aceite pessoal, CPF, dados bancários,
  *   autenticação ou qualquer confirmação que só a própria usuária pode dar
- *   — o motor deve preparar tudo e parar exatamente nesse ponto.
+ *   — o motor deve preparar tudo e parar exatamente nesse ponto (ver
+ *   `HumanActionRequired` em lib/automation.ts).
+ * - Campo desconhecido fica `undefined`/`null` — nunca um número inventado
+ *   "para preencher a tela".
  */
 
 import type { AffiliateProvider } from './affiliate-providers'
 
-/** Uma oportunidade concreta de venda dentro de um provider. */
+/**
+ * De onde veio o dado de uma oportunidade. `SCRAPED_UNOFFICIAL` NÃO existe
+ * de propósito — nunca é uma fonte operacional aceita nesta plataforma.
+ */
+export const ORIGEM_OPORTUNIDADE = [
+  'OFFICIAL_API',
+  'AUTHORIZED_PARTNER_API',
+  'AFFILIATE_PORTAL_IMPORT',
+  'USER_PROVIDED',
+  'MANUAL',
+] as const
+export type OrigemOportunidade = (typeof ORIGEM_OPORTUNIDADE)[number]
+
+/**
+ * Uma oportunidade concreta de venda dentro de um provider. Campos que
+ * dependem de dado externo não confirmado ficam `null`/`undefined` — nunca
+ * um valor inventado para não deixar a tela "vazia".
+ */
 export interface AffiliateOpportunity {
   providerId: string
   productName: string
   category: string
-  price?: number
-  commissionPercent?: number
-  estimatedCommissionBRL?: number
-  salesVolumeRank?: number
-  trending?: boolean
-  historicalConversionRate?: number
+  price?: number | null
+  commissionPercent?: number | null
+  estimatedCommissionBRL?: number | null
+  salesVolumeRank?: number | null
+  trending?: boolean | null
+  historicalConversionRate?: number | null
   channelFit?: string[]
+  origin: OrigemOportunidade
   source: string
   lastVerifiedAt: string
 }
 
+/** Uma fonte de candidatos a oportunidade — um provider, um canal, um dado informado pela usuária. */
+export interface OpportunitySource {
+  getCandidates(params: { workspaceId: string; category?: string }): Promise<AffiliateOpportunity[]>
+}
+
 /**
  * Compara oportunidades entre providers para sugerir onde vale mais a pena
- * divulgar. Implementação futura — hoje é só o contrato.
+ * divulgar. Implementação futura — hoje é só o contrato. `score` nunca
+ * deve inventar valor para um campo `null`/`undefined` da oportunidade —
+ * a ausência de dado entra como "desconhecido", não como zero.
  */
 export interface OpportunityScorer {
-  score(opportunity: AffiliateOpportunity): number
-  rank(opportunities: AffiliateOpportunity[]): AffiliateOpportunity[]
+  score(candidate: AffiliateOpportunity): number
+  rank(candidates: AffiliateOpportunity[]): AffiliateOpportunity[]
 }
 
 /**

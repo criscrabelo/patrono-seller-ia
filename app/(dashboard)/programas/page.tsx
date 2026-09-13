@@ -12,6 +12,19 @@ interface Provider {
   categoria: string
   cadastroDisponivel: boolean
   urlOficial: string
+  capability?: { status: string; automatedPublishing: boolean; officialApi: boolean }
+}
+
+// Rótulos de AffiliateProviderCapability.status — a UI só TRADUZ o que a
+// capability diz, nunca decide sozinha se um provider "tem API" ou não.
+const CAPABILITY_LABEL: Record<string, string> = {
+  SUPPORTED_MANUAL: 'Funcionamento manual',
+  OFFICIAL_API_AVAILABLE: 'API oficial disponível',
+  AUTHORIZATION_REQUIRED: 'API oficial — exige autorização',
+  PARTNER_ACCESS_REQUIRED: 'Acesso via parceiro/rede',
+  NOT_VERIFIED: 'Não verificado ainda',
+  NOT_AVAILABLE: 'Sem caminho oficial conhecido',
+  BLOCKED_BY_POLICY: 'Bloqueado pela política da plataforma',
 }
 
 interface Programa {
@@ -97,7 +110,7 @@ export default function ProgramasPage() {
 
   return (
     <div className="space-y-6 w-full max-w-5xl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-bold text-white flex items-center gap-2">
             <Handshake className="w-5 h-5 text-accent" /> Meus Programas
@@ -106,7 +119,7 @@ export default function ProgramasPage() {
             Programa (sou afiliada) × Operação (manual/futura) × Integração (futura) — funcionam de forma independente.
           </p>
         </div>
-        <Button onClick={() => setShowForm((s) => !s)}>
+        <Button onClick={() => setShowForm((s) => !s)} className="shrink-0">
           <Plus className="w-4 h-4" /> Cadastrar programa
         </Button>
       </div>
@@ -123,10 +136,16 @@ export default function ProgramasPage() {
               <option value="">Selecione...</option>
               {providers.map((p) => (
                 <option key={p.id} value={p.id} disabled={jaCadastradas.has(p.id)}>
-                  {p.nome}{jaCadastradas.has(p.id) ? ' (já cadastrada)' : ''}
+                  {p.nome}
+                  {p.capability ? ` — ${CAPABILITY_LABEL[p.capability.status] ?? p.capability.status}` : ''}
+                  {jaCadastradas.has(p.id) ? ' (já cadastrada)' : ''}
                 </option>
               ))}
             </select>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              "API oficial" ou "acesso via parceiro" não significa que já estamos conectados — é só o que a
+              plataforma permite, em tese. O cadastro abaixo continua manual nesta fase.
+            </p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>

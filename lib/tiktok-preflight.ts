@@ -1,0 +1,60 @@
+/**
+ * TikTokPreflightValidator — arquitetura real, ainda sem chamada externa
+ * habilitada (nenhuma credencial TikTok configurada nesta rodada).
+ *
+ * Objetivo: antes de publicar, consultar a própria conta (via API oficial,
+ * quando configurada) para saber o que ELA permite — nunca hardcodar um
+ * limite fixo de duração/formato no código, porque a API é quem manda
+ * (contas diferentes podem ter regras diferentes, e a regra pode mudar).
+ *
+ * Enquanto não há credencial: todo campo relevante volta como
+ * `unknown` e o resultado geral é `NOT_VERIFIED` — nunca um valor
+ * inventado "porque geralmente é assim".
+ */
+
+export interface TikTokCreatorInfo {
+  duracaoMaximaSegundos: number | 'unknown'
+  privacidadeOpcoesPermitidas: string[] | 'unknown'
+  duetPermitido: boolean | 'unknown'
+  stitchPermitido: boolean | 'unknown'
+  comentariosPermitidos: boolean | 'unknown'
+}
+
+export type PreflightStatus =
+  | 'NOT_VERIFIED' // sem credencial/consulta ainda
+  | 'TECHNICALLY_VALID' // formato/codec/duração conferidos contra a API e OK
+  | 'REQUIRES_USER_CONSENT' // tudo pronto, falta só a usuária autorizar (exigência da própria plataforma)
+  | 'BLOCKED_BY_POLICY' // a API recusou por regra de conteúdo/conta
+
+export interface TikTokPreflightResult {
+  status: PreflightStatus
+  creatorInfo: TikTokCreatorInfo | null
+  disclosureComercialNecessaria: boolean
+  motivo: string
+}
+
+/**
+ * Interface real que a Rodada 5 (ou quando houver credencial TikTok)
+ * implementa de verdade. Aqui só o contrato — chamá-la sem credencial
+ * configurada deve devolver NOT_VERIFIED, nunca simular uma resposta.
+ */
+export interface TikTokPreflightValidator {
+  validar(params: { contentId: string; workspaceId: string }): Promise<TikTokPreflightResult>
+}
+
+/**
+ * Implementação atual: sem credenciais configuradas, sempre devolve
+ * NOT_VERIFIED. Existe para o resto do código já poder depender da
+ * interface `TikTokPreflightValidator` sem quebrar quando a integração
+ * real for plugada — só troca esta classe pela versão que chama a API.
+ */
+export class TikTokPreflightNotConfigured implements TikTokPreflightValidator {
+  async validar(): Promise<TikTokPreflightResult> {
+    return {
+      status: 'NOT_VERIFIED',
+      creatorInfo: null,
+      disclosureComercialNecessaria: true, // assume o mais restritivo até confirmar o contrário
+      motivo: 'Nenhuma credencial do TikTok configurada — nenhuma chamada foi feita.',
+    }
+  }
+}
