@@ -23,6 +23,7 @@
     "test:isolamento-programas": "node --test tests/isolamento-programas-vendas.test.mjs",
     "test:idempotencia": "tsx --test tests/idempotencia-vendas.test.ts",
     "test:capabilities": "tsx --test tests/capabilities-e-automacao.test.ts",
+    "test:rodada5": "tsx --test tests/rodada5-autopilot.test.ts",
     "test": "node --test tests/*.test.mjs && tsx --test tests/*.test.ts"
   },
   "dependencies": {
