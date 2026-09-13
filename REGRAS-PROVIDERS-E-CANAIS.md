@@ -47,11 +47,11 @@ Este documento registra, por plataforma, o que sabemos hoje sobre o que pode ser
 
 ### TikTok Shop (provider — separado do canal TikTok abaixo)
 - **PRIORIDADE Nº 1 do Patrono Seller (ajuste estratégico, Rodada 5).** Deliberadamente separado de `TikTokChannel`: TikTok Shop cuida de produtos/oportunidades/links/comissões/vendas; o canal TikTok (abaixo) cuida de criação/publicação/disclosure/consentimento/status/métricas.
-- **Fonte oficial utilizada:** nenhuma API de afiliados do TikTok Shop confirmada ainda nesta rodada — `TikTokShopAffiliateProvider` (`lib/tiktok-shop-provider.ts`) existe como interface `OpportunitySource` real, mas nunca inventa produto/link/comissão sem API confirmada.
-- **Podemos automatizar hoje:** nada de catálogo/link/comissão ainda — `healthCheck()` honesto: "AGUARDANDO CONFIGURAÇÃO" sem credencial, `getCandidates()` sempre `[]`.
-- **Exige autorização:** provavelmente uma API de sellers/afiliados — A VERIFICAR contra o TikTok Shop Partner Center.
-- **Não podemos automatizar:** nada identificado além da falta de verificação.
-- **Pendências:** ler a documentação oficial do TikTok Shop Partner Center e confirmar a API de afiliados antes de implementar de verdade.
+- **Fonte oficial utilizada (Rodada 6):** documentação do TikTok Shop Partner Center confirma que a Affiliate API "is inactive by default" e precisa de aprovação de Account/Partner Manager. `TikTokShopAffiliateCapabilityProbe` (`lib/tiktok-shop-provider.ts`) representa esse estado real: `NOT_CONFIGURED → APP_REGISTERED → CREATOR_AUTH_REQUIRED → AFFILIATE_API_APPROVAL_REQUIRED → AVAILABLE` (mais `UNAVAILABLE_FOR_REGION`/`ERROR`). **Nunca assumimos que a conta brasileira já tem esse acesso.**
+- **Podemos automatizar hoje:** nada de catálogo/link/comissão ainda — `getCandidates()` sempre `[]` até a capability chegar a `AVAILABLE`. `Creator Authorization` (OAuth de criadora, `montarUrlAutorizacaoCreatorTikTokShop()`) já tem arquitetura pronta, sempre com token `creator` — nunca misturado com token `seller`/`partner` (`exigirTipoDeToken()`).
+- **Exige autorização:** Creator Authorization (OAuth) + aprovação da Affiliate API por Account/Partner Manager.
+- **Não podemos automatizar:** showcase/links/orders enquanto a capability não for `AVAILABLE` (`podeAdicionarAoShowcase()`, `obterLinkOficialTikTokShop()` nunca simulam sucesso).
+- **Pendências:** solicitar aprovação real da Affiliate API; até lá, `TikTokShopAffiliateProvider` continua honesto sobre a indisponibilidade.
 
 ### Hotmart
 - **Fonte oficial utilizada:** conhecimento geral de que a Hotmart documenta publicamente uma API de produtos/vendas/comissões e webhook de venda.
@@ -85,13 +85,13 @@ Este documento registra, por plataforma, o que sabemos hoje sobre o que pode ser
 
 ## Canais de publicação
 
-### TikTok (canal — PRIORIDADE Nº 1, ajuste estratégico Rodada 5)
-- **Canal principal de aquisição e conteúdo do MVP Automation First** — tratado com mais prioridade que Instagram a partir desta rodada.
-- **Fonte oficial utilizada:** TikTok Content Posting API — código real em `lib/tiktok-channel.ts` (`TikTokPublisher`, `consultarCreatorInfo`, `tiktokCommercialDisclosure`, `TikTokAnalyticsAdapter`) e `lib/tiktok-preflight.ts` (`TikTokPreflightValidator`, `TikTokHumanConsentGate`). Nenhuma chamada real feita ainda (sem credencial nesta rodada) — o código é o que SERIA chamado quando `TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET`/`TIKTOK_ACCESS_TOKEN` existirem.
-- **Podemos automatizar hoje:** arquitetura pronta — publicação por URL (`video/init`), status oficial (`ACCEPTED_BY_TIKTOK`/`REJECTED_BY_TIKTOK`, nunca confundido com a nossa pré-validação `PREVALIDATED_FOR_TIKTOK`), disclosure comercial (`brand_content_toggle`), consulta de `creator_info` (nunca hardcoda duração/formato — vem da própria conta).
+### TikTok (canal — PRIORIDADE Nº 1, ajuste estratégico Rodada 5, integração real Rodada 6)
+- **Canal principal de aquisição e conteúdo do MVP Automation First.**
+- **Fonte oficial utilizada:** TikTok Login Kit (OAuth) + Content Posting API. OAuth real: `lib/tiktok-oauth.ts` + `/api/integracoes/tiktok/oauth/start|callback`, tokens persistidos em `Integracao` (`lib/tiktok-token-store.ts` renova via refresh automaticamente). Publicação: `lib/tiktok-channel.ts` (`TikTokPublisher.publicar()`/`publicarFotos()`, `consultarCreatorInfo`, `tiktokCommercialDisclosure`, `TikTokAnalyticsAdapter`), upload em chunks (`lib/tiktok-upload.ts`), retry seguro (`lib/tiktok-retry.ts`), rate limiter local (`lib/tiktok-rate-limiter.ts`), webhook com assinatura+idempotência (`lib/tiktok-webhook.ts`, `/api/webhooks/tiktok`). Ver `TIKTOK-INTEGRATION.md` para o detalhamento completo.
+- **Podemos automatizar hoje (arquitetura real, aguardando credenciais para rodar contra a API de verdade):** OAuth completo; Direct Post de vídeo (`PULL_FROM_URL`/`FILE_UPLOAD`) e foto; preflight dinâmico contra `creator_info` real (`validarPreflightDinamico()`, nunca hardcoda duração/privacidade/comentário/duet/stitch); status oficial (`ACCEPTED_BY_TIKTOK`/`REJECTED_BY_TIKTOK`, nunca confundido com `PREVALIDATED_FOR_TIKTOK`); disclosure comercial (`brand_content_toggle`); 10 estados reais de configuração (`lib/tiktok-config-status.ts` — nunca "Conectado" só por existir client credentials).
 - **Exige autorização:** toda publicação — e a própria API do TikTok exige consentimento explícito do criador. `TikTokHumanConsentGate` garante que o Patrono faz todo o resto sozinho e só pede: "Conteúdo pronto. Autorizar publicação no TikTok."
-- **Não podemos automatizar:** publicação sem o consentimento do criador quando a API exigir; nunca hardcodar limite de duração/formato.
-- **Pendências:** registrar app no TikTok for Developers, obter credenciais reais, testar contra a API de verdade.
+- **Não podemos automatizar:** publicação sem o consentimento do criador quando a API exigir; nunca hardcodar limite de duração/formato; publicação PÚBLICA enquanto o app não estiver auditado (`PRIVATE_TESTING_ONLY`, `lib/tiktok-privacy.ts` — ver `TIKTOK-APP-AUDIT-CHECKLIST.md`).
+- **Pendências:** registrar app no TikTok for Developers, obter credenciais reais, testar contra a API de verdade, solicitar auditoria do app.
 
 ### Instagram (canal — prioridade nº 2)
 - **Fonte oficial utilizada:** Meta Graph API — **já em uso real** no projeto (`lib/instagram.ts`), com `InstagramPreflightValidator` (`lib/instagram-preflight.ts`, Rodada 5) validando container/codec/aspect ratio/tamanho/URL/conta/mídia antes de publicar.

@@ -99,6 +99,24 @@ Toda etapa relevante do Autopilot é registrada via `AutopilotStore.registrarAud
 
 `lib/autopilot-status.ts`, `calcularStatusAutopilotHome()`: `ATIVO | PAUSADO | PRECISA_DE_CONFIGURACAO | PRECISA_DE_VOCE | BLOQUEADO_POR_REGRA` — pronto para um futuro widget pequeno na Home, sem mudança visual nesta rodada.
 
+## 15.1 Rodada 6 — TikTok First: Primeira Integração Real
+
+Ver `TIKTOK-INTEGRATION.md` para o detalhamento completo. Resumo do que virou integração REAL nesta rodada (antes era só arquitetura/prevalidação):
+
+- **OAuth real** (`lib/tiktok-oauth.ts` + `/api/integracoes/tiktok/oauth/start|callback`) — Authorization Code, `state` assinado (HMAC, TTL 10min), token/refresh persistidos em `Integracao`, renovação automática (`lib/tiktok-token-store.ts`).
+- **Escopo único:** `video.publish`.
+- **10 estados de configuração reais** (`lib/tiktok-config-status.ts`) — nunca "Conectado" só por existir client credentials.
+- **Preflight dinâmico** (`validarPreflightDinamico()`) contra `creator_info` REAL — nunca hardcoda duração/privacidade/comentário/duet/stitch.
+- **Direct Post real:** vídeo (`PULL_FROM_URL` e `FILE_UPLOAD` com chunking oficial) e **Photo Post** (`publicarFotos()`).
+- **Status/Webhook:** polling oficial + `/api/webhooks/tiktok` com verificação de assinatura, janela anti-replay e idempotência.
+- **Retry seguro** (`publicarComRetry()`) — nunca duplica publicação já `ACCEPTED_BY_TIKTOK`.
+- **Rate limiter local** (`TikTokRateLimiter`) — sem serviço pago.
+- **App não auditado → `PRIVATE_TESTING_ONLY`** (`lib/tiktok-privacy.ts`) — nunca contornado; `executarTikTokPrivateTest()` só publica em privacidade privada.
+- **TikTok Shop Affiliate:** `TikTokShopAffiliateCapabilityProbe` nunca assume `AVAILABLE` sem aprovação real confirmada; `creator`/`seller`/`partner` tokens nunca se misturam.
+- **CreativeFactory `TIKTOK_FIRST`** e **RendererFFmpeg.renderTikTokVideo()** — conteúdo específico do TikTok, nunca reaproveitado do Instagram; nunca watermark cruzado entre canais.
+- **AudioUsagePolicy** (`lib/audio-policy.ts`) — sem API de biblioteca autorizada, o conteúdo sai sem música.
+- **`dryRunTikTokAutopilot()`** (`lib/tiktok-autopilot.ts`) — os 7 passos até `READY_TO_PUBLISH`, nunca chama Direct Post.
+
 ## 16. O que ainda não existe
 
-Nenhuma credencial real (Amazon, Mercado Livre, TikTok) foi configurada ou inventada nesta rodada — tudo funciona em modo "aguardando configuração" até a usuária conectar. `runAutopilot` ainda não cria `Produto`/`Conteudo`/`Sale` reais no banco por padrão — usa um `AutopilotStore` injetável (testável sem banco), com uma implementação Prisma pronta para ligar quando o fluxo completo de persistência for desenhado. `TikTokShopAffiliateProvider` aguarda confirmação de API oficial de afiliados.
+Nenhuma credencial real (Amazon, Mercado Livre, TikTok) foi configurada ou inventada nesta rodada — tudo funciona em modo "aguardando configuração" até a usuária conectar. `runAutopilot` ainda não cria `Produto`/`Conteudo`/`Sale` reais no banco por padrão — usa um `AutopilotStore` injetável (testável sem banco), com uma implementação Prisma pronta para ligar quando o fluxo completo de persistência for desenhado. `TikTokShopAffiliateProvider` aguarda confirmação de API oficial de afiliados. App do TikTok Channel ainda não foi submetido para auditoria (`TIKTOK-APP-AUDIT-CHECKLIST.md`) — nenhum item do checklist foi executado nesta rodada.
