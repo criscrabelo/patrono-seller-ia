@@ -1,6 +1,8 @@
 # Regras por Provider e Canal — Patrono Seller
 
-**Criado:** 14/09/2026 — Rodada 4 do P0.
+**Criado:** 14/09/2026 — Rodada 4 do P0. **Atualizado:** 15/09/2026 — Rodada 5 (Primeiro Autopilot Real).
+
+**Ajuste de prioridade estratégica (Rodada 5):** TikTok/TikTok Shop passou a ser a prioridade nº 1 do Patrono Seller. Ordem estratégica: 1. TikTok/TikTok Shop · 2. Instagram · 3. Amazon · 4. Mercado Livre · 5. Shopee · 6. Renner · 7. demais providers. As seções abaixo foram reordenadas para refletir isso.
 
 Este documento registra, por plataforma, o que sabemos hoje sobre o que pode ser automatizado, o que exige autorização, e o que não pode ser automatizado de forma nenhuma. É a versão em texto corrido de `lib/affiliate-provider-capabilities.ts` (providers de afiliados) e `lib/channel-registry.ts` (canais de publicação).
 
@@ -21,19 +23,19 @@ Este documento registra, por plataforma, o que sabemos hoje sobre o que pode ser
 
 ## Providers de afiliados
 
-### Amazon Associados
-- **Fonte oficial utilizada:** conhecimento geral sobre o Product Advertising API (PA-API) — **A VERIFICAR** contra a documentação atual antes de qualquer implementação real.
-- **Podemos automatizar hoje:** nada ainda (sem credenciais configuradas).
-- **Exige autorização:** catálogo/preço/link via PA-API — precisa de conta de Associados aprovada e volume mínimo de vendas para manter acesso.
-- **Não podemos automatizar:** nada identificado além da exigência de aprovação de conta.
-- **Pendências:** confirmar termos atuais do PA-API, limites de chamada, e o processo de aprovação da conta.
+### Amazon Associados (Amazon Creators API)
+- **Fonte oficial utilizada (Rodada 5):** Amazon Creators API — explicitamente NÃO a PA-API antiga/deprecated. Marketplace `www.amazon.com.br`, Locale `pt_BR`, Currency `BRL`. Implementado em `lib/amazon-creators.ts`.
+- **Podemos automatizar hoje:** código real pronto (SearchItems com `resources` mínimos, OAuth 2.0 client-credentials com cache de token, SalesRank oficial distinguido do score interno, `detailPageUrl` nunca reconstruída) — falta só a credencial (`AMAZON_CREATORS_CREDENTIAL_ID`, `AMAZON_CREATORS_CREDENTIAL_SECRET`, `AMAZON_CREATORS_PARTNER_TAG`). Sem credencial: "AMAZON — AGUARDANDO CONFIGURAÇÃO", nunca simula conexão.
+- **Exige autorização:** conta de Associados aprovada e credenciais da Creators API.
+- **Não podemos automatizar:** uso de imagem/mídia sem `MediaUsagePolicy` confirmada (default `UNKNOWN`, que só libera exibição — nunca reuso social/derivação por padrão).
+- **Pendências:** testar contra a API real assim que houver credencial (nenhuma chamada de rede real foi feita nesta rodada); confirmar `usagePolicy` real de imagens contra os termos do Programa de Associados.
 
 ### Mercado Livre
-- **Fonte oficial utilizada:** conhecimento geral de que existe uma API de desenvolvedores pública — **NÃO VERIFICADO** se ela cobre tendências/mais-vendidos, nem se o programa de afiliados usa essa mesma API para gerar link.
-- **Podemos automatizar hoje:** nada.
-- **Exige autorização:** provavelmente catálogo/produtos via API pública — A VERIFICAR.
-- **Não podemos automatizar:** geração de link de afiliada fora do mecanismo oficial do programa (nunca fabricar link manualmente fingindo ser de afiliado).
-- **Pendências:** ler a documentação oficial do Mercado Livre Developers e do programa de afiliados antes de qualquer implementação.
+- **Fonte oficial utilizada (Rodada 5):** endpoints `/highlights` (destaques) e `/trends` do Mercado Livre — implementado em `lib/mercado-livre-radar.ts`.
+- **Podemos automatizar hoje:** descoberta de produto (`productDiscovery = AUTOMATIC`) via `/highlights`, quando configurado (`MERCADO_LIVRE_APP_ID`, `MERCADO_LIVRE_CLIENT_SECRET`).
+- **Exige autorização:** geração de link de afiliado (`affiliateLinkGeneration = ASSISTED`) — SEMPRE feita pela ferramenta oficial do programa pela própria usuária; nunca fabricado automaticamente.
+- **Não podemos automatizar:** transformar ranking/categoria/busca diretamente em link (sempre resolve para o produto individual primeiro); Campanha de Criador com produto físico obrigatório nunca aceita vídeo gerado por IA fingindo ser gravação real (`podeSubmeterAutomaticamente()` bloqueia com `PHYSICAL_PRODUCT_REQUIRED`).
+- **Pendências:** encontrar/confirmar API oficial específica de geração de link de afiliado antes de mudar `affiliateLinkGeneration` para `AUTOMATIC`.
 
 ### Shopee
 - **REGRA CRÍTICA (inegociável):** nenhuma automação de navegador, nenhuma raspagem de página da Shopee, em nenhuma hipótese — nem para produtos, nem rankings, nem imagens, nem preços, nem criativos.
@@ -43,12 +45,13 @@ Este documento registra, por plataforma, o que sabemos hoje sobre o que pode ser
 - **Não podemos automatizar:** qualquer coisa que dependa de scraping ou automação de navegador.
 - **Pendências:** confirmar se existe API oficial de afiliados acessível; até lá, o funcionamento continua 100% manual (cadastro do link feito pela própria usuária).
 
-### TikTok Shop
-- **Fonte oficial utilizada:** nenhuma consultada nesta rodada.
-- **Podemos automatizar hoje:** nada.
-- **Exige autorização:** provavelmente uma API de sellers/afiliados — A VERIFICAR.
+### TikTok Shop (provider — separado do canal TikTok abaixo)
+- **PRIORIDADE Nº 1 do Patrono Seller (ajuste estratégico, Rodada 5).** Deliberadamente separado de `TikTokChannel`: TikTok Shop cuida de produtos/oportunidades/links/comissões/vendas; o canal TikTok (abaixo) cuida de criação/publicação/disclosure/consentimento/status/métricas.
+- **Fonte oficial utilizada:** nenhuma API de afiliados do TikTok Shop confirmada ainda nesta rodada — `TikTokShopAffiliateProvider` (`lib/tiktok-shop-provider.ts`) existe como interface `OpportunitySource` real, mas nunca inventa produto/link/comissão sem API confirmada.
+- **Podemos automatizar hoje:** nada de catálogo/link/comissão ainda — `healthCheck()` honesto: "AGUARDANDO CONFIGURAÇÃO" sem credencial, `getCandidates()` sempre `[]`.
+- **Exige autorização:** provavelmente uma API de sellers/afiliados — A VERIFICAR contra o TikTok Shop Partner Center.
 - **Não podemos automatizar:** nada identificado além da falta de verificação.
-- **Pendências:** ler a documentação oficial do TikTok Shop Partner Center.
+- **Pendências:** ler a documentação oficial do TikTok Shop Partner Center e confirmar a API de afiliados antes de implementar de verdade.
 
 ### Hotmart
 - **Fonte oficial utilizada:** conhecimento geral de que a Hotmart documenta publicamente uma API de produtos/vendas/comissões e webhook de venda.
@@ -82,19 +85,20 @@ Este documento registra, por plataforma, o que sabemos hoje sobre o que pode ser
 
 ## Canais de publicação
 
-### Instagram
-- **Fonte oficial utilizada:** Meta Graph API — **já em uso real** no projeto (`lib/instagram.ts`).
+### TikTok (canal — PRIORIDADE Nº 1, ajuste estratégico Rodada 5)
+- **Canal principal de aquisição e conteúdo do MVP Automation First** — tratado com mais prioridade que Instagram a partir desta rodada.
+- **Fonte oficial utilizada:** TikTok Content Posting API — código real em `lib/tiktok-channel.ts` (`TikTokPublisher`, `consultarCreatorInfo`, `tiktokCommercialDisclosure`, `TikTokAnalyticsAdapter`) e `lib/tiktok-preflight.ts` (`TikTokPreflightValidator`, `TikTokHumanConsentGate`). Nenhuma chamada real feita ainda (sem credencial nesta rodada) — o código é o que SERIA chamado quando `TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET`/`TIKTOK_ACCESS_TOKEN` existirem.
+- **Podemos automatizar hoje:** arquitetura pronta — publicação por URL (`video/init`), status oficial (`ACCEPTED_BY_TIKTOK`/`REJECTED_BY_TIKTOK`, nunca confundido com a nossa pré-validação `PREVALIDATED_FOR_TIKTOK`), disclosure comercial (`brand_content_toggle`), consulta de `creator_info` (nunca hardcoda duração/formato — vem da própria conta).
+- **Exige autorização:** toda publicação — e a própria API do TikTok exige consentimento explícito do criador. `TikTokHumanConsentGate` garante que o Patrono faz todo o resto sozinho e só pede: "Conteúdo pronto. Autorizar publicação no TikTok."
+- **Não podemos automatizar:** publicação sem o consentimento do criador quando a API exigir; nunca hardcodar limite de duração/formato.
+- **Pendências:** registrar app no TikTok for Developers, obter credenciais reais, testar contra a API de verdade.
+
+### Instagram (canal — prioridade nº 2)
+- **Fonte oficial utilizada:** Meta Graph API — **já em uso real** no projeto (`lib/instagram.ts`), com `InstagramPreflightValidator` (`lib/instagram-preflight.ts`, Rodada 5) validando container/codec/aspect ratio/tamanho/URL/conta/mídia antes de publicar.
 - **Podemos automatizar hoje:** publicação de imagem, carrossel, Reels e Stories via Graph API, com gate de aprovação humana antes de publicar (já implementado, rodadas anteriores).
 - **Exige autorização:** token de app Meta configurado pela usuária (já é o fluxo atual).
 - **Não podemos automatizar:** nada além da própria exigência de token/app da Meta.
 - **Pendências:** reconferir limites exatos de tamanho/duração por tipo de conta antes de mudar qualquer regra.
-
-### TikTok
-- **Fonte oficial utilizada:** conhecimento geral de que existe uma Content Posting API oficial — nenhuma chamada real feita nesta rodada.
-- **Podemos automatizar hoje:** nada (sem credenciais).
-- **Exige autorização:** toda publicação — e a própria API do TikTok exige consentimento explícito do criador antes de publicar (não é algo que dá pra contornar).
-- **Não podemos automatizar:** publicação sem o consentimento do criador; nunca hardcodar limite de duração — deve vir da própria API (creator info) quando implementado (ver `TikTokPreflightValidator`, `lib/tiktok-preflight.ts`).
-- **Pendências:** registrar app no TikTok for Developers, confirmar escopos, e então implementar o `TikTokPreflightValidator` de verdade.
 
 ### YouTube (Shorts)
 - **Fonte oficial utilizada:** conhecimento geral de que existe a YouTube Data API (upload).

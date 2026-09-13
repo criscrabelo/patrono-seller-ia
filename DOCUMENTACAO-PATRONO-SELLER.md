@@ -316,3 +316,22 @@ Nenhuma integração real (Amazon PA-API, Mercado Livre, Shopee, TikTok, Instagr
 - **1 usuária = 1 workspace** nesta fase (não há workspace compartilhado por equipe ainda).
 - **`Workspace.ownerId` sem chave estrangeira** (evita ciclo de criação); `User.workspaceId` é quem de fato isola os dados.
 - **Prisma Migrate a partir de agora**, não mais `db push`, para qualquer mudança que precise transformar dados existentes.
+- **Ajuste de prioridade estratégica (Rodada 5): TikTok/TikTok Shop é o canal e provider prioritário nº 1** do MVP Automation First — ordem: TikTok → Instagram → Amazon → Mercado Livre → Shopee → Renner → demais. Reflete arquitetura, testes, Autopilot e documentação a partir desta rodada.
+
+## 22. Rodada 5 — Primeiro Autopilot Real
+
+Ver `AUTOPILOT-COMPLIANCE.md` para o detalhamento completo (Amazon, Mercado Livre, TikTok, Instagram, Media Rights, Automation Feasibility, dry run, kill switch). Resumo do que foi implementado de verdade nesta rodada (não só interface):
+
+- **`AutomationFeasibilityScore`** (`lib/automation-feasibility.ts`) — combina potencial de venda (55%) e automatizabilidade (45%); um produto mais automatizável pode superar um produto de potencial maior, mas manual.
+- **Amazon Creators API** (`lib/amazon-creators.ts`) — primeiro provider real de afiliados, com cache de token OAuth (`lib/oauth-token-cache.ts`), SalesRank oficial distinto do score interno, link nunca reconstruído. Sem credencial: "AMAZON — AGUARDANDO CONFIGURAÇÃO".
+- **Mercado Livre Radar** (`lib/mercado-livre-radar.ts`) — `/highlights` oficial; `affiliateLinkGeneration = ASSISTED` (nunca gera link sozinho); distingue afiliado-por-venda de Campanha de Criador (produto físico obrigatório bloqueia vídeo gerado por IA).
+- **Media Rights Gate** (`lib/media-rights.ts`) — `MediaUsagePolicy` (`DISPLAY_ONLY | TEMPORARY_REFERENCE | SOCIAL_REUSE_ALLOWED | DERIVATIVE_ALLOWED | UNKNOWN | PROHIBITED`); `UNKNOWN` só libera exibição.
+- **Compliance Engine** (`lib/compliance-engine.ts`) — decide disclosure comercial/afiliado, fail-safe (nunca omite por padrão).
+- **TikTok (canal, prioridade nº 1)** — `lib/tiktok-preflight.ts` (`TikTokPreflightValidator`, `TikTokPublicationStatus`, `TikTokHumanConsentGate`) e `lib/tiktok-channel.ts` (`TikTokPublisher`, `TikTokCommercialDisclosure`, `TikTokAnalyticsAdapter`, `consultarCreatorInfo`). `PREVALIDATED_FOR_TIKTOK` nunca é confundido com `ACCEPTED_BY_TIKTOK`.
+- **TikTok Shop (provider, separado do canal)** — `lib/tiktok-shop-provider.ts` (`TikTokShopAffiliateProvider`), deliberadamente sem API oficial confirmada ainda — nunca inventa oportunidade.
+- **Instagram Preflight** — `lib/instagram-preflight.ts`, contra as regras já conhecidas de `lib/channel-registry.ts`.
+- **RendererFFmpeg** (`lib/renderer-ffmpeg.ts`) — primeira implementação real (não só interface) de `RendererProvider`, usando `ffmpeg-static` (grátis, já era dependência): Reel 9:16, Post 1:1, Carrossel (mín. 3 cards). Nunca inventa texto — overlays vêm de quem chama. Upload via Supabase Storage (`lib/supabase.ts`, `uploadBuffer`).
+- **Autopilot** (`lib/autopilot.ts`, `runAutopilot`) — ciclo real de 14 etapas, TikTok como canal primário e Instagram como alternativa. Dry run por padrão (`AUTOPILOT_DRY_RUN`, default `true`); produção só publica com `automationMode === 'AUTOMATIC'`. Kill switch (`Workspace.automationPaused`, migração `20260915000000_workspace_automation_controls`) checado no início e de novo antes da publicação. Limites internos (`LIMITES_PADRAO`) e anti-spam (nunca republica o mesmo produto no mesmo dia).
+- **Status Home (dado, sem redesenho)** — `lib/autopilot-status.ts`, `calcularStatusAutopilotHome()`: `ATIVO | PAUSADO | PRECISA_DE_CONFIGURACAO | PRECISA_DE_VOCE | BLOQUEADO_POR_REGRA`.
+
+**Pendências desta rodada:** integração real de TikTok/Instagram/Amazon/ML precisa de credenciais reais (nenhuma foi inventada); `runAutopilot` ainda não cria `Produto`/`Conteudo`/`Sale` reais no banco por padrão (usa `AutopilotStore` injetável, com implementação Prisma em `lib/autopilot-store-prisma.ts` baseada em `AuditLog`); `TikTokShopAffiliateProvider` aguarda confirmação de API oficial.
