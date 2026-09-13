@@ -44,6 +44,11 @@ export type OrigemOportunidade = (typeof ORIGEM_OPORTUNIDADE)[number]
  * Uma oportunidade concreta de venda dentro de um provider. Campos que
  * dependem de dado externo não confirmado ficam `null`/`undefined` — nunca
  * um valor inventado para não deixar a tela "vazia".
+ *
+ * Os campos de `Automatizabilidade` (Rodada 5) alimentam o
+ * `AutomationFeasibilityScore` (lib/automation-feasibility.ts) — sem eles,
+ * o Patrono só saberia "o que vende mais", não "o que consigo vender
+ * sozinho, com segurança".
  */
 export interface AffiliateOpportunity {
   providerId: string
@@ -59,6 +64,16 @@ export interface AffiliateOpportunity {
   origin: OrigemOportunidade
   source: string
   lastVerifiedAt: string
+
+  // ── Automatizabilidade ──────────────────────────────────────────────
+  canGenerateLinkAutomatically?: boolean
+  authorizedMediaAvailable?: boolean
+  canGenerateContent?: boolean
+  canAutoPublish?: boolean
+  requiresUserConsent?: boolean
+  platformRestrictions?: string[]
+  rulesConfidence?: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'
+  automationCost?: 'FREE' | 'LOW' | 'MEDIUM' | 'HIGH'
 }
 
 /** Uma fonte de candidatos a oportunidade — um provider, um canal, um dado informado pela usuária. */
