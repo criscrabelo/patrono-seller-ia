@@ -49,6 +49,7 @@ export type AutomationMode = (typeof AUTOMATION_MODES)[number]
 // transformar a usuária em operadora do dia a dia.
 export const HUMAN_ACTION_REASONS = [
   'TIKTOK_CONSENT', // consentimento de publicação exigido pela plataforma
+  'OAUTH_AUTHORIZATION_REQUIRED', // conexão inicial de conta via OAuth (diferente de renovar consentimento por post) — Rodada 6
   'TOKEN_EXPIRED', // token de integração expirado, precisa reconectar
   'EXTERNAL_APPROVAL', // aprovação de terceiro (produtor, marca) pendente
   'PROGRAM_REGISTRATION', // cadastro em programa de afiliados exige ato pessoal
