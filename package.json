@@ -11,7 +11,10 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:rotas": "node --test tests/protecao-rotas.test.mjs",
+    "test:zerado": "node --test tests/estado-zerado.test.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

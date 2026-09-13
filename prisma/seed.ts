@@ -1,85 +1,66 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
+/**
+ * Seed — apenas o primeiro administrador.
+ *
+ * REGRA PERMANENTE: "zero significa zero".
+ * Uma conta recém-criada começa com 0 produtos, 0 links, 0 cliques, 0 vendas,
+ * R$ 0,00 de comissão e 0 publicações. Este arquivo NÃO cria produtos,
+ * links, vendas nem qualquer número de exemplo.
+ *
+ * (Versões anteriores criavam "Power Bank 20000mAh" e "Fone Bluetooth Premium"
+ * com IDs fixos. Removidos: eram dados fictícios entrando no banco real.)
+ *
+ * Dados de demonstração, quando necessários para teste, ficam em um banco
+ * isolado e nunca neste arquivo.
+ */
+
 const prisma = new PrismaClient()
 
-async function main() {
-  console.log('Iniciando seed...')
+/**
+ * Trava de segurança: o seed cria um usuário com senha conhecida.
+ * Rodá-lo contra o banco de produção abriria uma porta de entrada.
+ * Para rodar mesmo assim (primeiro provisionamento), use:
+ *   PERMITIR_SEED_PRODUCAO=sim npm run db:seed
+ */
+function verificarAmbiente() {
+  if (process.env.PERMITIR_SEED_PRODUCAO === 'sim') return
 
-  const hashedPassword = await bcrypt.hash('Admin@2025', 12)
+  const url = process.env.DATABASE_URL ?? ''
+  const local = /localhost|127\.0\.0\.1|host\.docker\.internal/.test(url)
+
+  if (!local) {
+    console.error(
+      '\nSeed bloqueado: DATABASE_URL não aponta para um banco local.\n' +
+        'Este seed cria um usuário com senha padrão e não deve tocar produção.\n' +
+        'Se este for mesmo o primeiro provisionamento, rode:\n' +
+        '  PERMITIR_SEED_PRODUCAO=sim npm run db:seed\n'
+    )
+    process.exit(1)
+  }
+}
+
+async function main() {
+  verificarAmbiente()
+
+  const email = process.env.SEED_ADMIN_EMAIL ?? 'admin@patronosellerai.com'
+  const senha = process.env.SEED_ADMIN_PASSWORD ?? 'Admin@2025'
 
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@patronosellerai.com' },
+    where: { email },
     update: {},
     create: {
-      email: 'admin@patronosellerai.com',
-      password: hashedPassword,
+      email,
+      password: await bcrypt.hash(senha, 12),
       name: 'Administrador',
       role: 'admin',
       status: 'ativo',
     },
   })
 
-  console.log('Usuário admin criado:', admin.email)
-
-  const produto1 = await prisma.produto.upsert({
-    where: { id: 'produto-exemplo-1' },
-    update: {},
-    create: {
-      id: 'produto-exemplo-1',
-      userId: admin.id,
-      nome: 'Power Bank 20000mAh',
-      categoria: 'Eletronicos',
-      preco: 49.9,
-      linkProduto: 'https://shopee.com.br/exemplo',
-      descricao:
-        'Carregador portátil de alta capacidade com carregamento rápido e 3 portas USB.',
-      publicoAlvo: ['Jovens 13-18', 'Adultos 25-45', 'Profissionais'],
-      origemConteudo: 'Licenciado',
-      tipoVenda: 'Afiliado',
-      observacoes: 'Produto com ótima relação custo-benefício.',
-      beneficios: [
-        'Carga rápida 22W',
-        'Capacidade para 4 cargas de celular',
-        'Indicador LED de bateria',
-      ],
-      pontosNegativos: ['Carregamento do banco em si é lento'],
-      imagens: [],
-      videos: [],
-      status: 'ativo',
-    },
-  })
-
-  const produto2 = await prisma.produto.upsert({
-    where: { id: 'produto-exemplo-2' },
-    update: {},
-    create: {
-      id: 'produto-exemplo-2',
-      userId: admin.id,
-      nome: 'Fone Bluetooth Premium',
-      categoria: 'Eletronicos',
-      preco: 89.9,
-      linkProduto: 'https://mercadolivre.com.br/exemplo',
-      descricao:
-        'Fone de ouvido sem fio com cancelamento de ruído e até 30h de bateria.',
-      publicoAlvo: ['Adultos 25-45', 'Profissionais', 'Estudantes'],
-      origemConteudo: 'De fornecedor',
-      tipoVenda: 'Marketplace',
-      observacoes: 'Qualidade surpreendente para o preço.',
-      beneficios: [
-        'Cancelamento ativo de ruído',
-        '30h de bateria',
-        'Conectividade multipoint',
-      ],
-      pontosNegativos: ['Case de carregamento um pouco grande'],
-      imagens: [],
-      videos: [],
-      status: 'ativo',
-    },
-  })
-
-  console.log('Produtos criados:', produto1.nome, '|', produto2.nome)
-  console.log('Seed concluído com sucesso!')
+  console.log(`Administrador pronto: ${admin.email}`)
+  console.log('Nenhum produto, link ou venda foi criado (estado zerado).')
 }
 
 main()
