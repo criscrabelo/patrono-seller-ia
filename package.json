@@ -20,6 +20,7 @@
     "test:cron": "node --test tests/cron-seguranca.test.mjs",
     "test:fonte-unica": "tsx --test tests/fonte-unica-vendas.test.ts",
     "test:primeira-comissao": "node --test tests/primeira-comissao.test.mjs",
+    "test:isolamento-programas": "node --test tests/isolamento-programas-vendas.test.mjs",
     "test": "node --test tests/*.test.mjs && tsx --test tests/*.test.ts"
   },
   "dependencies": {
