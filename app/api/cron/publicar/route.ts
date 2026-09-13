@@ -10,13 +10,19 @@ export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  // Segurança: se CRON_SECRET estiver definido, exige o header enviado pela Vercel.
+  // Segurança: este endpoint não tem sessão de usuária (quem chama é a
+  // Vercel Cron, não uma pessoa logada) — isso NÃO significa que pode
+  // aceitar chamadas públicas sem autenticação própria. Exige sempre o
+  // segredo, tanto faz se CRON_SECRET está configurado ou não: se não
+  // estiver, a rota se recusa a rodar em vez de ficar aberta por padrão.
   const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization')
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-    }
+  if (!secret) {
+    console.error('[cron/publicar] CRON_SECRET não configurado — recusando executar.')
+    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  }
+  const auth = req.headers.get('authorization')
+  if (auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
 
   const agora = new Date()

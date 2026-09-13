@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client'
+import { verificarAmbienteDeSeed } from '../lib/seed-guard'
 const prisma = new PrismaClient()
 async function main() {
+  verificarAmbienteDeSeed('seed-teste-duracao30.ts')
   const admin = await prisma.user.findUnique({ where: { email: 'admin@patronosellerai.com' } })
   if (!admin) throw new Error('rode prisma/seed.ts antes')
   const produto = await prisma.produto.create({

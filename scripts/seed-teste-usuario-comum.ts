@@ -1,10 +1,13 @@
 import { PrismaClient } from '@prisma/client'
+import { verificarAmbienteDeSeed } from '../lib/seed-guard'
 import bcrypt from 'bcryptjs'
 import { criarUsuarioComWorkspace } from '../lib/workspace'
 
 const prisma = new PrismaClient()
 
 async function main() {
+  verificarAmbienteDeSeed('seed-teste-usuario-comum.ts')
+
   const email = 'usuario.teste@patronosellerai.com'
   const senhaHash = await bcrypt.hash('senha123', 10)
 

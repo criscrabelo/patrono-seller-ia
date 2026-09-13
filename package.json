@@ -17,6 +17,7 @@
     "test:isolamento": "node --test tests/isolamento-workspace.test.mjs",
     "test:audit-log": "node --test tests/audit-log.test.mjs",
     "test:programa-venda-comissao": "tsx --test tests/programa-venda-comissao.test.ts",
+    "test:cron": "node --test tests/cron-seguranca.test.mjs",
     "test": "node --test tests/*.test.mjs && tsx --test tests/*.test.ts"
   },
   "dependencies": {
