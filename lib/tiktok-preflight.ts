@@ -85,6 +85,102 @@ export interface ConsentGateResult {
   mensagemParaUsuaria: string | null
 }
 
+// ── Preflight dinâmico com creator_info REAL (Rodada 6) ──────────────────
+// Enquanto a Rodada 5 só devolvia NOT_VERIFIED sem credencial, agora que o
+// OAuth real existe (lib/tiktok-oauth.ts) o preflight consulta creator_info
+// de verdade antes de cada Direct Post — nunca hardcoda duração/formato.
+
+export interface TikTokContentTecnico {
+  duracaoSegundos: number | null
+  privacyLevel: string | null
+  comentariosHabilitados: boolean
+  duetHabilitado: boolean
+  stitchHabilitado: boolean
+}
+
+/**
+ * Valida os dados técnicos do conteúdo contra o `creator_info` REAL da
+ * conta — nunca contra um limite fixo no código. Campo do creatorInfo que
+ * vier `'unknown'` nunca é tratado como "sem limite"; vira `NOT_VERIFIED`
+ * para aquele aspecto específico.
+ */
+export function validarPreflightDinamico(creatorInfo: TikTokCreatorInfo, content: TikTokContentTecnico): TikTokPreflightResult {
+  const disclosureComercialNecessaria = true // TikTok exige disclosure para conteúdo comercial/afiliado — nunca assumimos que não precisa
+
+  if (creatorInfo.duracaoMaximaSegundos === 'unknown' || creatorInfo.privacidadeOpcoesPermitidas === 'unknown') {
+    return {
+      status: 'NOT_VERIFIED',
+      creatorInfo,
+      disclosureComercialNecessaria,
+      motivo: 'creator_info não trouxe todos os campos necessários — não é possível confirmar tecnicamente ainda.',
+    }
+  }
+
+  if (content.duracaoSegundos != null && content.duracaoSegundos > creatorInfo.duracaoMaximaSegundos) {
+    return {
+      status: 'BLOCKED_BY_POLICY',
+      creatorInfo,
+      disclosureComercialNecessaria,
+      motivo: `Duração (${content.duracaoSegundos}s) excede o máximo permitido pela conta (${creatorInfo.duracaoMaximaSegundos}s).`,
+    }
+  }
+
+  if (content.privacyLevel != null && !creatorInfo.privacidadeOpcoesPermitidas.includes(content.privacyLevel)) {
+    return {
+      status: 'BLOCKED_BY_POLICY',
+      creatorInfo,
+      disclosureComercialNecessaria,
+      motivo: `Privacidade "${content.privacyLevel}" não está entre as opções permitidas pela conta (${creatorInfo.privacidadeOpcoesPermitidas.join(', ')}).`,
+    }
+  }
+
+  if (content.comentariosHabilitados && creatorInfo.comentariosPermitidos === false) {
+    return {
+      status: 'BLOCKED_BY_POLICY',
+      creatorInfo,
+      disclosureComercialNecessaria,
+      motivo: 'Conta não permite comentários habilitados para este post.',
+    }
+  }
+  if (content.duetHabilitado && creatorInfo.duetPermitido === false) {
+    return { status: 'BLOCKED_BY_POLICY', creatorInfo, disclosureComercialNecessaria, motivo: 'Conta não permite duet habilitado.' }
+  }
+  if (content.stitchHabilitado && creatorInfo.stitchPermitido === false) {
+    return { status: 'BLOCKED_BY_POLICY', creatorInfo, disclosureComercialNecessaria, motivo: 'Conta não permite stitch habilitado.' }
+  }
+
+  // TikTok sempre exige consentimento explícito da usuária antes do envio (regra oficial) —
+  // aqui devolvemos TECHNICALLY_VALID (passou nas checagens técnicas); é o `tiktokHumanConsentGate`
+  // (função abaixo) quem decide se falta consentimento antes de publicar de fato.
+  return { status: 'TECHNICALLY_VALID', creatorInfo, disclosureComercialNecessaria, motivo: 'Conferido contra o creator_info real da conta.' }
+}
+
+/**
+ * Implementação real: quando há token TikTok válido, consulta creator_info
+ * de verdade e valida contra os dados dinâmicos da conta. Sem token,
+ * comporta-se como `TikTokPreflightNotConfigured` (NOT_VERIFIED).
+ */
+export class TikTokPreflightLive implements TikTokPreflightValidator {
+  constructor(
+    private obterCreatorInfo: () => Promise<TikTokCreatorInfo | null>,
+    private obterConteudoTecnico: (params: { contentId: string; workspaceId: string }) => Promise<TikTokContentTecnico>
+  ) {}
+
+  async validar(params: { contentId: string; workspaceId: string }): Promise<TikTokPreflightResult> {
+    const creatorInfo = await this.obterCreatorInfo()
+    if (!creatorInfo) {
+      return {
+        status: 'NOT_VERIFIED',
+        creatorInfo: null,
+        disclosureComercialNecessaria: true,
+        motivo: 'Sem conexão TikTok ativa — nenhuma chamada foi feita.',
+      }
+    }
+    const content = await this.obterConteudoTecnico(params)
+    return validarPreflightDinamico(creatorInfo, content)
+  }
+}
+
 export function tiktokHumanConsentGate(preflight: TikTokPreflightResult): ConsentGateResult {
   if (preflight.status === 'BLOCKED_BY_POLICY') {
     return { liberadoParaPublicarSozinho: false, mensagemParaUsuaria: null } // não é consentimento, é bloqueio — vira HumanActionRequired diferente
