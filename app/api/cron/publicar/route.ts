@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
 
     // Com vídeo: precisa do Instagram conectado para publicar o Reels.
     const integracao = await prisma.integracao.findUnique({
-      where: { userId_plataforma: { userId: c.userId, plataforma: 'instagram' } },
+      where: { workspaceId_plataforma: { workspaceId: c.workspaceId, plataforma: 'instagram' } },
     })
     if (
       !integracao ||

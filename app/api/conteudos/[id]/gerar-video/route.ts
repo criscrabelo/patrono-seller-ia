@@ -42,7 +42,7 @@ export async function POST(
   }
 
   const conteudo = await prisma.conteudo.findFirst({
-    where: { id, userId: session.user.id },
+    where: { id, workspaceId: session.user.workspaceId },
     include: { produto: { select: { imagens: true, nome: true } } },
   })
   if (!conteudo) {

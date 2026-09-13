@@ -33,6 +33,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name,
           role: user.role,
+          workspaceId: user.workspaceId,
         }
       },
     }),
@@ -42,6 +43,16 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id
         token.role = (user as { role?: string }).role ?? 'usuario'
+        token.workspaceId = (user as { workspaceId?: string }).workspaceId
+      } else if (!token.workspaceId && token.id) {
+        // Sessão emitida antes desta versão (sem workspaceId no token).
+        // Busca uma vez e completa o token, em vez de forçar logout de
+        // quem já estava logado quando este campo foi introduzido.
+        const atual = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { workspaceId: true },
+        })
+        if (atual) token.workspaceId = atual.workspaceId
       }
       return token
     },
@@ -49,6 +60,10 @@ export const authOptions: NextAuthOptions = {
       if (token && session.user) {
         session.user.id = token.id as string
         session.user.role = token.role as string
+        // Todo dado operacional (produto, link, conteúdo, integração,
+        // programa, venda, comissão) é isolado por workspaceId — nunca por
+        // userId sozinho. Ver lib/workspace.ts e DOCUMENTACAO-PATRONO-SELLER.md.
+        session.user.workspaceId = token.workspaceId as string
       }
       return session
     },
@@ -62,6 +77,7 @@ declare module 'next-auth' {
       email: string
       name?: string | null
       role: string
+      workspaceId: string
     }
   }
 }

@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const userId = session.user.id
+  const workspaceId = session.user.workspaceId
 
   const [
     totalProdutos,
@@ -19,29 +19,29 @@ export async function GET(req: NextRequest) {
     conteudosPorStatus,
     linksDoUsuario,
   ] = await Promise.all([
-    prisma.produto.count({ where: { userId, status: { not: 'descartado' } } }),
-    prisma.conteudo.count({ where: { userId } }),
-    prisma.conteudo.count({ where: { userId, status: 'aguardando_aprovacao' } }),
-    prisma.conteudo.count({ where: { userId, status: 'publicado' } }),
+    prisma.produto.count({ where: { workspaceId, status: { not: 'descartado' } } }),
+    prisma.conteudo.count({ where: { workspaceId } }),
+    prisma.conteudo.count({ where: { workspaceId, status: 'aguardando_aprovacao' } }),
+    prisma.conteudo.count({ where: { workspaceId, status: 'publicado' } }),
     // Soma TODAS as visualizações, não apenas top 5
     prisma.conteudo.aggregate({
-      where: { userId },
+      where: { workspaceId },
       _sum: { visualizacoes: true },
     }),
     // Conteúdos recentes de todos os status (não só publicados)
     prisma.conteudo.findMany({
-      where: { userId },
+      where: { workspaceId },
       orderBy: { createdAt: 'desc' },
       take: 5,
       include: { produto: { select: { nome: true } } },
     }),
     prisma.conteudo.groupBy({
       by: ['status'],
-      where: { userId },
+      where: { workspaceId },
       _count: { status: true },
     }),
     prisma.linkDinamico.findMany({
-      where: { userId },
+      where: { workspaceId },
       include: { produto: { select: { nome: true } } },
     }),
   ])

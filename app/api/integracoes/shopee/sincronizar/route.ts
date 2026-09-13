@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   const { acao } = body // 'gerar_links' | 'sincronizar_produtos'
 
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'shopee' } },
+    where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'shopee' } },
   })
 
   if (!integracao || integracao.status !== 'conectado') {
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     // Gera links rastreáveis (patrono.link/slug) para todos os produtos Shopee
     const produtos = await prisma.produto.findMany({
       where: {
-        userId: session.user.id,
+        workspaceId: session.user.workspaceId,
         status: 'ativo',
         linkProduto: { not: null },
       },
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     for (const prod of shopeeProds) {
       // Verifica se já existe link Shopee para este produto
       const existing = await prisma.linkDinamico.findFirst({
-        where: { userId: session.user.id, produtoId: prod.id, plataforma: 'shopee' },
+        where: { workspaceId: session.user.workspaceId, produtoId: prod.id, plataforma: 'shopee' },
       })
 
       if (existing) { jaExistiam++; continue }
@@ -73,6 +73,7 @@ export async function POST(req: NextRequest) {
       await prisma.linkDinamico.create({
         data: {
           userId: session.user.id,
+          workspaceId: session.user.workspaceId,
           produtoId: prod.id,
           slug: gerarSlug(prod.nome, 'shopee'),
           plataforma: 'shopee',

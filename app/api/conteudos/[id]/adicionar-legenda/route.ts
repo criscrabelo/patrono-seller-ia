@@ -44,7 +44,7 @@ export async function POST(
   const preset = typeof body.preset === 'string' ? body.preset : 'glass'
 
   const conteudo = await prisma.conteudo.findFirst({
-    where: { id, userId: session.user.id },
+    where: { id, workspaceId: session.user.workspaceId },
   })
   if (!conteudo) return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
   if (!conteudo.videoUrl) {

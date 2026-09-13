@@ -57,7 +57,7 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   const conteudo = await prisma.conteudo.findFirst({
-    where: { id, userId: session.user.id },
+    where: { id, workspaceId: session.user.workspaceId },
   })
   if (!conteudo) return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
 

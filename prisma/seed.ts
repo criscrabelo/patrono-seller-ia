@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import { criarUsuarioComWorkspace } from '../lib/workspace'
 
 /**
  * Seed — apenas o primeiro administrador.
@@ -47,17 +48,21 @@ async function main() {
   const email = process.env.SEED_ADMIN_EMAIL ?? 'admin@patronosellerai.com'
   const senha = process.env.SEED_ADMIN_PASSWORD ?? 'Admin@2025'
 
-  const admin = await prisma.user.upsert({
-    where: { email },
-    update: {},
-    create: {
-      email,
-      password: await bcrypt.hash(senha, 12),
-      name: 'Administrador',
-      role: 'admin',
-      status: 'ativo',
-    },
-  })
+  // upsert não serve aqui: criar a usuária exige criar o workspace dela
+  // junto (ver lib/workspace.ts), então checamos manualmente se já existe.
+  const existente = await prisma.user.findUnique({ where: { email } })
+
+  const admin =
+    existente ??
+    (
+      await criarUsuarioComWorkspace(prisma, {
+        email,
+        password: await bcrypt.hash(senha, 12),
+        name: 'Administrador',
+        role: 'admin',
+        status: 'ativo',
+      })
+    ).user
 
   console.log(`Administrador pronto: ${admin.email}`)
   console.log('Nenhum produto, link ou venda foi criado (estado zerado).')

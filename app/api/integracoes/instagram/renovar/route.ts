@@ -9,7 +9,7 @@ export async function POST() {
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'instagram' } },
+    where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'instagram' } },
   })
 
   if (!integracao || !integracao.accessToken) {

@@ -9,7 +9,7 @@ async function main() {
   // produto com imagem (necessária pra gerar vídeo)
   const produto = await prisma.produto.create({
     data: {
-      userId: admin.id,
+      userId: admin.id, workspaceId: admin.workspaceId,
       nome: 'Produto Teste Vídeo',
       descricao: 'teste',
       preco: 99.9,
@@ -23,7 +23,7 @@ async function main() {
   // conteúdo aprovado, com prompt de vídeo, sem vídeo ainda
   const c = await prisma.conteudo.create({
     data: {
-      userId: admin.id,
+      userId: admin.id, workspaceId: admin.workspaceId,
       produtoId: produto.id,
       roteiro: 'Roteiro de teste',
       legendaTiktok: 'Legenda #teste',

@@ -7,19 +7,66 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Workspace — fundação de isolamento de dados.
+//
+// Hoje cada usuária tem exatamente UM workspace próprio (relação 1:1: ao
+// registrar, cria-se um workspace com ela como dona). Não existe ainda
+// conceito de equipe/organização compartilhando o mesmo workspace — isso é
+// modelado como `members: User[]` para não exigir outra migração quando
+// isso for necessário, mas por enquanto só a dona é membro do próprio
+// workspace.
+//
+// Todo registro operacional (produto, link, conteúdo, integração, programa
+// de afiliados, venda, comissão, log de auditoria) pertence a um workspace.
+// O isolamento é reforçado nas rotas de API filtrando sempre por
+// `workspaceId` (nunca confiando em filtro de tela) — ver
+// DOCUMENTACAO-PATRONO-SELLER.md.
+model Workspace {
+  id      String @id @default(cuid())
+  name    String
+  // Proveniência apenas — "quem fundou este workspace". De propósito SEM
+  // chave estrangeira: criar workspace e usuária é uma referência circular
+  // (a usuária dona do workspace dela mesma), então isso é gravado como
+  // texto simples em vez de relação, e resolvido em lib/workspace.ts.
+  // A fronteira de isolamento de verdade é `User.workspaceId` abaixo, que É
+  // uma chave estrangeira obrigatória.
+  ownerId String @unique
+
+  members User[] @relation("WorkspaceMembers")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  produtos          Produto[]
+  linksDinamicos    LinkDinamico[]
+  integracoes       Integracao[]
+  conteudos         Conteudo[]
+  affiliatePrograms AffiliateProgram[]
+  sales             Sale[]
+  commissions       Commission[]
+  auditLogs         AuditLog[]
+}
+
 model User {
-  id           String        @id @default(cuid())
-  email        String        @unique
-  password     String
-  name         String?
-  role         String        @default("usuario")
-  status       String        @default("pendente")
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  produtos      Produto[]
-  conteudos     Conteudo[]
-  integracoes   Integracao[]
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  role      String   @default("usuario")
+  status    String   @default("pendente")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Workspace em que esta usuária opera (hoje, sempre o próprio — ver nota
+  // em Workspace.ownerId). Esta É a fronteira de isolamento de dados.
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceMembers", fields: [workspaceId], references: [id])
+
+  produtos       Produto[]
+  conteudos      Conteudo[]
+  integracoes    Integracao[]
   linksDinamicos LinkDinamico[]
+  auditLogs      AuditLog[]
 }
 
 // Controle de quais módulos/telas ficam visíveis para cada papel (role).
@@ -38,6 +85,8 @@ model ModuloPermissao {
 
 model LinkDinamico {
   id                String       @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace    @relation(fields: [workspaceId], references: [id])
   userId            String
   user              User         @relation(fields: [userId], references: [id])
   produtoId         String
@@ -56,103 +105,269 @@ model LinkDinamico {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
   eventos           EventoLink[]
+  sales             Sale[]
+
+  @@index([workspaceId])
 }
 
 model EventoLink {
-  id          String       @id @default(cuid())
-  linkId      String
-  link        LinkDinamico @relation(fields: [linkId], references: [id])
-  tipo        String
-  plataforma  String?
-  referer     String?
-  createdAt   DateTime     @default(now())
+  id         String       @id @default(cuid())
+  linkId     String
+  link       LinkDinamico @relation(fields: [linkId], references: [id])
+  tipo       String
+  plataforma String?
+  referer    String?
+  createdAt  DateTime     @default(now())
 }
 
 model Integracao {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id])
   userId       String
-  user         User     @relation(fields: [userId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
   plataforma   String
-  status       String   @default("desconectado")
-  accessToken  String?  @db.Text
-  refreshToken String?  @db.Text
+  status       String    @default("desconectado")
+  accessToken  String?   @db.Text
+  refreshToken String?   @db.Text
   tokenExpiry  DateTime?
   accountId    String?
   accountName  String?
   extraData    Json?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  @@unique([userId, plataforma])
+  @@unique([workspaceId, plataforma])
+  @@index([userId])
 }
 
 model Produto {
-  id             String     @id @default(cuid())
-  userId         String
-  user           User       @relation(fields: [userId], references: [id])
-  nome           String
-  categoria      String
-  preco          Float?
-  linkProduto    String?
-  descricao      String?
-  publicoAlvo    String[]
-  origemConteudo String
-  tipoVenda      String
-  observacoes    String?
-  beneficios     String[]
+  id              String         @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace      @relation(fields: [workspaceId], references: [id])
+  userId          String
+  user            User           @relation(fields: [userId], references: [id])
+  nome            String
+  categoria       String
+  preco           Float?
+  linkProduto     String?
+  descricao       String?
+  publicoAlvo     String[]
+  origemConteudo  String
+  tipoVenda       String
+  observacoes     String?
+  beneficios      String[]
   pontosNegativos String[]
-  imagens        String[]
-  videos         String[]
-  status         String     @default("ativo")
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
-  conteudos      Conteudo[]
-  linksDinamicos LinkDinamico[]
+  imagens         String[]
+  videos          String[]
+  status          String         @default("ativo")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  conteudos       Conteudo[]
+  linksDinamicos  LinkDinamico[]
+  sales           Sale[]
+  commissions     Commission[]
+
+  @@index([workspaceId])
 }
 
 model Conteudo {
-  id                 String    @id @default(cuid())
-  userId             String
-  user               User      @relation(fields: [userId], references: [id])
-  produtoId          String
-  produto            Produto   @relation(fields: [produtoId], references: [id])
-  roteiro            String?   @db.Text
-  legendaTiktok      String?   @db.Text
-  legendaInstagram   String?   @db.Text
-  legendaYoutube     String?   @db.Text
-  legendaWhatsapp    String?   @db.Text
-  legendaFacebook    String?   @db.Text
-  legendaMarketplace String?   @db.Text
-  hashtags           String[]
-  textoTela          String?   @db.Text
-  narracao           String?   @db.Text
-  trilhaSugerida     String?
-  promptVideoIA      String?   @db.Text
-  promptCurto        String?   @db.Text
-  promptNarracao     String?   @db.Text
-  chamadaAcao        String?
-  estilo             String?
-  duracao            Int?
-  redeSocial         String?
-  objetivo           String?
-  notaProduto        Float?
-  pontosPositivos    String[]
-  pontosNegativos    String[]
-  veredito           String?
-  status             String    @default("roteiro_gerado")
-  dataPublicacao     DateTime?
-  dataAgendamento    DateTime?
-  visualizacoes      Int       @default(0)
-  cliquesLink        Int       @default(0)
-  comentarios        Int       @default(0)
-  compartilhamentos  Int       @default(0)
-  taxaConclusao      Float?
-  alertasCompliance  Json[]
-  videoUrl           String?   @db.Text
-  videoRequestId     String?   @db.Text
-  videoErro          String?   @db.Text
+  id                  String    @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace @relation(fields: [workspaceId], references: [id])
+  userId              String
+  user                User      @relation(fields: [userId], references: [id])
+  produtoId           String
+  produto             Produto   @relation(fields: [produtoId], references: [id])
+  roteiro             String?   @db.Text
+  legendaTiktok       String?   @db.Text
+  legendaInstagram    String?   @db.Text
+  legendaYoutube      String?   @db.Text
+  legendaWhatsapp     String?   @db.Text
+  legendaFacebook     String?   @db.Text
+  legendaMarketplace  String?   @db.Text
+  hashtags            String[]
+  textoTela           String?   @db.Text
+  narracao            String?   @db.Text
+  trilhaSugerida      String?
+  promptVideoIA       String?   @db.Text
+  promptCurto         String?   @db.Text
+  promptNarracao      String?   @db.Text
+  chamadaAcao         String?
+  estilo              String?
+  duracao             Int?
+  redeSocial          String?
+  objetivo            String?
+  notaProduto         Float?
+  pontosPositivos     String[]
+  pontosNegativos     String[]
+  veredito            String?
+  status              String    @default("roteiro_gerado")
+  dataPublicacao      DateTime?
+  dataAgendamento     DateTime?
+  visualizacoes       Int       @default(0)
+  cliquesLink         Int       @default(0)
+  comentarios         Int       @default(0)
+  compartilhamentos   Int       @default(0)
+  taxaConclusao       Float?
+  alertasCompliance   Json[]
+  videoUrl            String?   @db.Text
+  videoRequestId      String?   @db.Text
+  videoErro           String?   @db.Text
   publicacaoExternaId String?
-  erroPublicacao     String?   @db.Text
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  erroPublicacao      String?   @db.Text
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  sales               Sale[]
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Programa × Operação × Integração — distinção de negócio aprovada
+// (design_handoff §6). As três coisas NÃO são sinônimos:
+//
+// - Programa    = a afiliada está cadastrada nesse programa? (status do
+//                 relacionamento com a plataforma, ex.: Shopee)
+// - Operação    = como o Patrono trabalha com esse programa hoje: manual
+//                 ou integrado. Nesta fase, sempre MANUAL.
+// - Integração  = existe conexão técnica real (token, API)? Nunca marcar
+//                 CONNECTED sem uma integração de verdade — mostrar sempre
+//                 "Manual" ou "Integração futura" enquanto não houver.
+model AffiliateProgram {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  // Identificador técnico da plataforma (ex.: "shopee", "hotmart",
+  // "mercadolivre", "amazon", "tiktokshop", "outro"). Não é uma integração
+  // real — é só "de qual programa estamos falando".
+  platform String
+
+  // NOT_REGISTERED | REQUESTED | WAITING_APPROVAL | ACTIVE | NEEDS_CONFIGURATION
+  status String @default("NOT_REGISTERED")
+
+  // MANUAL | INTEGRATED — nesta fase do produto, sempre MANUAL.
+  operationMode String @default("MANUAL")
+
+  // NOT_AVAILABLE | FUTURE | CONFIGURED | CONNECTED | ERROR
+  // Nunca setar CONNECTED sem uma Integracao real por trás.
+  integrationStatus String @default("NOT_AVAILABLE")
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales       Sale[]
+  commissions Commission[]
+
+  @@unique([workspaceId, platform])
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sale × Commission — venda e comissão são entidades separadas.
+// Regra de negócio: venda ≠ comissão. Uma venda registrada não vira
+// comissão recebida automaticamente; comissão prevista não é confirmada;
+// confirmada não é recebida; venda cancelada nunca aparece como confirmada.
+model Sale {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  productId String?
+  product   Produto? @relation(fields: [productId], references: [id])
+
+  affiliateProgramId String?
+  affiliateProgram   AffiliateProgram? @relation(fields: [affiliateProgramId], references: [id])
+
+  linkId String?
+  link   LinkDinamico? @relation(fields: [linkId], references: [id])
+
+  contentId String?
+  content   Conteudo? @relation(fields: [contentId], references: [id])
+
+  date   DateTime @default(now())
+  amount Float?
+
+  // PENDING | CONFIRMED | CANCELLED
+  status String @default("PENDING")
+
+  // manual | webhook (webhook não é usado ainda nesta fase)
+  source String @default("manual")
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  commissions Commission[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+}
+
+model Commission {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  saleId String?
+  sale   Sale?   @relation(fields: [saleId], references: [id])
+
+  productId String?
+  product   Produto? @relation(fields: [productId], references: [id])
+
+  affiliateProgramId String?
+  affiliateProgram   AffiliateProgram? @relation(fields: [affiliateProgramId], references: [id])
+
+  expectedAmount  Float?
+  confirmedAmount Float?
+  receivedAmount  Float?
+
+  // EXPECTED | CONFIRMED | RECEIVED
+  status String @default("EXPECTED")
+
+  expectedAt  DateTime?
+  confirmedAt DateTime?
+  receivedAt  DateTime?
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Auditoria — registro simples de operações de escrita importantes.
+// Sem serviço externo, sem custo: só uma tabela no mesmo Postgres.
+// NUNCA gravar senha, token ou segredo em `metadata`.
+model AuditLog {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  // ex.: "produto.criado", "programa.alterado", "venda.registrada"
+  action String
+
+  // ex.: "Produto", "AffiliateProgram", "LinkDinamico", "Conteudo",
+  // "Sale", "Commission"
+  entityType String
+  entityId   String
+
+  // Dados não sensíveis relevantes ao evento (ex.: campos alterados).
+  // Nunca senha/token/segredo.
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([entityType, entityId])
 }

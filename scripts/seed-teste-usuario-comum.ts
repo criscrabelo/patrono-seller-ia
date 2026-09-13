@@ -1,21 +1,29 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import { criarUsuarioComWorkspace } from '../lib/workspace'
 
 const prisma = new PrismaClient()
 
 async function main() {
+  const email = 'usuario.teste@patronosellerai.com'
   const senhaHash = await bcrypt.hash('senha123', 10)
-  const user = await prisma.user.upsert({
-    where: { email: 'usuario.teste@patronosellerai.com' },
-    update: { role: 'usuario', status: 'ativo', password: senhaHash },
-    create: {
-      name: 'Usuário Teste',
-      email: 'usuario.teste@patronosellerai.com',
-      password: senhaHash,
-      role: 'usuario',
-      status: 'ativo',
-    },
-  })
+
+  const existente = await prisma.user.findUnique({ where: { email } })
+  const user = existente
+    ? await prisma.user.update({
+        where: { email },
+        data: { role: 'usuario', status: 'ativo', password: senhaHash },
+      })
+    : (
+        await criarUsuarioComWorkspace(prisma, {
+          name: 'Usuário Teste',
+          email,
+          password: senhaHash,
+          role: 'usuario',
+          status: 'ativo',
+        })
+      ).user
+
   console.log('Usuário comum criado:', user.email)
 }
 

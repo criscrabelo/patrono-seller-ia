@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   const { produtoId, redeSocial, duracao, estilo, objetivo } = parsed.data
 
   const produto = await prisma.produto.findFirst({
-    where: { id: produtoId, userId: session.user.id },
+    where: { id: produtoId, workspaceId: session.user.workspaceId },
   })
 
   if (!produto) {
@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
 
     const dadosBase = {
       userId: session.user.id,
+      workspaceId: session.user.workspaceId,
       produtoId,
       redeSocial,
       duracao,

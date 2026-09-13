@@ -61,8 +61,8 @@ export async function POST(req: NextRequest) {
   const { produtoId } = body
 
   const where = produtoId
-    ? { id: produtoId, userId: session.user.id }
-    : { userId: session.user.id, linkProduto: { contains: 'shopee' } }
+    ? { id: produtoId, workspaceId: session.user.workspaceId }
+    : { workspaceId: session.user.workspaceId, linkProduto: { contains: 'shopee' } }
 
   const produtos = await prisma.produto.findMany({
     where,

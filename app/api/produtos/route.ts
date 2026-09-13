@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
+import { registrarAuditoria } from '@/lib/audit-log'
 
 const produtoSchema = z.object({
   nome: z.string().min(1),
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
 
   const produtos = await prisma.produto.findMany({
     where: {
-      userId: session.user.id,
+      workspaceId: session.user.workspaceId,
       status: { not: 'descartado' },
       ...(categoria && { categoria }),
       ...(busca && { nome: { contains: busca, mode: 'insensitive' } }),
@@ -54,7 +55,20 @@ export async function POST(req: NextRequest) {
   }
 
   const produto = await prisma.produto.create({
-    data: { ...parsed.data, userId: session.user.id },
+    data: {
+      ...parsed.data,
+      userId: session.user.id,
+      workspaceId: session.user.workspaceId,
+    },
+  })
+
+  await registrarAuditoria({
+    workspaceId: session.user.workspaceId,
+    userId: session.user.id,
+    action: 'produto.criado',
+    entityType: 'Produto',
+    entityId: produto.id,
+    metadata: { nome: produto.nome, categoria: produto.categoria },
   })
 
   return NextResponse.json(produto, { status: 201 })

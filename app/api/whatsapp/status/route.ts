@@ -11,7 +11,7 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'whatsapp' } },
+    where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'whatsapp' } },
   })
 
   if (!integracao || integracao.status !== 'conectado' || !integracao.accountId || !integracao.accessToken) {

@@ -34,7 +34,7 @@ export async function POST(
   const destino: 'feed' | 'stories' = body.destino === 'stories' ? 'stories' : 'feed'
 
   const conteudo = await prisma.conteudo.findFirst({
-    where: { id, userId: session.user.id },
+    where: { id, workspaceId: session.user.workspaceId },
     include: { produto: { select: { linkProduto: true, imagens: true } } },
   })
   if (!conteudo) {
@@ -56,7 +56,7 @@ export async function POST(
   }
 
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'instagram' } },
+    where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'instagram' } },
   })
   if (
     !integracao ||
@@ -195,7 +195,7 @@ export async function POST(
       }),
       isOAuthError
         ? prisma.integracao.updateMany({
-            where: { userId: session.user.id, plataforma: 'instagram' },
+            where: { workspaceId: session.user.workspaceId, plataforma: 'instagram' },
             data: { status: 'desconectado', accessToken: null },
           })
         : Promise.resolve(),

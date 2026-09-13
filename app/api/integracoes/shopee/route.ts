@@ -18,7 +18,7 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   const integracao = await prisma.integracao.findUnique({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'shopee' } },
+    where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'shopee' } },
   })
 
   if (!integracao) return NextResponse.json(null)
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
   if (modo === 'afiliado') testeOk = true
 
   await prisma.integracao.upsert({
-    where: { userId_plataforma: { userId: session.user.id, plataforma: 'shopee' } },
+    where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'shopee' } },
     update: {
       status,
       accessToken: accessToken ?? null,
@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
     },
     create: {
       userId: session.user.id,
+      workspaceId: session.user.workspaceId,
       plataforma: 'shopee',
       status,
       accessToken: accessToken ?? null,
@@ -103,7 +104,7 @@ export async function DELETE() {
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   await prisma.integracao.updateMany({
-    where: { userId: session.user.id, plataforma: 'shopee' },
+    where: { workspaceId: session.user.workspaceId, plataforma: 'shopee' },
     data: { status: 'desconectado', accessToken: null, accountId: null, accountName: null, extraData: {} },
   })
 

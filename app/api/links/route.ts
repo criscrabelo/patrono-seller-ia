@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { registrarAuditoria } from '@/lib/audit-log'
 
 const PLATAFORMAS = [
   'tiktok','instagram','youtube','facebook','pinterest','linkedin',
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const produtoId = searchParams.get('produtoId')
 
-  const where: Record<string, string> = { userId: session.user.id }
+  const where: Record<string, string> = { workspaceId: session.user.workspaceId }
   if (produtoId) where.produtoId = produtoId
 
   const links = await prisma.linkDinamico.findMany({
@@ -47,7 +48,7 @@ export async function POST(req: NextRequest) {
   const { produtoId, urlDestino, tipo, comissao, plataformas: plats } = body
 
   const produto = await prisma.produto.findFirst({
-    where: { id: produtoId, userId: session.user.id },
+    where: { id: produtoId, workspaceId: session.user.workspaceId },
   })
   if (!produto) return NextResponse.json({ error: 'Produto não encontrado' }, { status: 404 })
 
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest) {
       return prisma.linkDinamico.create({
         data: {
           userId: session.user.id,
+          workspaceId: session.user.workspaceId,
           produtoId,
           slug,
           plataforma,
@@ -71,6 +73,15 @@ export async function POST(req: NextRequest) {
     })
   )
 
+  await registrarAuditoria({
+    workspaceId: session.user.workspaceId,
+    userId: session.user.id,
+    action: 'link.criado',
+    entityType: 'LinkDinamico',
+    entityId: links.map((l) => l.id).join(','),
+    metadata: { produtoId, quantidade: links.length },
+  })
+
   return NextResponse.json(links)
 }
 
@@ -82,7 +93,7 @@ export async function PATCH(req: NextRequest) {
   const { id, urlDestino, comissao, ativo } = body
 
   await prisma.linkDinamico.updateMany({
-    where: { id, userId: session.user.id },
+    where: { id, workspaceId: session.user.workspaceId },
     data: {
       ...(urlDestino !== undefined && { urlDestino }),
       ...(comissao !== undefined && { comissao: parseFloat(comissao) }),

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
+import { criarUsuarioComWorkspace } from '@/lib/workspace'
 import { z } from 'zod'
 
 const schema = z.object({
@@ -25,8 +26,14 @@ export async function POST(req: NextRequest) {
 
   const hashed = await bcrypt.hash(password, 12)
 
-  await prisma.user.create({
-    data: { name, email, password: hashed, role: 'usuario', status: 'pendente' },
+  // Cria a usuária e o workspace dela junto (toda usuária precisa de um
+  // workspace — é o que isola os dados dela dos de outras contas).
+  await criarUsuarioComWorkspace(prisma, {
+    name,
+    email,
+    password: hashed,
+    role: 'usuario',
+    status: 'pendente',
   })
 
   return NextResponse.json({ ok: true }, { status: 201 })

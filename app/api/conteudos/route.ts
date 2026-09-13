@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   // "Publicar agora" — não aqui, para não travar a listagem com chamadas à API.
   await prisma.conteudo.updateMany({
     where: {
-      userId: session.user.id,
+      workspaceId: session.user.workspaceId,
       status: 'agendado',
       dataAgendamento: { lte: new Date() },
       videoUrl: null,
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
   const countOnly = searchParams.get('count') === 'true'
 
   const where = {
-    userId: session.user.id,
+    workspaceId: session.user.workspaceId,
     ...(status && { status }),
     ...(produtoId && { produtoId }),
     ...(redeSocial && { redeSocial }),
