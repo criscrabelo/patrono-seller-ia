@@ -8,6 +8,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { LucroEscala } from '@/components/dashboard/LucroEscala'
+import { PrimeiraComissaoCard, type PrimeiraComissaoData } from '@/components/dashboard/PrimeiraComissao'
 import { formatDateShort } from '@/lib/utils'
 import type { StatusConteudo } from '@/types'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
@@ -37,6 +38,7 @@ interface Metricas {
     scoreEscala: number
     faixa: { label: string; cor: 'gold' | 'blue' | 'amber' | 'red' }
   }>
+  primeiraComissao?: PrimeiraComissaoData
 }
 
 export default function DashboardPage() {
@@ -138,6 +140,9 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      {/* Primeira comissão */}
+      {!loading && <PrimeiraComissaoCard dados={metricas?.primeiraComissao} />}
 
       {/* Lucro e Escala */}
       {!loading && (

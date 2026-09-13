@@ -11,6 +11,8 @@ export const MODULOS = [
   { key: 'calendario', label: 'Calendário' },
   { key: 'relatorios', label: 'Relatórios' },
   { key: 'links', label: 'Links Dinâmicos' },
+  { key: 'programas', label: 'Meus Programas' },
+  { key: 'vendas-comissoes', label: 'Vendas e Comissões' },
   { key: 'monetizacao', label: 'Monetização' },
   { key: 'integracoes', label: 'Integrações' },
   { key: 'whatsapp', label: 'WhatsApp em Massa' },

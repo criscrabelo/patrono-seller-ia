@@ -24,6 +24,8 @@ import {
   Film,
   MessageCircle,
   SlidersHorizontal,
+  Handshake,
+  Receipt,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
@@ -43,6 +45,8 @@ const navItems: Array<{ href: string; label: string; icon: typeof LayoutDashboar
   { href: '/calendario', label: 'Calendário', icon: Calendar, modulo: 'calendario' },
   { href: '/relatorios', label: 'Relatórios', icon: BarChart2, modulo: 'relatorios' },
   { href: '/links', label: 'Links Dinâmicos', icon: Link2, modulo: 'links' },
+  { href: '/programas', label: 'Meus Programas', icon: Handshake, modulo: 'programas' },
+  { href: '/vendas-comissoes', label: 'Vendas e Comissões', icon: Receipt, modulo: 'vendas-comissoes' },
   { href: '/monetizacao', label: 'Monetização', icon: DollarSign, modulo: 'monetizacao' },
   { href: '/integracoes', label: 'Integrações', icon: Plug, modulo: 'integracoes' },
   { href: '/whatsapp', label: 'WhatsApp em Massa', icon: MessageCircle, modulo: 'whatsapp' },
