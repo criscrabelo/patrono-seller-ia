@@ -32,13 +32,24 @@ export interface DigitalTwinJobRow {
  * travado (heartbeat velho demais) de outro worker que caiu. `FOR UPDATE
  * SKIP LOCKED` garante que dois workers rodando a mesma query ao mesmo
  * tempo nunca pegam a mesma linha.
+ *
+ * `workspaceId` (Rodada 9, worker pairing): quando informado, o worker só
+ * enxerga jobs DAQUELE workspace — nunca de outro. Um worker pareado a um
+ * workspace nunca deve poder baixar assets/gerar conteúdo de outro.
+ *
+ * Terceiro kill switch (Rodada 9, regra 34): um job cujo `DigitalTwinProfile`
+ * está com `workerPaused = true` NUNCA é reivindicado — pausar o worker é
+ * independente de pausar o Autopilot (`Workspace.automationPaused`) ou o
+ * Digital Twin (`DigitalTwinProfile.enabled`).
  */
 export async function reivindicarProximoJob(
   workerId: string,
   staleTimeoutMs: number = STALE_TIMEOUT_MS_PADRAO,
-  client: PrismaClient = prismaPadrao
+  client: PrismaClient = prismaPadrao,
+  workspaceId?: string
 ): Promise<DigitalTwinJobRow | null> {
   const limiteStale = new Date(Date.now() - staleTimeoutMs)
+  const filtroWorkspace = workspaceId ? Prisma.sql`AND "workspaceId" = ${workspaceId}` : Prisma.empty
 
   const rows = await client.$queryRaw<DigitalTwinJobRow[]>(Prisma.sql`
     UPDATE "DigitalTwinJob"
@@ -49,6 +60,10 @@ export async function reivindicarProximoJob(
         (status = 'QUEUED' AND "workerId" IS NULL)
         OR (status NOT IN ('READY', 'FAILED', 'CANCELLED') AND "heartbeatAt" IS NOT NULL AND "heartbeatAt" < ${limiteStale})
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM "DigitalTwinProfile" p WHERE p.id = "DigitalTwinJob"."profileId" AND p."workerPaused" = true
+      )
+      ${filtroWorkspace}
       ORDER BY "createdAt" ASC
       FOR UPDATE SKIP LOCKED
       LIMIT 1

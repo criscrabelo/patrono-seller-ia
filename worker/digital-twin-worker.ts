@@ -24,6 +24,8 @@ import {
 } from '../lib/digital-twin-job-queue'
 import { processarJobDeVerdade, detectarCapacidadesDeGeracao } from '../lib/digital-twin-worker-core'
 import { detectarCapacidadesRuntime } from '../lib/digital-twin-runtime'
+import { REQUIRED_WORKER_VERSION } from '../lib/digital-twin-worker-version'
+import { verificarTokenWorker } from '../lib/digital-twin-worker-token'
 
 const WORKER_ID = process.env.DIGITAL_TWIN_WORKER_ID || `worker-${randomUUID().slice(0, 8)}`
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -31,6 +33,19 @@ const POLL_INTERVAL_MS = 5_000
 const MAX_TENTATIVAS = 3 // regra 31: máximo 2-3 tentativas automáticas
 
 const prisma = new PrismaClient()
+
+/**
+ * Pairing (Rodada 9, regras 21-22): o worker se autentica com um token
+ * PRÓPRIO (nunca a senha da usuária), escopado a um único workspace.
+ * `DIGITAL_TWIN_WORKER_TOKEN` nunca é logado — só o resultado da
+ * verificação (workspaceId).
+ */
+async function resolverWorkspacePareado(): Promise<string | null> {
+  const token = process.env.DIGITAL_TWIN_WORKER_TOKEN
+  if (!token) return null
+  const resultado = await verificarTokenWorker(token)
+  return resultado?.workspaceId ?? null
+}
 
 async function registrarSaudeWorker() {
   const caps = await detectarCapacidadesRuntime()
@@ -42,15 +57,15 @@ async function registrarSaudeWorker() {
       gpuDetected: caps.gpuDetected,
       gpuName: caps.gpuName,
       vramGB: caps.vramGB,
-      version: '1.0.0-rodada8',
+      version: REQUIRED_WORKER_VERSION,
       lastSeenAt: new Date(),
     },
     update: { online: true, gpuDetected: caps.gpuDetected, gpuName: caps.gpuName, vramGB: caps.vramGB, lastSeenAt: new Date() },
   })
 }
 
-async function processarUmJob(): Promise<boolean> {
-  const job = await reivindicarProximoJob(WORKER_ID, STALE_TIMEOUT_MS_PADRAO, prisma)
+async function processarUmJob(workspaceIdPareado: string | null): Promise<boolean> {
+  const job = await reivindicarProximoJob(WORKER_ID, STALE_TIMEOUT_MS_PADRAO, prisma, workspaceIdPareado ?? undefined)
   if (!job) return false
 
   const heartbeat = setInterval(() => {
@@ -86,10 +101,20 @@ async function main() {
   const modoUnico = process.argv.includes('--once')
   await registrarSaudeWorker()
   const capacidades = await detectarCapacidadesDeGeracao()
-  console.log(`[digital-twin-worker] ${WORKER_ID} iniciado. Chatterbox=${capacidades.chatterboxDisponivel} MuseTalk=${capacidades.musetalkDisponivel} Runtime=${capacidades.runtimeClasse}`)
+
+  const workspaceIdPareado = await resolverWorkspacePareado()
+  if (process.env.DIGITAL_TWIN_WORKER_TOKEN && !workspaceIdPareado) {
+    console.error('[digital-twin-worker] Token inválido/revogado — o worker não vai reivindicar nenhum job. Gere um novo token em Configurações → Digital Twin.')
+    await prisma.$disconnect()
+    process.exit(1)
+  }
+
+  console.log(
+    `[digital-twin-worker] ${WORKER_ID} iniciado. Chatterbox=${capacidades.chatterboxDisponivel} MuseTalk=${capacidades.musetalkDisponivel} Runtime=${capacidades.runtimeClasse} Pareado=${workspaceIdPareado ? 'sim' : 'não (sem escopo — só para desenvolvimento)'}`
+  )
 
   if (modoUnico) {
-    const processou = await processarUmJob()
+    const processou = await processarUmJob(workspaceIdPareado)
     console.log(`[digital-twin-worker] --once: ${processou ? 'processou 1 job' : 'nenhum job na fila'}`)
     await prisma.$disconnect()
     return
@@ -98,7 +123,7 @@ async function main() {
   // Loop contínuo — processo de longa duração, nunca dentro de um request HTTP.
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const processou = await processarUmJob()
+    const processou = await processarUmJob(workspaceIdPareado)
     if (!processou) await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
   }
 }

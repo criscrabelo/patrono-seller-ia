@@ -63,6 +63,7 @@ model Workspace {
   voiceConsents       VoiceConsent[]
   digitalTwinAssets   DigitalTwinAsset[]
   digitalTwinJobs     DigitalTwinJob[]
+  workerTokens        WorkerToken[]
 }
 
 model User {
@@ -487,8 +488,18 @@ model DigitalTwinProfile {
   identityConsentId String?
   voiceProfileId    String?
 
-  enabled    Boolean   @default(false) // kill switch — "DESATIVAR MEU AVATAR"
+  enabled    Boolean   @default(false) // kill switch — "DESATIVAR MEU AVATAR" (identidade/voz)
   approvedAt DateTime? // aprovação do PERFIL após a prévia (regra 42/43) — não é aprovação por vídeo
+
+  // Kill switch nº 3 (Rodada 9, regra 34) — independente de `enabled`
+  // (identidade/voz) e de `Workspace.automationPaused` (publicação). Pausa
+  // só o WORKER local: nenhum job novo é reivindicado enquanto true.
+  workerPaused Boolean @default(false)
+
+  // Aprovação única da VOZ (Rodada 9, regra 11) — separada da aprovação do
+  // perfil completo (approvedAt), porque a voz pode ser aprovada antes do
+  // avatar estar pronto.
+  voiceApprovedAt DateTime?
 
   // ── Preferências globais (Rodada 8, regra 50) ──────────────────────
   // Nunca perguntadas a cada postagem — o Autopilot só consulta isso uma
@@ -547,6 +558,11 @@ model DigitalTwinJob {
   // | RENDERING | VALIDATING | READY | FAILED | CANCELLED
   status String @default("QUEUED")
 
+  // VOICE_PREVIEW | AVATAR_PREVIEW | PRODUCT_PREVIEW | PUBLISH (Rodada 9) —
+  // distingue a FINALIDADE do job (ex.: prévia de voz sozinha nunca é
+  // rotulada como lip-sync/avatar).
+  jobType String @default("AVATAR_PREVIEW")
+
   contentId     String? // ligação futura com Conteudo, quando existir
   resultAssetId String?
   error         String?
@@ -581,4 +597,23 @@ model GenerationWorkerHealth {
   version    String?
   lastSeenAt DateTime @default(now())
   createdAt  DateTime @default(now())
+}
+
+// Worker Pairing (Rodada 9, regras 21-22): credencial própria do worker,
+// escopada a UM workspace — nunca a senha da usuária. Só o hash é
+// persistido; o token bruto é devolvido uma única vez na criação e nunca
+// mais recuperável (nem por quem tem acesso ao banco).
+model WorkerToken {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  tokenHash String @unique
+  label     String?
+
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+
+  @@index([workspaceId])
 }
