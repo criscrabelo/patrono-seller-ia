@@ -24,17 +24,20 @@
  *
  * Os PESOS do modelo (`ve.pt`, `t3_mtl23ls_v2.safetensors`, `s3gen.pt`,
  * `conds.pt` etc.) são baixados pelo próprio pacote via `huggingface_hub`
- * — e `huggingface.co` está BLOQUEADO pela política de rede deste ambiente
- * (confirmado: `curl` para `huggingface.co` devolve 403 "connect_rejected
- * (organization policy)"). Ou seja: mesmo instalando o pacote com sucesso
- * (PyPI funciona), a geração de voz real não é executável AQUI — daí o
- * fallback honesto em vez de simular sucesso. Ver `DIGITAL-TWIN-BENCHMARK.md`
- * para o que foi de fato testado nesta rodada.
+ * — e `huggingface.co` está bloqueado pela política de rede DESTE
+ * ambiente de desenvolvimento específico (confirmado de novo na Rodada 9:
+ * `curl` devolve 403 "connect_rejected"). Isso é
+ * `CURRENT_ENVIRONMENT_NETWORK_RESTRICTION` (lib/digital-twin-network-access.ts)
+ * — NUNCA documentado como o modelo estar indisponível globalmente
+ * (`MODEL_UNAVAILABLE`). O repositório `ResembleAI/chatterbox` é público;
+ * na máquina real da proprietária, sem esse bloqueio de proxy, a mesma
+ * chamada deve funcionar — ver `DIGITAL-TWIN-BENCHMARK.md`.
  */
 
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import type { VoiceCloneProvider } from './digital-twin'
+import { verificarAcessoHuggingFace } from './digital-twin-network-access'
 
 const execFileAsync = promisify(execFile)
 
@@ -120,16 +123,26 @@ export class ChatterboxVoiceCloneProvider implements VoiceCloneProvider {
     if (!params.consentId) throw new Error('Clonagem de voz exige consentId válido — nunca clonar sem consentimento registrado.')
 
     // Chamada real ficaria aqui (subprocesso Python com o script oficial do
-    // Chatterbox). Mesmo com o pacote instalado, os pesos do modelo vêm do
-    // Hugging Face Hub, bloqueado pela política de rede deste ambiente —
-    // por isso nunca chega a gerar um áudio de verdade aqui.
-    throw new Error(`Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas os pesos do modelo vêm do Hugging Face Hub, bloqueado neste ambiente. Geração real não é possível aqui.`)
+    // Chatterbox). Confere o acesso ao Hugging Face antes de tentar — se o
+    // bloqueio for deste ambiente (CURRENT_ENVIRONMENT_NETWORK_RESTRICTION),
+    // a mensagem nunca afirma que o modelo está indisponível.
+    const hf = await verificarAcessoHuggingFace()
+    throw new Error(
+      hf.status === 'CURRENT_ENVIRONMENT_NETWORK_RESTRICTION'
+        ? `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas o Hugging Face Hub está bloqueado neste ambiente específico (${hf.detalhe}) — o modelo em si é público. Retestar na máquina real.`
+        : `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas os pesos do modelo não puderam ser obtidos (${hf.detalhe}).`
+    )
   }
 
   async sintetizar(params: { voiceId: string; texto: string }): Promise<{ audioUrl: string }> {
     const disponibilidade = await verificarDisponibilidadeChatterbox(this.pythonBin)
     const selecao = selecionarProviderChatterbox(disponibilidade)
     if (selecao.tier === 'VOICE_ONLY_FALLBACK') throw new Error(selecao.motivo)
-    throw new Error(`Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas os pesos do modelo vêm do Hugging Face Hub, bloqueado neste ambiente. Síntese real não é possível aqui.`)
+    const hf = await verificarAcessoHuggingFace()
+    throw new Error(
+      hf.status === 'CURRENT_ENVIRONMENT_NETWORK_RESTRICTION'
+        ? `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas o Hugging Face Hub está bloqueado neste ambiente específico (${hf.detalhe}).`
+        : `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas os pesos do modelo não puderam ser obtidos (${hf.detalhe}).`
+    )
   }
 }
