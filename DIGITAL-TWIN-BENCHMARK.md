@@ -93,3 +93,26 @@ O bloqueio ao Hugging Face observado nas Rodadas 8 e 9 é, de novo, uma restriç
 ### Custo (Rodada 9)
 
 R$ 0,00 — nenhuma chamada a serviço pago. Servidor HTTP do teste de download é local (`http.createServer`, sem custo). Banco de dados é o Postgres local já usado pelo projeto.
+
+---
+
+## Retomada da Rodada 9 — instalação real do pacote `chatterbox-tts` (avanço genuíno sobre a Rodada 8/9)
+
+Diferente das Rodadas 8 e 9 (que decidiram não instalar o stack pesado "só para confirmar um import"), nesta retomada o `pip install chatterbox-tts==0.1.7` foi executado de verdade, num venv Python 3.11 isolado (`.venv-chatterbox-test`, fora do repositório Git), porque o PyPI já era sabidamente acessível e o objetivo do usuário pede explicitamente "Chatterbox funcionando" como prioridade técnica #4.
+
+| Item | Entrada | Saída | Resultado |
+|---|---|---|---|
+| `pip install chatterbox-tts==0.1.7` (venv isolado, PyPI real) | `pip install chatterbox-tts==0.1.7` | Instalação completa: `torch==2.6.0`, `torchaudio==2.6.0`, `transformers==5.2.0`, `diffusers==0.29.0` (exatamente as versões pinadas em `worker/requirements-chatterbox.txt`), mais `chatterbox-tts-0.1.7` e todas as dependências transitivas | **TESTADO REALMENTE** — `pip install` real contra PyPI, sem mock, log completo salvo. |
+| `import chatterbox` / `from chatterbox.tts import ChatterboxTTS` | módulo Python | `ChatterboxTTS` importado com sucesso, `torch.__version__ == '2.6.0+cu124'`, `torch.cuda.is_available() == False` | **TESTADO REALMENTE** — o pacote é genuinamente instalável e importável nesta sandbox. Corrige a limitação da Rodada 9 anterior (que só tinha `ModuleNotFoundError` por decisão de não instalar). |
+| `ChatterboxTTS.from_pretrained(device='cpu')` (tentativa real de carregar os pesos) | chamada real ao Hugging Face Hub | `httpx.ProxyError: 403 Forbidden` ao buscar metadados do arquivo no Hub (`get_hf_file_metadata` → proxy da organização recusa) | **TESTADO REALMENTE** — confirma com evidência concreta (stack trace real, não suposição) que o único bloqueio é a rede desta sandbox ao Hugging Face, exatamente como já classificado (`CURRENT_ENVIRONMENT_NETWORK_RESTRICTION`). O pacote em si, uma vez instalado, chega exatamente até este ponto e não mais longe. |
+
+### Conclusão prática desta descoberta
+
+- O Chatterbox **não é mais uma incógnita de "será que instala?"** — instala e importa de verdade, com as versões exatas já documentadas.
+- O único obstáculo real e medido para gerar a primeira voz clonada nesta sandbox é o download dos pesos do Hugging Face Hub (`ve.pt`, `t3_mtl23ls_v2.safetensors`, `s3gen.pt`, `conds.pt`), bloqueado pela política de rede desta sandbox de desenvolvimento — não pela existência/licença/funcionamento do Chatterbox.
+- Na máquina Windows real da proprietária (sem esse bloqueio de proxy), a expectativa é que `pip install -r worker/requirements-chatterbox.txt` funcione igual, e `ChatterboxTTS.from_pretrained()` consiga baixar os pesos e carregar o modelo — isso ainda precisa ser confirmado na máquina real, não é assumido aqui.
+- Este venv de teste (`.venv-chatterbox-test/`) é descartável, fica fora do Git (`/tmp`, não no repositório) e não é usado por nenhum código de produção — serviu só para produzir esta evidência real.
+
+### Custo (Retomada)
+
+R$ 0,00 — `pip install` contra PyPI é gratuito; nenhum peso de modelo foi baixado (o download real do Hugging Face foi bloqueado antes de transferir qualquer byte de peso).
