@@ -60,3 +60,36 @@ Inspecionando o wheel real do `chatterbox-tts` (`unzip -l`/`unzip -p`), descobri
 ## Custo
 
 Nenhum serviço pago usado para gerar os números acima — apenas `curl`/`pip download` (grátis) e o Postgres/FFmpeg já existentes no projeto.
+
+---
+
+## Rodada 9 — Worker Local + Primeira Voz Real + Primeiro Avatar Real quando o hardware permitir
+
+Mesma regra: só números medidos de verdade nesta sessão entram aqui. Ambiente idêntico ao da Rodada 8 (4 cores, 15.7GB RAM, sem GPU, `huggingface.co`/`supabase.com` bloqueados com HTTP 403 — reclassificado corretamente como `CURRENT_ENVIRONMENT_NETWORK_RESTRICTION`, nunca `MODEL_UNAVAILABLE`, ver regra 1 e `lib/digital-twin-network-access.ts`).
+
+### Correção de enquadramento (regra 1)
+
+O bloqueio ao Hugging Face observado nas Rodadas 8 e 9 é, de novo, uma restrição desta sandbox específica (proxy da organização retorna 403 tanto para `huggingface.co` quanto para `supabase.com`) — **não** uma indisponibilidade do Chatterbox/MuseTalk em si. `verificarAcessoHuggingFace()` agora devolve `CURRENT_ENVIRONMENT_NETWORK_RESTRICTION` com o texto "retestar na máquina real", em vez de qualquer coisa que sugerisse "modelo indisponível". Isso precisa ser retestado numa máquina real (Windows da proprietária) antes de qualquer conclusão final sobre disponibilidade.
+
+### Tabela de testes (Rodada 9)
+
+| Item | Hardware | Entrada | Saída | Tempo medido | Memória | Resultado |
+|---|---|---|---|---|---|---|
+| `VOICE_ONLY_PREVIEW` real (foto + voz clonada + motion graphics + legenda via libass) | CPU_ONLY (4 cores) | imagem 480×480 + áudio de 8.4s + legenda de ~140 caracteres | MP4 1080×1920 com áudio, 356.297 bytes | **4.709ms** (render FFmpeg completo) | RSS do processo Node estável (~109MB antes/depois — FFmpeg roda como processo filho) | **TESTADO REALMENTE** — `ffmpeg` real, sem mock, medido com `Date.now()` antes/depois do `execFile`. |
+| Descoberta: este build do `ffmpeg-static` **não tem o filtro `drawtext` compilado** | CPU_ONLY | `ffmpeg -filters` | lista de filtros sem `drawtext`, com `subtitles`/`ass` (libass) presentes | — | — | **TESTADO REALMENTE** — todas as legendas do `VOICE_ONLY_PREVIEW` passaram a usar `subtitles=filename=...` (arquivo `.srt` gerado por job) em vez de `drawtext`. Os métodos mais antigos do `RendererFFmpeg` que ainda usam `drawtext` (Reel/Carrossel/TikTok, Rodadas 5-6) **não foram alterados nesta rodada** e portanto continuam potencialmente quebrados neste ambiente específico — recomenda-se testar `drawtext` na máquina real de produção antes de assumir que funciona lá. |
+| Worker token — gerar (`gerarTokenWorker`) | CPU_ONLY, Postgres local | workspaceId + label | token de 64 hex chars + hash gravado | **45ms** | — | **TESTADO REALMENTE** — contra o Postgres local desta sessão. |
+| Worker token — verificar (`verificarTokenWorker`) | CPU_ONLY, Postgres local | token bruto | workspaceId resolvido + `lastUsedAt` atualizado | **4ms** | — | **TESTADO REALMENTE**. |
+| Download retomável (`baixarComRetomada`) | CPU_ONLY | arquivo de 2.097.152 bytes, 60% já baixado (queda simulada), servidor HTTP local com suporte a `Range` | download retomado dos 40% restantes, conteúdo final byte-a-byte idêntico ao original | **65ms** para retomar os 838.861 bytes restantes | — | **TESTADO REALMENTE** — servidor HTTP real (`http.createServer`) rodando em `localhost`, não mockado. |
+| Chatterbox — `import chatterbox` | CPU_ONLY | `python3 -c "import chatterbox"` | `ModuleNotFoundError: No module named 'chatterbox'` | — | — | **TESTADO REALMENTE** — pacote continua não instalado nesta sandbox (mesma decisão da Rodada 8: não instalar o stack pesado de torch/transformers só para confirmar o `import`, já que os pesos dependem do Hugging Face, bloqueado aqui). Precisa ser testado na máquina real via `worker/diagnose-digital-twin-worker.ps1`. |
+| MuseTalk — versão instalada/preferida | — | — | `MUSETALK_VERSAO_PREFERIDA = '1.5'` documentada; nenhuma instalação real nesta sandbox (sem GPU) | — | — | **PREPARADO, NÃO EXECUTADO** — a preferência pela 1.5 é só uma configuração; a instalação real só acontece numa máquina com GPU. |
+| Lip-sync real (MuseTalk) | — | Reference Video + áudio | vídeo 5-10s sincronizado | — | — | **PREPARADO PARA GPU** — `gerarPreviaLipSync()` tem a lógica completa (chamada ao provider + validação de duração 5-10s) coberta por testes com um provider **mockado**; a chamada real ao MuseTalk depende de GPU/pesos que este ambiente não tem. |
+| Validação de duração do pipeline de lip-sync (5-10s) | CPU_ONLY | vídeo real de 7s / vídeo real de 15s gerados via FFmpeg | 7s aprovado, 15s reprovado com motivo explícito | < 1s por validação (leitura FFmpeg do cabeçalho) | — | **TESTADO REALMENTE** — vídeos de teste gerados com `ffmpeg -f lavfi`, validados com `analisarVideo()` real (não mockado). |
+
+### O que isso significa para a proprietária (Rodada 9)
+
+- **Hoje**, nesta sandbox de desenvolvimento: voz clonada e lip-sync continuam impossíveis de gerar de verdade (mesma causa da Rodada 8 — bloqueio de rede do ambiente, não do modelo). O fallback real e testado (`VOICE_ONLY_PREVIEW`) funciona de ponta a ponta com FFmpeg puro, sem GPU, sem custo.
+- **Na máquina Windows real da proprietária**, o diagnóstico (`worker/diagnose-digital-twin-worker.ps1`) precisa rodar primeiro — ele testa acesso real ao Hugging Face/Supabase/Patrono dali, sem herdar o bloqueio desta sandbox.
+
+### Custo (Rodada 9)
+
+R$ 0,00 — nenhuma chamada a serviço pago. Servidor HTTP do teste de download é local (`http.createServer`, sem custo). Banco de dados é o Postgres local já usado pelo projeto.

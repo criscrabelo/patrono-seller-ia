@@ -38,6 +38,10 @@ Estas já estavam em uso antes desta rodada (não foram adicionadas agora), mas 
 
 Nenhuma integração nova paga foi contratada nesta rodada. Nenhum dos dois foi desligado — a decisão de mantê-los é anterior a este ciclo de trabalho (já estavam em produção).
 
+## Rodada 9 — Worker Local + Primeira Voz Real (nenhuma dependência paga)
+
+Worker pairing (token), cache de modelos e download retomável usam só Node/`crypto`/`fetch` nativos e o Postgres já existente — nenhuma lib nova. Scripts de diagnóstico/ciclo de vida do worker são PowerShell nativo do Windows (sem instalador de terceiros). Testado nesta rodada, sem custo algum: geração real de `VOICE_ONLY_PREVIEW` via FFmpeg (já dependência do projeto), token de worker gerado/verificado/revogado contra o Postgres local, download retomável contra um servidor HTTP local de teste. O bloqueio ao Hugging Face/Supabase continua sendo uma restrição desta sandbox de desenvolvimento (`CURRENT_ENVIRONMENT_NETWORK_RESTRICTION`), não um custo nem uma limitação do Chatterbox/MuseTalk em si.
+
 ## Rodada 8 — Digital Twin Operacional (nenhuma dependência paga)
 
 Job Queue real usa o Postgres já existente — nenhum Redis/BullMQ/fila SaaS. Worker roda local/máquina própria — nenhum cloud GPU contratado. Testado nesta rodada: PyPI é acessível (o pacote `chatterbox-tts` é baixável de graça), mas o Hugging Face Hub está bloqueado pela política de rede deste ambiente — geração real de voz/avatar segue indisponível aqui, sem custo algum envolvido na tentativa.

@@ -99,6 +99,22 @@ Ver `DIGITAL-TWIN-WORKER.md` e `DIGITAL-TWIN-BENCHMARK.md`. Nesta rodada:
 - **CreativePresenterMode integrado ao Autopilot:** escolha automática (`DIGITAL_TWIN > VOICE_ONLY > MOTION_GRAPHICS > PRODUCT_ONLY`), nunca perguntado a cada postagem.
 - **Segunda prévia com produto:** layout `PRESENTER_PRODUCT_PANEL` (produto autorizado ao lado do avatar) ou `PRESENTER_INTRO_BROLL` — nunca finge que o avatar segura o produto fisicamente.
 
+## Rodada 9 — Worker Local + Primeira Voz Real + Primeiro Avatar Real quando o hardware permitir
+
+Ver `DIGITAL-TWIN-WORKER.md`, `DIGITAL-TWIN-BENCHMARK.md`, `DIGITAL-TWIN-MODEL-LICENSES.md` e `DIGITAL-TWIN-WINDOWS-INSTALL.md`. Nesta rodada:
+
+- **Correção de enquadramento (regra 1):** o bloqueio ao Hugging Face/Supabase observado nas sandboxes de desenvolvimento é reclassificado como `CURRENT_ENVIRONMENT_NETWORK_RESTRICTION` (`lib/digital-twin-network-access.ts`) — nunca `MODEL_UNAVAILABLE`. Precisa ser retestado na máquina real antes de qualquer conclusão sobre disponibilidade do modelo.
+- **Diagnóstico da máquina Windows:** `worker/diagnose-digital-twin-worker.ps1` (somente leitura, nunca modifica nada) + `classificarMaquina()` (`lib/digital-twin-machine-classification.ts`) → `FULL_DIGITAL_TWIN | VOICE_AND_LIPSYNC | VOICE_ONLY | MOTION_GRAPHICS_ONLY | UNAVAILABLE`.
+- **Primeiro teste de voz real:** `lib/digital-twin-voice-job.ts`, `gerarPreviaDeVoz()` — Reference Audio → Chatterbox → texto novo em pt-BR → Voice Quality Gate → prévia privada. Texto oficial: *"Oi! Esta é uma prévia da minha voz digital no Patrono Seller. Os próximos conteúdos poderão ser produzidos automaticamente para mim."* Nunca publica.
+- **Aprovação da voz separada da aprovação do avatar:** `DigitalTwinProfile.voiceApprovedAt` é independente de `approvedAt` — a usuária pode aprovar a voz antes do avatar estar pronto (`app/api/digital-twin/voice-approve`).
+- **MuseTalk 1.5 + licenças por dependência:** `MUSETALK_VERSAO_PREFERIDA = '1.5'` e `podeAtivarMuseTalkComercialmente()` (`lib/lipsync-provider.ts`) bloqueiam ativação comercial até cada dependência (Whisper, ft-mse-vae, DWPose, S3FD, MMDetection, MMPose) ser revalidada manualmente — nenhuma começa `CLEARED`.
+- **Primeiro pipeline de lip-sync real:** `lib/digital-twin-lipsync-job.ts`, `gerarPreviaLipSync()` — Reference Video + áudio Chatterbox → MuseTalk → vídeo de 5-10s, validado (duração real via FFmpeg) antes de aprovar como prévia.
+- **`VOICE_ONLY_PREVIEW` — fallback real sem GPU:** `gerarPreviaVozSomente()` gera de verdade (FFmpeg, sem GPU) foto + voz clonada + motion graphics + legenda — nunca rotulado como lip-sync. Testado ponta a ponta nesta sandbox (ver `DIGITAL-TWIN-BENCHMARK.md`).
+- **Segunda prévia com produto (pipeline completo):** `lib/digital-twin-product-preview-job.ts`, `gerarSegundaPreviaComProduto()` — roteiro/captions/CTA (preset TikTok) → voz → avatar (lip-sync ou VOICE_ONLY_PREVIEW) → produto autorizado → AI disclosure → commercial disclosure → TikTok preflight → `DigitalTwinQualityGate`. Nunca publica.
+- **Worker pairing seguro:** `WorkerToken` (`lib/digital-twin-worker-token.ts`) — hash sha256, comparação `timingSafeEqual`, escopado a um único workspace, revogável, nunca loga o valor bruto.
+- **Terceiro kill switch — Worker ON/OFF:** `DigitalTwinProfile.workerPaused`, independente do Autopilot e do Digital Twin. Um job de um perfil pausado nunca é reivindicado (`reivindicarProximoJob()`), mesmo por um worker sem pareamento.
+- **Cache de modelos fora do Git + download retomável:** `lib/digital-twin-model-cache.ts` — diretório fora do repositório, download com `Range` HTTP retomado de onde parou.
+
 ## O que ainda não existe
 
-Nenhuma geração de voz/avatar/lip-sync real (Chatterbox/MuseTalk não conseguem baixar pesos neste ambiente — Hugging Face bloqueado pela política de rede, confirmado via teste real). O que roda de verdade sem GPU: fallback Motion Graphics/Product Only (FFmpeg), job queue completo, onboarding, preferências, kill switches.
+Nenhuma geração de voz/avatar/lip-sync real de ponta a ponta com pesos verdadeiros do Chatterbox/MuseTalk (bloqueio de rede desta sandbox de desenvolvimento, reclassificado como `CURRENT_ENVIRONMENT_NETWORK_RESTRICTION` — precisa ser retestado na máquina real da proprietária). O que roda de verdade sem GPU e sem depender do Hugging Face: fallback Motion Graphics/Product Only (FFmpeg), `VOICE_ONLY_PREVIEW` completo (foto + voz + motion graphics + legenda), job queue completo, worker pairing, cache de modelos com download retomável, onboarding, preferências, três kill switches independentes.
