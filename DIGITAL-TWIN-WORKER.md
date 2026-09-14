@@ -1,6 +1,6 @@
 # Patrono Generation Worker
 
-**Criado:** Rodada 8 (Digital Twin Operacional + Primeira Prévia Real). **Atualizado:** Rodada 9 (Worker Local + Primeira Voz Real) — diagnóstico Windows, pairing seguro (token), versão do worker, cache de modelos, ciclo de vida completo (start/stop/status/auto-start). **Atualizado novamente:** Retomada da Rodada 9 — `processarJobDeVerdade()` agora chama de verdade os pipelines de voz/avatar por `jobType`, em vez de um placeholder fixo.
+**Criado:** Rodada 8 (Digital Twin Operacional + Primeira Prévia Real). **Atualizado:** Rodada 9 (Worker Local + Primeira Voz Real) — diagnóstico Windows, pairing seguro (token), versão do worker, cache de modelos, ciclo de vida completo (start/stop/status/auto-start). **Atualizado novamente:** Retomada da Rodada 9 — `processarJobDeVerdade()` agora chama de verdade os pipelines de voz/avatar por `jobType`, em vez de um placeholder fixo. **Atualizado mais uma vez:** Continuação da Retomada — `audioPromptPath` no lugar de um `voiceId` fictício, prévias persistidas como `DigitalTwinAsset` real, e status por etapa finalmente exibido na UI.
 
 O worker é o processo que roda o que a Rodada 7 já modelou (voz clonada, lip-sync, renderer) FORA do servidor web — Vercel/servidor de request HTTP não é lugar para workload longo de IA. Ele pode rodar numa máquina local (a máquina da proprietária, com ou sem GPU) ou num servidor compatível.
 
@@ -81,12 +81,16 @@ Antes desta retomada, qualquer job em modo `DIGITAL_TWIN`/`VOICE_ONLY` caía sem
 
 `processarJobDeVerdade()` agora delega para `processarEtapaDeVozOuAvatar()`, que roteia por `DigitalTwinJob.jobType`:
 
-- **`VOICE_PREVIEW`** — chama `gerarPreviaDeVoz()` com um `ChatterboxVoiceCloneProvider` real (o id do `VoiceProfile` é usado como `voiceId` nesse meio-tempo — o provider real ainda não persiste um `voiceId` próprio porque a clonagem real nunca completou nesta sandbox).
+- **`VOICE_PREVIEW`** — chama `gerarPreviaDeVoz()` com um `ChatterboxVoiceCloneProvider` real. **Correção (Continuação da Retomada da Rodada 9, regra 10):** inspecionando o código real do pacote instalado (`chatterbox/mtl_tts.py`: `generate(text, language_id, audio_prompt_path=...)`), confirmou-se que o Chatterbox é **zero-shot** — não existe nenhum "voice ID" persistente devolvido por uma etapa de clonagem/enrollment. `VoiceCloneProvider.sintetizar()` não recebe mais `voiceId`; recebe `audioPromptPath`, resolvido a partir do asset `VOICE_REFERENCE` já autorizado (baixado do bucket privado para um arquivo local a cada síntese). O resultado READY é salvo como um `DigitalTwinAsset` (`GENERATED_PREVIEW`/`voice_preview`) de verdade — antes desta correção, nada convertia o áudio gerado num asset consultável, e a UI de aprovação (já existente desde a Rodada 8/9) ficava sem dado real para mostrar.
 - **`AVATAR_PREVIEW`**, modo `DIGITAL_TWIN` — baixa o `REFERENCE_VIDEO` do bucket privado para um arquivo local (o provider roda como subprocesso Python NESTA MESMA MÁQUINA — worker local, nunca um upload remoto no meio do pipeline) e chama `gerarPreviaLipSync()` com um `MuseTalkLipSyncProvider` real.
 - **`AVATAR_PREVIEW`**, modo `VOICE_ONLY` — gera uma signed URL do `FACE_IMAGE` e chama `gerarPreviaVozSomente()` (fallback real sem GPU, nunca rotulado como lip-sync).
 - **`PRODUCT_PREVIEW`/`PUBLISH`** — continuam fora do escopo desta retomada (prioridade explícita: voz e avatar primeiro) — falham com um motivo honesto em vez de fingir.
 
 Nesta sandbox (sem Hugging Face, sem GPU), o resultado real e esperado é **falha honesta** vinda do provider (ex.: Hugging Face bloqueado) — nunca um "sucesso" fabricado. O roteamento em si (qual pipeline chamar, quais assets buscar, quais erros retornar quando faltam pré-requisitos) é testado de verdade contra o Postgres local em `tests/retomada-rodada9-worker-wiring.test.ts`.
+
+## Status por etapa na UI (Continuação da Retomada, regra 12/13)
+
+`statusAmigavelParaUsuaria()` (`lib/digital-twin-job-queue.ts`) já nomeava cada etapa desde a correção anterior, mas **nenhuma tela o consumia** — ficava órfão no backend. `GET /api/digital-twin` agora inclui `ultimoJob` (o `DigitalTwinJob` mais recente do perfil): `status`, `jobType`, `statusAmigavel` e `emAndamento` (falso para `READY`/`FAILED`/`CANCELLED`). A página `Configurações → Digital Twin` mostra esse nome de etapa real no lugar do texto estático "Prévia ainda não gerada" e faz polling a cada 5s enquanto `emAndamento` for verdadeiro — nunca um percentual inventado, só a etapa real vinda do banco. Testado de ponta a ponta contra um servidor real (`tests/digital-twin-status-ui.test.mjs`): cria um job `GENERATING_VOICE` de verdade via SQL, confirma que a resposta HTTP devolve "Gerando voz" com `emAndamento: true`, e que um job `READY` devolve `emAndamento: false`.
 
 ## Custo
 
