@@ -39,3 +39,10 @@ next-env.d.ts
 
 # claude code
 .claude/
+
+# Patrono Generation Worker (Rodada 8) — nunca versionar venv/pesos/cache de modelo
+/worker/.venv-digital-twin/
+/worker/model-cache/
+*.pt
+*.safetensors
+*.ckpt

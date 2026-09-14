@@ -490,6 +490,15 @@ model DigitalTwinProfile {
   enabled    Boolean   @default(false) // kill switch — "DESATIVAR MEU AVATAR"
   approvedAt DateTime? // aprovação do PERFIL após a prévia (regra 42/43) — não é aprovação por vídeo
 
+  // ── Preferências globais (Rodada 8, regra 50) ──────────────────────
+  // Nunca perguntadas a cada postagem — o Autopilot só consulta isso uma
+  // vez por ciclo.
+  autoUseDigitalTwin Boolean @default(false)
+  autoUseVoice       Boolean @default(false)
+  allowFallback      Boolean @default(true)
+  priorityChannel    String  @default("tiktok")
+  defaultStyle       String  @default("presenter")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -515,9 +524,15 @@ model DigitalTwinAsset {
   purpose     String?
   active      Boolean @default(true)
 
+  // Retenção de prévias (Rodada 8, regra 42) — GENERATED_PREVIEW rejeitada/
+  // não usada expira e é limpa; referências permanentes (FACE_IMAGE,
+  // REFERENCE_VIDEO, VOICE_REFERENCE, CONSENT_EVIDENCE) ficam com null.
+  expiresAt DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([workspaceId, profileId])
+  @@index([expiresAt])
 }
 
 model DigitalTwinJob {
@@ -537,8 +552,33 @@ model DigitalTwinJob {
   error         String?
   attempts      Int     @default(0)
 
+  // ── Job Queue real (Rodada 8) ──────────────────────────────────────
+  // Claim atômico: um worker só processa o job se conseguir gravar seu
+  // workerId (via UPDATE condicional — ver lib/digital-twin-job-queue.ts).
+  // heartbeatAt é renovado periodicamente enquanto processa; se parar de
+  // renovar por mais que lockTimeoutMs, o job é considerado travado e
+  // pode ser reclamado por outro worker (nunca fica preso para sempre).
+  workerId       String?
+  claimedAt      DateTime?
+  heartbeatAt    DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId, status])
+  @@index([status, workerId])
+}
+
+// Saúde do(s) worker(s) locais de geração — só para a tela de Configurações
+// → Digital Twin, nunca para a Home (regra 37).
+model GenerationWorkerHealth {
+  id         String   @id @default(cuid())
+  workerId   String   @unique
+  online     Boolean  @default(true)
+  gpuDetected Boolean @default(false)
+  gpuName    String?
+  vramGB     Float?
+  version    String?
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 }

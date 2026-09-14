@@ -64,6 +64,7 @@ export async function carregarContextoDigitalTwin(workspaceId: string): Promise<
       voiceProfileId: profileRow.voiceProfileId,
       consentStatus: (identityConsentRow?.status as DigitalTwinProfile['consentStatus']) ?? 'NOT_REQUESTED',
       enabled: profileRow.enabled,
+      approvedAt: profileRow.approvedAt,
       createdAt: profileRow.createdAt,
       updatedAt: profileRow.updatedAt,
     },

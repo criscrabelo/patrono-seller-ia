@@ -65,6 +65,7 @@ export interface DigitalTwinProfile {
   voiceProfileId: string | null
   consentStatus: ConsentStatus
   enabled: boolean // kill switch — "DESATIVAR MEU AVATAR"
+  approvedAt: Date | null // aprovação ÚNICA do perfil (Rodada 8, regra 24) — não é aprovação por vídeo
   createdAt: Date
   updatedAt: Date
 }
