@@ -38,6 +38,10 @@ Estas já estavam em uso antes desta rodada (não foram adicionadas agora), mas 
 
 Nenhuma integração nova paga foi contratada nesta rodada. Nenhum dos dois foi desligado — a decisão de mantê-los é anterior a este ciclo de trabalho (já estavam em produção).
 
+## Rodada 9 (complemento) — Machine Learning Real (nenhuma dependência paga)
+
+Regressão logística (primeiro modelo real) implementada em **TypeScript puro** — sem scikit-learn/XGBoost/LightGBM, sem nenhuma biblioteca de ML nova no `package.json`. `MLTrainingRun`/`MLModel`/`MLPrediction`/`MLFeatureSnapshot`/`CreativeExperiment` usam o Postgres já existente (Prisma) — nenhum feature store externo, nenhum serviço de ML gerenciado (Vertex AI, SageMaker, Azure ML, Databricks — nenhum avaliado nem contratado). Testado nesta rodada, sem custo algum: treinamento real (gradiente descendente, convergência verificada, AUC real medido), promoção/rollback de modelo, integração no Autopilot, correlação estatística hook/CTA, experimento A/B com epsilon-greedy. Nenhum modelo chegou a `ACTIVE` em produção (dados insuficientes em qualquer workspace real) — mesmo assim, zero custo incorrido mesmo na tentativa.
+
 ## Rodada 9 — Worker Local + Primeira Voz Real (nenhuma dependência paga)
 
 Worker pairing (token), cache de modelos e download retomável usam só Node/`crypto`/`fetch` nativos e o Postgres já existente — nenhuma lib nova. Scripts de diagnóstico/ciclo de vida do worker são PowerShell nativo do Windows (sem instalador de terceiros). Testado nesta rodada, sem custo algum: geração real de `VOICE_ONLY_PREVIEW` via FFmpeg (já dependência do projeto), token de worker gerado/verificado/revogado contra o Postgres local, download retomável contra um servidor HTTP local de teste. O bloqueio ao Hugging Face/Supabase continua sendo uma restrição desta sandbox de desenvolvimento (`CURRENT_ENVIRONMENT_NETWORK_RESTRICTION`), não um custo nem uma limitação do Chatterbox/MuseTalk em si.

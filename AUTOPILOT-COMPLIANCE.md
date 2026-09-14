@@ -129,6 +129,18 @@ Persistência real (`lib/digital-twin-store.ts`, sempre escopada por `workspaceI
 
 Job Queue real (`lib/digital-twin-job-queue.ts`) — claim atômico Postgres, heartbeat, retry, worker offline nunca perde o job. Worker separado do request HTTP (`worker/digital-twin-worker.ts`). `determinarModoAutopilot()` (`lib/digital-twin-autopilot-integration.ts`) escolhe `CreativePresenterMode` sozinho, considerando preferências globais + worker online — nunca pergunta a cada postagem. `DigitalTwinIdentityLock` garante que só o perfil aprovado é reutilizado. `avaliarKillSwitches()` confirma os dois níveis (Autopilot/Digital Twin) independentes. Segunda prévia com produto nunca finge posse física (`PRESENTER_PRODUCT_PANEL`/`PRESENTER_INTRO_BROLL`).
 
+## 15.5 Rodada 9 (complemento) — Machine Learning Real
+
+Ver `MACHINE-LEARNING.md`. Relevante para compliance/transparência do Autopilot:
+
+- **Nunca opaco**: todo `OpportunityScore` composto (`lib/opportunity-score-composite.ts`) registra separadamente `externalMarketSignals`/`automationFeasibility`/`historicalPerformance`/`mlPrediction` — nunca um número só escondendo a origem da decisão (regra 12/36).
+- **Toda decisão sabe seu próprio tipo**: `MLDecisionType` (`RULE_BASED`/`STATISTICAL_LEARNING`/`MACHINE_LEARNING`/`MODEL_BASED`) registrado em cada `MLPrediction`, nunca chamando de "IA" uma regra fixa.
+- **Nunca trava o Autopilot**: `AutopilotDeps.mlEngine` é opcional; qualquer falha (modelo corrompido, artifact inválido, dimensão dessincronizada) cai para o score determinístico da Rodada 5, testado explicitamente (`ml_prediction_failed` na auditoria).
+- **Nunca promove modelo ruim**: `ModelPromotionGate` só ativa um candidato que supera o baseline determinístico por margem mínima — nunca por empate/ruído; rollback sempre disponível.
+- **Nunca usa dado biométrico do Digital Twin para otimizar venda**: `verificarSemDadosBiometricos()` bloqueia a persistência de qualquer feature de performance com campo de áudio/rosto brutos; `nuncaAlterarIdentidade()` bloqueia qualquer sugestão de apresentação do Digital Twin que toque identidade — o `DigitalTwinIdentityLock` continua sendo a única fronteira de identidade.
+- **Auditoria completa**: cada previsão de ML é persistida (`MLPrediction`) e auditada (reaproveita `AuditLog`, mesmo padrão do resto do Autopilot) — nunca silenciosa.
+- **Isolamento por workspace**: nenhum modelo/feature/experimento de um workspace é usado por outro.
+
 ## 16. O que ainda não existe
 
 Nenhuma credencial real (Amazon, Mercado Livre, TikTok) foi configurada ou inventada nesta rodada — tudo funciona em modo "aguardando configuração" até a usuária conectar. `runAutopilot` ainda não cria `Produto`/`Conteudo`/`Sale` reais no banco por padrão — usa um `AutopilotStore` injetável (testável sem banco), com uma implementação Prisma pronta para ligar quando o fluxo completo de persistência for desenhado. `TikTokShopAffiliateProvider` aguarda confirmação de API oficial de afiliados. App do TikTok Channel ainda não foi submetido para auditoria (`TIKTOK-APP-AUDIT-CHECKLIST.md`) — nenhum item do checklist foi executado nesta rodada.
