@@ -64,6 +64,13 @@ model Workspace {
   digitalTwinAssets   DigitalTwinAsset[]
   digitalTwinJobs     DigitalTwinJob[]
   workerTokens        WorkerToken[]
+
+  // ── Machine Learning (Rodada 9, complemento) ────────────────────────
+  mlTrainingRuns      MLTrainingRun[]
+  mlModels            MLModel[]
+  mlPredictions       MLPrediction[]
+  mlFeatureSnapshots  MLFeatureSnapshot[]
+  creativeExperiments CreativeExperiment[]
 }
 
 model User {
@@ -616,4 +623,153 @@ model WorkerToken {
   lastUsedAt DateTime?
 
   @@index([workspaceId])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Machine Learning (Rodada 9, complemento — ML Real)
+//
+// Todo modelo/previsão é escopado por workspace (regra 39): dados de um
+// workspace nunca treinam/alimentam o modelo de outro. Um modelo global
+// agregando vários workspaces exigiria política de anonimização própria
+// — não implementado nesta rodada.
+// ═══════════════════════════════════════════════════════════════════
+
+// Uma execução de treinamento (pode ou não resultar num MLModel novo —
+// falha por dados insuficientes/erro também é registrada aqui).
+model MLTrainingRun {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  modelFamily    String // ex.: "conversion_probability"
+  datasetVersion String // versão/hash do snapshot de dados usado
+  status         String @default("RUNNING") // RUNNING | COMPLETED | FAILED (ver lib/ml-types.ts)
+
+  sampleCount   Int
+  featureNames  String[]
+  metrics       Json? // {rocAuc, precision, recall, mae, rmse, ...}
+  baselineMetrics Json? // métricas do baseline determinístico, para o Promotion Gate comparar
+  notes         String? @db.Text
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  models MLModel[]
+
+  @@index([workspaceId, modelFamily])
+}
+
+// Um modelo treinado e versionado. Nunca vira ACTIVE sem passar pelo
+// ModelPromotionGate (lib/ml-model-registry.ts) — precisa superar o
+// baseline determinístico.
+model MLModel {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  family   String // ex.: "conversion_probability"
+  modelType String // ex.: "LOGISTIC_REGRESSION"
+  version  Int
+
+  trainingRunId          String?
+  trainingRun            MLTrainingRun? @relation(fields: [trainingRunId], references: [id])
+  trainingDate           DateTime
+  trainingDatasetVersion String
+
+  features        String[]
+  metrics         Json
+  baselineMetrics Json?
+  status          String @default("CANDIDATE") // CANDIDATE | VALIDATED | ACTIVE | DEPRECATED | ROLLED_BACK
+
+  // Modelos desta rodada são pequenos o suficiente (poucos coeficientes)
+  // para ficar inline no próprio banco — `artifactPath` fica reservado
+  // para quando um modelo maior precisar de armazenamento externo.
+  artifactPath String?
+  artifact     Json?
+
+  promotedAt   DateTime?
+  deprecatedAt DateTime?
+  rolledBackAt DateTime?
+  createdAt    DateTime  @default(now())
+
+  predictions MLPrediction[]
+
+  @@unique([workspaceId, family, version])
+  @@index([workspaceId, family, status])
+}
+
+// Toda previsão feita pelo PatronoMLEngine (ou pelo fallback
+// determinístico) é registrada aqui — nunca "silenciosa" (regra 29, 37).
+model MLPrediction {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  modelRowId   String?
+  model        MLModel? @relation(fields: [modelRowId], references: [id])
+  modelFamily  String?
+  modelVersion Int?
+  decisionType String // RULE_BASED | STATISTICAL_LEARNING | MACHINE_LEARNING | MODEL_BASED
+
+  entityType String // ex.: "AffiliateOpportunity" | "Conteudo"
+  entityId   String?
+
+  inputFeatures Json
+
+  predictedConversionProbability Float?
+  expectedCommissionValue        Float?
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, entityType])
+  @@index([workspaceId, modelRowId])
+}
+
+// Snapshot de features versionado (regra 7). `label` só é preenchido
+// DEPOIS que o resultado (venda/comissão) é conhecido — nunca no momento
+// da extração das features, para nunca vazar informação futura (regra 31).
+model MLFeatureSnapshot {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  entityType     String // "Conteudo" | "Produto"
+  entityId       String?
+  featureVersion String
+
+  features Json
+  label    Json?
+
+  capturedAt DateTime  @default(now())
+  labeledAt  DateTime?
+
+  @@index([workspaceId, entityType])
+}
+
+// Teste A/B de criativo (regra 24) — hook, CTA, duração, avatar/B-roll,
+// etc. Estratégia de atribuição simples e auditável (epsilon-greedy).
+model CreativeExperiment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  name      String
+  dimension String // "hook" | "cta" | "duration" | "avatar_vs_broll" | ...
+  variantA  Json
+  variantB  Json
+
+  assignmentStrategy String  @default("EPSILON_GREEDY")
+  epsilon            Float   @default(0.1)
+  status             String  @default("RUNNING") // RUNNING | CONCLUDED | CANCELLED
+
+  assignments Json[] @default([]) // [{ variant, entityId, assignedAt }]
+  resultsA    Json?
+  resultsB    Json?
+  winner      String? // "A" | "B"
+
+  startedAt   DateTime  @default(now())
+  concludedAt DateTime?
+
+  @@index([workspaceId, status])
 }
