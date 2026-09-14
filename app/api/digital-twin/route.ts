@@ -6,6 +6,7 @@ import { registrarAuditoria } from '@/lib/audit-log'
 import { carregarContextoDigitalTwin } from '@/lib/digital-twin-store'
 import { podeGerarComDigitalTwin } from '@/lib/digital-twin'
 import { detectarCapacidadesRuntime } from '@/lib/digital-twin-runtime'
+import { statusAmigavelParaUsuaria } from '@/lib/digital-twin-job-queue'
 
 /** Status do Digital Twin do workspace da sessão — nunca aceita workspaceId do cliente. */
 export async function GET() {
@@ -40,6 +41,28 @@ export async function GET() {
       })
     : null
 
+  // Etapa real do último job (regra 12/13 da Continuação da Retomada da
+  // Rodada 9) — nunca um percentual fabricado, só o nome da etapa vindo do
+  // `DigitalTwinJob` de verdade. `statusAmigavelParaUsuaria()` existia no
+  // backend sem nenhuma tela consumir — corrigido aqui.
+  const ultimoJobRow = contexto.profile
+    ? await prisma.digitalTwinJob.findFirst({
+        where: { profileId: contexto.profile.id },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, status: true, jobType: true, workerId: true, error: true, createdAt: true },
+      })
+    : null
+  const ultimoJob = ultimoJobRow
+    ? {
+        id: ultimoJobRow.id,
+        jobType: ultimoJobRow.jobType,
+        status: ultimoJobRow.status,
+        statusAmigavel: statusAmigavelParaUsuaria(ultimoJobRow),
+        emAndamento: !['READY', 'FAILED', 'CANCELLED'].includes(ultimoJobRow.status),
+        erro: ultimoJobRow.status === 'FAILED' ? ultimoJobRow.error : null,
+      }
+    : null
+
   return NextResponse.json({
     profile: contexto.profile ? { ...contexto.profile, ...preferencias } : null,
     voiceProfile: contexto.voiceProfile ? { ...contexto.voiceProfile, referenceAudio: undefined } : null,
@@ -48,6 +71,7 @@ export async function GET() {
     podeGerar: decisao,
     runtime,
     workers,
+    ultimoJob,
   })
 }
 

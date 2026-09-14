@@ -24,6 +24,7 @@ interface StatusResposta {
   podeGerar: { permitido: boolean; motivo: string }
   runtime: { cpuCores: number; totalRamGB: number; gpuDetected: boolean; gpuName: string | null }
   workers: { workerId: string; gpuDetected: boolean; gpuName: string | null; vramGB: number | null; version: string | null; lastSeenAt: string }[]
+  ultimoJob: { id: string; jobType: string; status: string; statusAmigavel: string; emAndamento: boolean; erro: string | null } | null
 }
 
 const TEXTO_GUIADO_VOZ =
@@ -56,6 +57,16 @@ export default function DigitalTwinPage() {
   useEffect(() => {
     carregar()
   }, [])
+
+  // Progresso real do job (regra 12/13 da Continuação da Retomada da
+  // Rodada 9) — enquanto houver um job em andamento, verifica de novo
+  // periodicamente; nunca inventa um percentual, só reflete a etapa real
+  // vinda do `DigitalTwinJob` (statusAmigavelParaUsuaria()).
+  useEffect(() => {
+    if (!status?.ultimoJob?.emAndamento) return
+    const intervalo = setInterval(carregar, 5000)
+    return () => clearInterval(intervalo)
+  }, [status?.ultimoJob?.emAndamento])
 
   const gravacaoOriginal = assets.find((a) => a.type === 'VOICE_REFERENCE')
   const vozDigitalPreview = assets.find((a) => a.type === 'GENERATED_PREVIEW' && a.purpose === 'voice_preview')
@@ -279,7 +290,12 @@ export default function DigitalTwinPage() {
                 {vozDigitalPreview ? (
                   <audio controls src={vozDigitalPreview.url} className="w-full h-8" />
                 ) : (
-                  <p className="text-xs text-white/40">Prévia ainda não gerada — aguardando o processador de vídeos.</p>
+                  <p className="text-xs text-white/40">
+                    {status?.workers.length === 0
+                      ? 'Aguardando o processador de vídeos'
+                      : (status?.ultimoJob?.statusAmigavel ?? 'Aguardando o processador de vídeos')}
+                    {status?.ultimoJob?.erro ? ` — ${status.ultimoJob.erro}` : ''}
+                  </p>
                 )}
               </div>
               {status?.profile?.voiceApprovedAt ? (
