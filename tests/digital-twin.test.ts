@@ -21,6 +21,7 @@ function profileBase(overrides: Partial<DigitalTwinProfile> = {}): DigitalTwinPr
     voiceProfileId: 'v1',
     consentStatus: 'GRANTED',
     enabled: true,
+    approvedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,

@@ -128,7 +128,7 @@ describe('podeGerarComDigitalTwin — kill switch e consentimento', () => {
   test('avatar desativado bloqueia mesmo com consentimento válido', () => {
     const decisao = podeGerarComDigitalTwin({
       profile: {
-        id: 'p1', workspaceId: 'w1', ownerUserId: 'u1', displayName: 'x', identityReferenceId: null, voiceProfileId: null,
+        id: 'p1', workspaceId: 'w1', ownerUserId: 'u1', displayName: 'x', identityReferenceId: null, voiceProfileId: null, approvedAt: null,
         consentStatus: 'GRANTED', enabled: false, createdAt: new Date(), updatedAt: new Date(),
       },
       voiceProfile: { id: 'v1', workspaceId: 'w1', ownerUserId: 'u1', referenceAudio: null, consentId: 'c1', provider: null, language: 'pt-BR', enabled: true, createdAt: new Date() },
@@ -233,7 +233,7 @@ describe('Job pipeline — retry seguro', () => {
     const r = deveAbortarPorKillSwitch({
       proximaEtapa: 'GENERATING_VOICE',
       profile: {
-        id: 'p1', workspaceId: 'w1', ownerUserId: 'u1', displayName: 'x', identityReferenceId: null, voiceProfileId: null,
+        id: 'p1', workspaceId: 'w1', ownerUserId: 'u1', displayName: 'x', identityReferenceId: null, voiceProfileId: null, approvedAt: null,
         consentStatus: 'GRANTED', enabled: false, createdAt: new Date(), updatedAt: new Date(),
       },
       voiceProfile: null,
