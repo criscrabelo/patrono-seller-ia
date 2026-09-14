@@ -18,6 +18,13 @@ import { deveAbortarPorKillSwitch, type DigitalTwinJobState } from './digital-tw
 import { carregarContextoDigitalTwin } from './digital-twin-store'
 import { RendererFFmpeg } from './renderer-ffmpeg'
 import type { RendererProvider } from './creative-factory'
+import { prisma } from './prisma'
+
+/** Terceiro kill switch (regra 34) — lido direto do banco a cada job, nunca cacheado. */
+async function workerEstaPausado(profileId: string): Promise<boolean> {
+  const profile = await prisma.digitalTwinProfile.findUnique({ where: { id: profileId }, select: { workerPaused: true } })
+  return profile?.workerPaused ?? false
+}
 
 export interface JobDeProducao {
   id: string
@@ -67,12 +74,14 @@ export async function processarJobDeVerdade(
   renderer: RendererProvider = new RendererFFmpeg()
 ): Promise<ResultadoProcessamento> {
   const contexto = await carregarContextoDigitalTwin(job.workspaceId)
+  const workerPausado = await workerEstaPausado(job.profileId)
   const abortoKillSwitch = deveAbortarPorKillSwitch({
     proximaEtapa: 'GENERATING_VOICE',
     profile: contexto.profile,
     voiceProfile: contexto.voiceProfile,
     identityConsent: contexto.identityConsent,
     voiceConsent: contexto.voiceConsent,
+    workerPaused: workerPausado,
   })
 
   const capacidades = await detectarCapacidadesDeGeracao()

@@ -61,6 +61,13 @@ export function podeTentarNovamente(job: DigitalTwinJobState, maxTentativas: num
 /**
  * Checagem de kill switch imediatamente antes de uma etapa crítica —
  * nunca confia num status verificado no início do job (regra 40).
+ *
+ * `workerPaused` (Rodada 9, regra 34) — terceiro kill switch, independente
+ * do Autopilot ligado/desligado e do Digital Twin habilitado/desabilitado.
+ * `reivindicarProximoJob()` já impede um job de ser reivindicado quando o
+ * perfil está com o worker pausado; esta checagem é a segunda camada
+ * (defesa em profundidade) para o caso do worker ter pausado DEPOIS de já
+ * ter reivindicado o job, mas antes de chegar numa etapa crítica.
  */
 export function deveAbortarPorKillSwitch(params: {
   proximaEtapa: DigitalTwinJobStatus
@@ -68,8 +75,13 @@ export function deveAbortarPorKillSwitch(params: {
   voiceProfile: VoiceProfile | null
   identityConsent: IdentityConsent | null
   voiceConsent: VoiceConsent | null
+  workerPaused?: boolean
 }): { abortar: boolean; motivo: string | null } {
   if (!ETAPAS_CRITICAS.includes(params.proximaEtapa)) return { abortar: false, motivo: null }
+
+  if (params.workerPaused) {
+    return { abortar: true, motivo: 'Processador local (worker) pausado pela proprietária — geração interrompida antes da etapa crítica.' }
+  }
 
   const decisao = podeGerarComDigitalTwin({
     profile: params.profile,

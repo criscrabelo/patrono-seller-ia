@@ -220,13 +220,13 @@ describe('DigitalTwinIdentityLock', () => {
 
 describe('Kill switches independentes (Autopilot x Digital Twin)', () => {
   test('pausar só o Autopilot não afeta a disponibilidade de identidade/voz', () => {
-    const r = avaliarKillSwitches({ automationPaused: true, digitalTwinEnabled: true })
+    const r = avaliarKillSwitches({ automationPaused: true, digitalTwinEnabled: true, workerPaused: false })
     assert.equal(r.podePublicarAutopilot, false)
     assert.equal(r.podeUsarIdentidadeOuVoz, true)
   })
 
   test('pausar só o Digital Twin não afeta a publicação do Autopilot', () => {
-    const r = avaliarKillSwitches({ automationPaused: false, digitalTwinEnabled: false })
+    const r = avaliarKillSwitches({ automationPaused: false, digitalTwinEnabled: false, workerPaused: false })
     assert.equal(r.podePublicarAutopilot, true)
     assert.equal(r.podeUsarIdentidadeOuVoz, false)
   })
@@ -248,6 +248,7 @@ describe('Autopilot — seleção automática de modo', () => {
       autoUseVoice: false,
       allowFallback: true,
       workerOnline: true,
+      workerPaused: false,
     })
     assert.notEqual(d.modo, 'DIGITAL_TWIN')
   })
@@ -255,7 +256,7 @@ describe('Autopilot — seleção automática de modo', () => {
   test('zero state (sem perfil) nunca escolhe DIGITAL_TWIN, mas ainda escolhe um modo', () => {
     const d = determinarModoAutopilot({
       profile: null, voiceProfile: null, identityConsent: null, voiceConsent: null,
-      autoUseDigitalTwin: true, autoUseVoice: true, allowFallback: true, workerOnline: true,
+      autoUseDigitalTwin: true, autoUseVoice: true, allowFallback: true, workerOnline: true, workerPaused: false,
     })
     assert.notEqual(d.modo, 'DIGITAL_TWIN')
     assert.ok(d.modo)
@@ -367,7 +368,7 @@ describe('Zero state', () => {
   test('workspace novo sem nenhum job, perfil ou preferência não quebra a seleção de modo (cai no fallback com motion graphics)', () => {
     const d = determinarModoAutopilot({
       profile: null, voiceProfile: null, identityConsent: null, voiceConsent: null,
-      autoUseDigitalTwin: false, autoUseVoice: false, allowFallback: true, workerOnline: false,
+      autoUseDigitalTwin: false, autoUseVoice: false, allowFallback: true, workerOnline: false, workerPaused: false,
     })
     assert.equal(d.modo, 'MOTION_GRAPHICS')
   })
@@ -375,7 +376,7 @@ describe('Zero state', () => {
   test('sem perfil e fallback desabilitado, usa só o produto (PRODUCT_ONLY)', () => {
     const d = determinarModoAutopilot({
       profile: null, voiceProfile: null, identityConsent: null, voiceConsent: null,
-      autoUseDigitalTwin: false, autoUseVoice: false, allowFallback: false, workerOnline: false,
+      autoUseDigitalTwin: false, autoUseVoice: false, allowFallback: false, workerOnline: false, workerPaused: false,
     })
     assert.equal(d.modo, 'PRODUCT_ONLY')
   })

@@ -19,8 +19,11 @@ export interface DecisaoModoAutopilot {
  * Decide o modo automaticamente: só considera `DIGITAL_TWIN`/`VOICE_ONLY`
  * quando (a) o perfil permite gerar (consentimentos válidos, kill switch
  * OFF), (b) a preferência global da usuária permite (`autoUseDigitalTwin`/
- * `autoUseVoice`), e (c) o worker de geração está online. Sem isso, cai
- * para o fallback automaticamente — nunca trava a publicação.
+ * `autoUseVoice`), (c) o worker de geração está online, e (d) o worker
+ * NÃO está pausado pelo terceiro kill switch (regra 34, Rodada 9 —
+ * `DigitalTwinProfile.workerPaused`, independente do Autopilot ligado/
+ * desligado e do Digital Twin habilitado/desabilitado). Sem isso, cai para
+ * o fallback automaticamente — nunca trava a publicação.
  */
 export function determinarModoAutopilot(params: {
   profile: DigitalTwinProfile | null
@@ -31,6 +34,7 @@ export function determinarModoAutopilot(params: {
   autoUseVoice: boolean
   allowFallback: boolean
   workerOnline: boolean
+  workerPaused: boolean
 }): DecisaoModoAutopilot {
   const decisaoGate = podeGerarComDigitalTwin({
     profile: params.profile,
@@ -39,8 +43,9 @@ export function determinarModoAutopilot(params: {
     voiceConsent: params.voiceConsent,
   })
 
-  const digitalTwinDisponivel = decisaoGate.permitido && params.autoUseDigitalTwin && params.workerOnline && !!params.profile?.approvedAt
-  const vozClonadaDisponivel = decisaoGate.permitido && params.autoUseVoice && params.workerOnline
+  const workerDisponivel = params.workerOnline && !params.workerPaused
+  const digitalTwinDisponivel = decisaoGate.permitido && params.autoUseDigitalTwin && workerDisponivel && !!params.profile?.approvedAt
+  const vozClonadaDisponivel = decisaoGate.permitido && params.autoUseVoice && workerDisponivel
 
   if (!digitalTwinDisponivel && !vozClonadaDisponivel && !params.allowFallback) {
     return { modo: 'PRODUCT_ONLY', motivo: 'Fallback desabilitado pela preferência da usuária e Digital Twin/voz indisponíveis — usando produto apenas.' }
@@ -51,6 +56,10 @@ export function determinarModoAutopilot(params: {
     vozClonadaDisponivel,
     motionGraphicsDisponivel: true,
   })
+
+  if (params.workerPaused && (decisaoGate.permitido && (params.autoUseDigitalTwin || params.autoUseVoice))) {
+    return { modo, motivo: `Processador local (worker) pausado pela usuária — usando ${modo} até o worker ser reativado.` }
+  }
   return { modo, motivo: decisaoGate.permitido ? decisaoGate.motivo : `Digital Twin indisponível (${decisaoGate.motivo}) — usando ${modo}.` }
 }
 
