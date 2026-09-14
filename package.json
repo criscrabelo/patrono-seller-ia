@@ -26,6 +26,7 @@
     "test:rodada5": "tsx --test tests/rodada5-autopilot.test.ts",
     "test:rodada6": "tsx --test tests/rodada6-tiktok.test.ts",
     "test:digital-twin": "tsx --test tests/digital-twin.test.ts",
+    "test:rodada7": "tsx --test tests/rodada7-digital-twin-real.test.ts",
     "test": "node --test tests/*.test.mjs && tsx --test tests/*.test.ts"
   },
   "dependencies": {
