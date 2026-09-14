@@ -55,6 +55,14 @@ model Workspace {
   sales             Sale[]
   commissions       Commission[]
   auditLogs         AuditLog[]
+
+  // ── Digital Twin (Rodada 7) ────────────────────────────────────────
+  digitalTwinProfiles DigitalTwinProfile[]
+  voiceProfiles       VoiceProfile[]
+  identityConsents    IdentityConsent[]
+  voiceConsents       VoiceConsent[]
+  digitalTwinAssets   DigitalTwinAsset[]
+  digitalTwinJobs     DigitalTwinJob[]
 }
 
 model User {
@@ -398,4 +406,139 @@ model AuditLog {
 
   @@index([workspaceId, createdAt])
   @@index([entityType, entityId])
+}
+
+// ── Digital Twin (Rodada 7) ─────────────────────────────────────────────
+// Persistência real das fundações conceituais da Rodada 6. `workspaceId`
+// SEMPRE resolvido no servidor (session.user.workspaceId) — nunca aceito
+// do corpo/query da requisição. `ownerUserId`/`subjectUserId` são gravados
+// como texto simples (mesmo padrão de `Workspace.ownerId`), sem chave
+// estrangeira — não são o limite de isolamento; `workspaceId` é.
+
+model IdentityConsent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  subjectUserId String // sempre a própria titular do workspace
+  purpose       String
+  version       String @default("v1")
+
+  // NOT_REQUESTED | GRANTED | REVOKED | EXPIRED (lib/digital-twin.ts)
+  status String @default("NOT_REQUESTED")
+
+  grantedAt DateTime?
+  revokedAt DateTime?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([workspaceId])
+}
+
+model VoiceConsent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  subjectUserId String
+  purpose       String
+  version       String @default("v1")
+  status        String @default("NOT_REQUESTED")
+
+  grantedAt DateTime?
+  revokedAt DateTime?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([workspaceId])
+}
+
+model VoiceProfile {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  ownerUserId String
+  consentId   String? // aponta para VoiceConsent.id — sem FK Prisma (checagem feita em código)
+
+  provider     String? // preenchido só quando um provider real for usado (ex.: "chatterbox-tts")
+  modelVersion String?
+  language     String  @default("pt-BR")
+
+  // Kill switch — "DESATIVAR MEU AVATAR" também desativa a voz.
+  enabled Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+model DigitalTwinProfile {
+  id          String    @id @default(cuid())
+  workspaceId String    @unique // 1 perfil por workspace nesta fase (mesmo limite de "1 usuária = 1 workspace")
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  ownerUserId String
+  displayName String
+
+  identityConsentId String?
+  voiceProfileId    String?
+
+  enabled    Boolean   @default(false) // kill switch — "DESATIVAR MEU AVATAR"
+  approvedAt DateTime? // aprovação do PERFIL após a prévia (regra 42/43) — não é aprovação por vídeo
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assets DigitalTwinAsset[]
+  jobs   DigitalTwinJob[]
+}
+
+model DigitalTwinAsset {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  profileId String
+  profile   DigitalTwinProfile @relation(fields: [profileId], references: [id])
+
+  // FACE_IMAGE | REFERENCE_VIDEO | VOICE_REFERENCE | CONSENT_EVIDENCE | GENERATED_PREVIEW
+  type String
+
+  // Caminho no bucket PRIVADO do Supabase Storage — nunca uma URL pública
+  // permanente. Acesso só via signed URL temporária (lib/supabase.ts).
+  storagePath String
+  mimeType    String
+  purpose     String?
+  active      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, profileId])
+}
+
+model DigitalTwinJob {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  profileId String
+  profile   DigitalTwinProfile @relation(fields: [profileId], references: [id])
+
+  // QUEUED | PREPARING_AUDIO | GENERATING_VOICE | GENERATING_AVATAR | LIP_SYNC
+  // | RENDERING | VALIDATING | READY | FAILED | CANCELLED
+  status String @default("QUEUED")
+
+  contentId     String? // ligação futura com Conteudo, quando existir
+  resultAssetId String?
+  error         String?
+  attempts      Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, status])
 }

@@ -63,6 +63,11 @@ export default function ContaPage() {
         <p className="text-sm text-muted-foreground">Seus dados e segurança</p>
       </div>
 
+      <a href="/conta/digital-twin" className="block card-stat hover:bg-white/5 transition-colors">
+        <span className="text-sm font-medium text-white">Digital Twin</span>
+        <span className="text-xs text-muted-foreground block mt-0.5">Representação digital autorizada — mesma aparência, mesma voz</span>
+      </a>
+
       {/* Dados */}
       <div className="card-stat space-y-3">
         <div className="flex items-center gap-3">

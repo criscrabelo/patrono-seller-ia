@@ -163,3 +163,35 @@ export function validarPresenterMode(texto: string): PresenterModeValidation {
   }
   return { valido: true, motivo: 'Nenhuma alegação de experiência pessoal detectada.' }
 }
+
+// ── Virtual Presentation vs Real Product Experience (Rodada 7) ───────────
+// O avatar pode ser sintético; a EXPERIÊNCIA com o produto nunca pode ser
+// falsificada. `UNBOXING_STYLE` pode existir como estilo visual, mas nunca
+// afirma ou aparenta que a proprietária recebeu/testou fisicamente o
+// produto se isso não aconteceu de verdade.
+
+export type ProductExperienceMode = 'VIRTUAL_PRESENTATION' | 'REAL_PRODUCT_EXPERIENCE'
+
+/** O Autopilot SEMPRE usa este modo — nunca REAL_PRODUCT_EXPERIENCE automaticamente. */
+export const AUTOPILOT_PRODUCT_EXPERIENCE_MODE: ProductExperienceMode = 'VIRTUAL_PRESENTATION'
+
+export interface UnboxingStyleValidation {
+  permitido: boolean
+  motivo: string
+}
+
+/**
+ * `UNBOXING_STYLE` só é permitido em `VIRTUAL_PRESENTATION` quando o
+ * roteiro não afirma posse/recebimento físico real — nunca em
+ * `REAL_PRODUCT_EXPERIENCE` gerado automaticamente pelo Autopilot (isso
+ * exigiria prova real de experiência, que o Autopilot nunca fabrica).
+ */
+export function validarUnboxingStyle(params: { mode: ProductExperienceMode; afirmaRecebimentoFisicoReal: boolean }): UnboxingStyleValidation {
+  if (params.mode === 'REAL_PRODUCT_EXPERIENCE' && !params.afirmaRecebimentoFisicoReal) {
+    return { permitido: false, motivo: 'REAL_PRODUCT_EXPERIENCE exige confirmação real de recebimento — o Autopilot nunca gera essa alegação sozinho.' }
+  }
+  if (params.mode === 'VIRTUAL_PRESENTATION' && params.afirmaRecebimentoFisicoReal) {
+    return { permitido: false, motivo: 'VIRTUAL_PRESENTATION nunca pode afirmar/aparentar recebimento físico real do produto.' }
+  }
+  return { permitido: true, motivo: 'Estilo de apresentação consistente com o modo de experiência declarado.' }
+}
