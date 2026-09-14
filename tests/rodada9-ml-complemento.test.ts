@@ -92,6 +92,49 @@ describe('MLReadinessGate — cold start', () => {
     await prisma.user.deleteMany({ where: { workspaceId: user.workspaceId } })
     await prisma.workspace.deleteMany({ where: { id: user.workspaceId } })
   })
+
+  test('CORREÇÃO: 250 amostras TEST_FIXTURE + poucas REAL_OPERATION nunca vira READY_FOR_ML — só dado real conta para produção', async () => {
+    const { user } = await criarUsuarioComWorkspace(prisma, { email: `ml-prov-${randomUUID()}@t.com`, password: 'x' })
+    const workspaceId = user.workspaceId
+
+    // 250 observações de teste (fixture) — nunca podem contar para a prontidão de PRODUÇÃO.
+    const fixtures = Array.from({ length: 250 }, (_, i) => ({
+      workspaceId, entityType: 'Conteudo', entityId: `fixture-${i}`, featureVersion: FEATURE_VERSION,
+      features: {} as never, label: { converted: true } as never, labeledAt: new Date(), dataOrigin: 'TEST_FIXTURE',
+    }))
+    await prisma.mLFeatureSnapshot.createMany({ data: fixtures })
+
+    // Só 3 publicações reais — bem abaixo do mínimo.
+    const reais = Array.from({ length: 3 }, (_, i) => ({
+      workspaceId, entityType: 'Conteudo', entityId: `real-${i}`, featureVersion: FEATURE_VERSION,
+      features: {} as never, label: { converted: true } as never, labeledAt: new Date(), dataOrigin: 'REAL_OPERATION',
+    }))
+    await prisma.mLFeatureSnapshot.createMany({ data: reais })
+
+    const prontidao = await avaliarProntidaoMLDoWorkspace(workspaceId, CONVERSION_MODEL_FAMILY)
+    // 250 fixtures + 3 reais NUNCA significa READY_FOR_ML — só as 3 reais contam.
+    assert.notEqual(prontidao.estado, 'READY_FOR_ML')
+    assert.equal(prontidao.estado, 'INSUFFICIENT_DATA')
+    assert.equal(prontidao.amostrasRotuladas, 3)
+
+    const treino = await treinarModeloConversao(workspaceId)
+    assert.equal(treino.status, 'INSUFFICIENT_DATA')
+
+    // Agora completamos REAL_OPERATION suficiente — a prontidão pode avançar.
+    const maisReais = Array.from({ length: 250 }, (_, i) => ({
+      workspaceId, entityType: 'Conteudo', entityId: `real-extra-${i}`, featureVersion: FEATURE_VERSION,
+      features: {} as never, label: { converted: i % 5 === 0 } as never, labeledAt: new Date(), dataOrigin: 'REAL_OPERATION',
+    }))
+    await prisma.mLFeatureSnapshot.createMany({ data: maisReais })
+
+    const prontidaoDepois = await avaliarProntidaoMLDoWorkspace(workspaceId, CONVERSION_MODEL_FAMILY)
+    assert.equal(prontidaoDepois.estado, 'READY_FOR_ML')
+    assert.equal(prontidaoDepois.amostrasRotuladas, 253) // as 250 TEST_FIXTURE continuam nunca contando
+
+    await prisma.mLFeatureSnapshot.deleteMany({ where: { workspaceId } })
+    await prisma.user.deleteMany({ where: { workspaceId } })
+    await prisma.workspace.deleteMany({ where: { id: workspaceId } })
+  })
 })
 
 // ── Feature Store: extração real + ausência de vazamento (leakage) ────
@@ -165,7 +208,7 @@ describe('MLFeatureStore — extração de features e funil real', () => {
     const user = await prisma.user.findFirstOrThrow({ where: { workspaceId } })
     const conteudo = await prisma.conteudo.create({ data: { workspaceId, userId: user.id, produtoId, cliquesLink: 1 } })
     const extracao = await extrairFeaturesDeConteudo(workspaceId, conteudo.id)
-    const snapshot = await salvarFeatureSnapshot(workspaceId, 'Conteudo', conteudo.id, extracao!.features)
+    const snapshot = await salvarFeatureSnapshot(workspaceId, 'Conteudo', conteudo.id, extracao!.features, 'TEST_FIXTURE')
     assert.equal(snapshot.labeledAt, null)
     assert.equal(snapshot.featureVersion, FEATURE_VERSION)
 
@@ -279,20 +322,20 @@ describe('MLModelRegistry — promoção, versão e rollback', () => {
 
   test('modelo criado começa CANDIDATE — nunca ACTIVE automaticamente', async () => {
     const modelo = await prisma.mLModel.create({
-      data: { workspaceId, family, modelType: 'LOGISTIC_REGRESSION', version: 1, trainingDate: new Date(), trainingDatasetVersion: 'v1', features: [], metrics: { rocAuc: 0.9 }, baselineMetrics: { rocAuc: 0.5 } },
+      data: { workspaceId, family, modelType: 'LOGISTIC_REGRESSION', version: 1, trainingDate: new Date(), trainingDatasetVersion: 'v1', features: [], metrics: { rocAuc: 0.9 }, baselineMetrics: { rocAuc: 0.5 }, dataOrigin: 'REAL_OPERATION' },
     })
     assert.equal(modelo.status, 'CANDIDATE')
   })
 
-  test('promoverModelo real: candidato forte vira ACTIVE, versão anterior vira DEPRECATED (nunca dois ACTIVE)', async () => {
+  test('promoverModelo real: candidato forte (REAL_OPERATION) vira ACTIVE, versão anterior vira DEPRECATED (nunca dois ACTIVE)', async () => {
     const v1 = await prisma.mLModel.create({
-      data: { workspaceId, family, modelType: 'LOGISTIC_REGRESSION', version: 2, trainingDate: new Date(), trainingDatasetVersion: 'v2', features: [], metrics: { rocAuc: 0.8 }, baselineMetrics: { rocAuc: 0.5 } },
+      data: { workspaceId, family, modelType: 'LOGISTIC_REGRESSION', version: 2, trainingDate: new Date(), trainingDatasetVersion: 'v2', features: [], metrics: { rocAuc: 0.8 }, baselineMetrics: { rocAuc: 0.5 }, dataOrigin: 'REAL_OPERATION' },
     })
     const r1 = await promoverModelo(workspaceId, v1.id)
     assert.equal(r1.promovido, true)
 
     const v2 = await prisma.mLModel.create({
-      data: { workspaceId, family, modelType: 'LOGISTIC_REGRESSION', version: 3, trainingDate: new Date(), trainingDatasetVersion: 'v3', features: [], metrics: { rocAuc: 0.9 }, baselineMetrics: { rocAuc: 0.5 } },
+      data: { workspaceId, family, modelType: 'LOGISTIC_REGRESSION', version: 3, trainingDate: new Date(), trainingDatasetVersion: 'v3', features: [], metrics: { rocAuc: 0.9 }, baselineMetrics: { rocAuc: 0.5 }, dataOrigin: 'REAL_OPERATION' },
     })
     const r2 = await promoverModelo(workspaceId, v2.id)
     assert.equal(r2.promovido, true)
@@ -304,6 +347,18 @@ describe('MLModelRegistry — promoção, versão e rollback', () => {
 
     const ativo = await obterModeloAtivo(workspaceId, family)
     assert.equal(ativo?.id, v2.id)
+  })
+
+  test('CORREÇÃO: modelo treinado com TEST_FIXTURE nunca é promovido a ACTIVE, mesmo superando o baseline', async () => {
+    const fixture = await prisma.mLModel.create({
+      data: { workspaceId, family, modelType: 'LOGISTIC_REGRESSION', version: 100, trainingDate: new Date(), trainingDatasetVersion: 'vfixture', features: [], metrics: { rocAuc: 0.95 }, baselineMetrics: { rocAuc: 0.5 }, dataOrigin: 'TEST_FIXTURE' },
+    })
+    const r = await promoverModelo(workspaceId, fixture.id)
+    assert.equal(r.promovido, false)
+    assert.match(r.motivo, /TEST_FIXTURE/)
+
+    const depois = await prisma.mLModel.findUnique({ where: { id: fixture.id } })
+    assert.equal(depois?.status, 'CANDIDATE') // nunca vira ACTIVE
   })
 
   test('rollbackModelo reverte para a versão anterior — nunca deixa o Patrono sem fallback', async () => {
@@ -368,7 +423,7 @@ describe('PatronoMLEngine — previsão real, versão registrada, fallback nunca
     const modelo = await prisma.mLModel.create({
       data: {
         workspaceId, family: CONVERSION_MODEL_FAMILY, modelType: 'LOGISTIC_REGRESSION', version: 1,
-        trainingDate: new Date(), trainingDatasetVersion: 'v1', features: [], metrics: { rocAuc: 0.9 }, status: 'ACTIVE',
+        trainingDate: new Date(), trainingDatasetVersion: 'v1', features: [], metrics: { rocAuc: 0.9 }, status: 'ACTIVE', dataOrigin: 'TEST_FIXTURE',
         artifact: { pesos: new Array(dims).fill(0), bias: 2, padronizacao: { medias: new Array(dims).fill(0), desvios: new Array(dims).fill(1) } },
       },
     })
@@ -387,7 +442,7 @@ describe('PatronoMLEngine — previsão real, versão registrada, fallback nunca
     await prisma.mLModel.create({
       data: {
         workspaceId, family: CONVERSION_MODEL_FAMILY, modelType: 'LOGISTIC_REGRESSION', version: 3,
-        trainingDate: new Date(), trainingDatasetVersion: 'v3', features: [], metrics: { rocAuc: 0.9 }, status: 'ACTIVE',
+        trainingDate: new Date(), trainingDatasetVersion: 'v3', features: [], metrics: { rocAuc: 0.9 }, status: 'ACTIVE', dataOrigin: 'TEST_FIXTURE',
         // Dimensão errada de propósito (3 em vez do tamanho real do vetor) — produziria NaN sem a validação.
         artifact: { pesos: [0, 0, 0], bias: 2, padronizacao: { medias: [0, 0, 0], desvios: [1, 1, 1] } },
       },
@@ -403,7 +458,7 @@ describe('PatronoMLEngine — previsão real, versão registrada, fallback nunca
     await prisma.mLModel.create({
       data: {
         workspaceId, family: CONVERSION_MODEL_FAMILY, modelType: 'LOGISTIC_REGRESSION', version: 2,
-        trainingDate: new Date(), trainingDatasetVersion: 'v2', features: [], metrics: { rocAuc: 0.9 }, status: 'ACTIVE',
+        trainingDate: new Date(), trainingDatasetVersion: 'v2', features: [], metrics: { rocAuc: 0.9 }, status: 'ACTIVE', dataOrigin: 'TEST_FIXTURE',
         artifact: { pesosCorrompido: true }, // formato inválido de propósito
       },
     })
@@ -542,7 +597,7 @@ describe('Isolamento por workspace — dados de ML nunca cruzam workspaces', () 
 
   test('modelo ACTIVE do workspace A nunca é retornado como ativo para o workspace B', async () => {
     await prisma.mLModel.create({
-      data: { workspaceId: workspaceA, family: CONVERSION_MODEL_FAMILY, modelType: 'LOGISTIC_REGRESSION', version: 1, trainingDate: new Date(), trainingDatasetVersion: 'v1', features: [], metrics: {}, status: 'ACTIVE' },
+      data: { workspaceId: workspaceA, family: CONVERSION_MODEL_FAMILY, modelType: 'LOGISTIC_REGRESSION', version: 1, trainingDate: new Date(), trainingDatasetVersion: 'v1', features: [], metrics: {}, status: 'ACTIVE', dataOrigin: 'TEST_FIXTURE' },
     })
     const ativoB = await obterModeloAtivo(workspaceB, CONVERSION_MODEL_FAMILY)
     assert.equal(ativoB, null)
@@ -553,7 +608,7 @@ describe('Isolamento por workspace — dados de ML nunca cruzam workspaces', () 
   test('readiness gate de B nunca conta amostras rotuladas de A', async () => {
     for (let i = 0; i < 50; i++) {
       await prisma.mLFeatureSnapshot.create({
-        data: { workspaceId: workspaceA, entityType: 'Conteudo', entityId: `c-${i}`, featureVersion: FEATURE_VERSION, features: {}, label: { converted: true }, labeledAt: new Date() },
+        data: { workspaceId: workspaceA, entityType: 'Conteudo', entityId: `c-${i}`, featureVersion: FEATURE_VERSION, features: {}, label: { converted: true }, labeledAt: new Date(), dataOrigin: 'REAL_OPERATION' },
       })
     }
     const prontidaoA = await avaliarProntidaoMLDoWorkspace(workspaceA, CONVERSION_MODEL_FAMILY)
@@ -637,7 +692,7 @@ describe('Digital Twin — ML nunca altera identidade, nunca usa dado biométric
   test('salvarFeatureSnapshot recusa persistir um objeto de features com campo biométrico (defesa em profundidade)', async () => {
     const { user } = await criarUsuarioComWorkspace(prisma, { email: `ml-dt2-${randomUUID()}@t.com`, password: 'x' })
     const featuresContaminadas = { product_price_bucket: 'MID', referenceAudio: 'nao-deveria-estar-aqui' } as unknown as ContentMLFeatures
-    await assert.rejects(() => salvarFeatureSnapshot(user.workspaceId, 'Conteudo', 'x', featuresContaminadas))
+    await assert.rejects(() => salvarFeatureSnapshot(user.workspaceId, 'Conteudo', 'x', featuresContaminadas, 'TEST_FIXTURE'))
     await prisma.user.deleteMany({ where: { workspaceId: user.workspaceId } })
     await prisma.workspace.deleteMany({ where: { id: user.workspaceId } })
   })

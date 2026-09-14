@@ -21,6 +21,7 @@ import { prisma } from './prisma'
 import { classificarHook, type HookType } from './ml-hook-classifier'
 import { classificarCta, type CtaType } from './ml-cta-classifier'
 import { verificarSemDadosBiometricos } from './ml-privacy'
+import type { MLDataOrigin } from './ml-types'
 
 export const FEATURE_VERSION = 'ml-features-v1-rodada9'
 
@@ -130,10 +131,23 @@ export async function extrairFeaturesDeConteudo(
   return { features, referenceDate }
 }
 
-export async function salvarFeatureSnapshot(workspaceId: string, entityType: string, entityId: string, features: ContentMLFeatures) {
+/**
+ * `dataOrigin` é OBRIGATÓRIO e nunca inferido — quem chama declara
+ * explicitamente se este dado veio de operação real (`REAL_OPERATION`)
+ * ou de teste/fixture/demo/seed. Só `REAL_OPERATION` conta para o
+ * `MLReadinessGate` de produção (`lib/ml-readiness-gate.ts`) — nunca a
+ * confundir com dado real por omissão.
+ */
+export async function salvarFeatureSnapshot(
+  workspaceId: string,
+  entityType: string,
+  entityId: string,
+  features: ContentMLFeatures,
+  dataOrigin: MLDataOrigin
+) {
   verificarSemDadosBiometricos(features as unknown as Record<string, unknown>)
   return prisma.mLFeatureSnapshot.create({
-    data: { workspaceId, entityType, entityId, featureVersion: FEATURE_VERSION, features: features as never },
+    data: { workspaceId, entityType, entityId, featureVersion: FEATURE_VERSION, features: features as never, dataOrigin },
   })
 }
 

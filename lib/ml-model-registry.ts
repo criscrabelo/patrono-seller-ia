@@ -58,6 +58,15 @@ export async function promoverModelo(workspaceId: string, modelId: string): Prom
   if (modelo.status !== 'CANDIDATE' && modelo.status !== 'VALIDATED') {
     return { promovido: false, motivo: `Modelo está em status ${modelo.status} — só CANDIDATE/VALIDATED podem ser promovidos.` }
   }
+  // Correção pós-aprovação do complemento ML (regra 3): um modelo treinado
+  // com dado de teste/fixture/demo/seed NUNCA pode operar no workspace
+  // real, mesmo que suas métricas superem o baseline. Só REAL_OPERATION.
+  if (modelo.dataOrigin !== 'REAL_OPERATION') {
+    return {
+      promovido: false,
+      motivo: `Modelo treinado com dataOrigin=${modelo.dataOrigin} — só um modelo treinado com dados REAL_OPERATION pode ser promovido a ACTIVE no workspace real.`,
+    }
+  }
 
   const decisao = avaliarPromocaoModelo({
     metrics: modelo.metrics as MetricasComAuc | null,

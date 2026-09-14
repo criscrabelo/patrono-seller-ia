@@ -31,3 +31,34 @@ export type CreativeExperimentStatus = (typeof CREATIVE_EXPERIMENT_STATUSES)[num
 
 export const CREATIVE_EXPERIMENT_VARIANTS = ['A', 'B'] as const
 export type CreativeExperimentVariant = (typeof CREATIVE_EXPERIMENT_VARIANTS)[number]
+
+/**
+ * Proveniência dos dados usados em ML (correção pós-aprovação do
+ * complemento ML). Distingue operação comercial real de qualquer dado
+ * criado para testar/demonstrar/semear o sistema. Só `REAL_OPERATION`
+ * conta para o `MLReadinessGate` de produção e só um `MLModel` treinado
+ * com `REAL_OPERATION` pode ser promovido a `ACTIVE` — nunca um dado de
+ * teste/fixture/demo/seed, mesmo em volume suficiente.
+ */
+export const ML_DATA_ORIGINS = ['REAL_OPERATION', 'TEST_FIXTURE', 'DEMO', 'SEED', 'SYNTHETIC_TEST'] as const
+export type MLDataOrigin = (typeof ML_DATA_ORIGINS)[number]
+
+/**
+ * Status de reporte (não é uma máquina de estados em código — é o resumo
+ * honesto usado em documentação/relatório): o MOTOR de ML pode estar
+ * totalmente implementado e validado tecnicamente (contra dados de
+ * teste) muito antes de existir um modelo de produção de verdade — as
+ * duas coisas nunca devem ser confundidas.
+ *
+ *   ML_ENGINE:       IMPLEMENTED    — algoritmo/pipeline real, funcional.
+ *   TEST_MODEL:      VALIDATED      — modelo treinado sobre fixtures só
+ *                                     para validar o motor tecnicamente.
+ *   PRODUCTION_MODEL: NOT_ACTIVE    — modelo treinado exclusivamente com
+ *                                     dados REAL_OPERATION do workspace;
+ *                                     "ACTIVE" só quando isso existir.
+ */
+export const ML_REPORTING_STATUS = {
+  mlEngine: 'IMPLEMENTED',
+  testModel: 'VALIDATED',
+  productionModel: 'NOT_ACTIVE',
+} as const

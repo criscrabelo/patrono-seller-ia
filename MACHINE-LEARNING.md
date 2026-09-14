@@ -1,6 +1,16 @@
 # Machine Learning — Patrono Seller
 
-**Criado:** Rodada 9, complemento "Machine Learning Real". Não substitui nem interrompe Worker Local, Digital Twin, TikTok, Chatterbox, MuseTalk ou Autopilot — é uma capacidade transversal que se apoia neles.
+**Criado:** Rodada 9, complemento "Machine Learning Real". **Corrigido:** complemento pós-aprovação — precisão conceitual entre motor de ML e modelo de produção, proveniência dos dados (`MLDataOrigin`). Não substitui nem interrompe Worker Local, Digital Twin, TikTok, Chatterbox, MuseTalk ou Autopilot — é uma capacidade transversal que se apoia neles.
+
+## Três coisas que NUNCA podem ser confundidas
+
+| Conceito | Estado hoje | O que significa |
+|---|---|---|
+| **ML ENGINE** (o motor) | `IMPLEMENTED` | O algoritmo/pipeline real e funcional: extrai features, treina, calcula métricas, registra modelos, promove/reverte, integra no Autopilot. |
+| **TEST MODEL** | `VALIDATED` | Um modelo treinado sobre **fixtures de teste** (`dataOrigin = TEST_FIXTURE`/`DEMO`/`SEED`/`SYNTHETIC_TEST`) só para provar que o motor funciona tecnicamente — nunca opera no workspace real. |
+| **PRODUCTION MODEL** | `NOT_ACTIVE` | O modelo pessoal da proprietária, treinado **exclusivamente** com `dataOrigin = REAL_OPERATION` do próprio workspace. Ainda não existe nenhum, porque nenhum workspace real acumulou dados suficientes. |
+
+**Nunca escrever** "o Patrono já aprendeu com as vendas" ou "modelo real da proprietária" enquanto `PRODUCTION_MODEL` for `NOT_ACTIVE`. A frase tecnicamente verdadeira, hoje, é: *o motor de Machine Learning está implementado e validado; o modelo personalizado da proprietária ainda aguarda dados reais suficientes para ser treinado e ativado.*
 
 ## Objetivo
 
@@ -17,7 +27,7 @@ Nada aqui é chamado de "Machine Learning" por marketing. Toda decisão do siste
 | `MACHINE_LEARNING` | Modelo paramétrico **treinado por otimização** sobre dados reais (regressão logística via gradiente descendente). |
 | `MODEL_BASED` | Decisão derivada de um `MLModel` `ACTIVE` específico (modelId+version registrados). |
 
-Nesta rodada, **nenhum modelo foi promovido a `ACTIVE` em produção** porque nenhum workspace real acumulou dados suficientes ainda — isso é o estado esperado e correto do cold start, não uma falha. O pipeline inteiro (feature store, readiness gate, treinamento, registry, promoção, integração no Autopilot) foi **construído e testado de ponta a ponta com dados reais inseridos deliberadamente** (mesma metodologia de fixture usada em todos os testes do projeto — nunca "fingido" como dado de produção).
+Nesta rodada, **nenhum modelo foi promovido a `ACTIVE` em produção** porque nenhum workspace real acumulou dados suficientes ainda — isso é o estado esperado e correto do cold start, não uma falha. O pipeline inteiro (feature store, readiness gate, treinamento, registry, promoção, integração no Autopilot) foi **construído e testado de ponta a ponta com dados de teste controlados** (`dataOrigin = TEST_FIXTURE`, mesma metodologia de fixture usada em todos os testes do projeto) — isso valida que o **motor** funciona; nunca é descrito como dado de produção ou como o modelo da proprietária.
 
 ## Escada de maturidade (cold start)
 
@@ -35,6 +45,16 @@ COLD START → RULE_BASED → STATISTICAL_LEARNING → MACHINE_LEARNING → CONT
 | `MODEL_ACTIVE` | Já existe um `MLModel` `ACTIVE` para o workspace/família. |
 
 Um workspace novo do Patrono Seller começa em `INSUFFICIENT_DATA` — isso é esperado, não um bug.
+
+## Proveniência dos dados (`MLDataOrigin`)
+
+**Correção pós-aprovação**: nem todo dado rotulado conta igual. `lib/ml-types.ts` define `MLDataOrigin`: `REAL_OPERATION | TEST_FIXTURE | DEMO | SEED | SYNTHETIC_TEST`. Toda `MLFeatureSnapshot`, todo `MLTrainingRun` e todo `MLModel` carrega esse campo, **sempre obrigatório** (o Prisma Client recusa criar a linha sem ele — nunca inferido por omissão).
+
+- O `MLReadinessGate` de **produção** (`avaliarProntidaoMLDoWorkspace`, sem sobrescrever o parâmetro `origens`) só conta amostras com `dataOrigin = REAL_OPERATION`. **250 registros `TEST_FIXTURE` + 3 publicações reais nunca resulta em `READY_FOR_ML`** — resulta em `INSUFFICIENT_DATA`, porque só as 3 amostras reais contam. Testado explicitamente (`tests/rodada9-ml-complemento.test.ts`, "CORREÇÃO: 250 amostras TEST_FIXTURE...").
+- `treinarModeloConversao(workspaceId)` usa `REAL_OPERATION` por padrão — só esse caminho produz um modelo elegível para `ACTIVE`. Um segundo parâmetro (`origens`) existe **só para os testes do próprio motor de ML** validarem convergência/AUC contra dados de teste controlados — nunca chamado assim fora de teste.
+- `promoverModelo()` (`lib/ml-model-registry.ts`) **recusa promover** qualquer modelo cujo `dataOrigin !== 'REAL_OPERATION'`, mesmo que suas métricas superem o baseline — testado explicitamente ("CORREÇÃO: modelo treinado com TEST_FIXTURE nunca é promovido a ACTIVE").
+
+Os fixtures de teste continuam existindo e são úteis — validam regressão, convergência, AUC, promoção, rollback, fallback, leakage e isolamento (o "TEST_MODEL"). Eles só nunca podem ser confundidos com, nem contar para, o modelo de produção real da proprietária.
 
 ## Funil rastreado
 
@@ -62,7 +82,11 @@ Usa o vínculo real já existente (`Sale.contentId`). **Limitação honesta**: o
 
 ## Primeiro modelo real: probabilidade de conversão
 
-`lib/ml-model.ts` — **regressão logística treinada por gradiente descendente, em TypeScript puro** (zero dependência nova: sem scikit-learn/XGBoost/LightGBM, custo R$ 0,00). Padronização (z-score) + regularização L2 (necessária com poucas amostras). Verificado com dados controlados: AUC de validação **0,84** contra **0,54** de scores aleatórios, com o peso do sinal real muito maior que o peso do ruído — prova de que os pesos são genuinamente otimizados, não coincidência.
+`lib/ml-model.ts` — **regressão logística treinada por gradiente descendente, em TypeScript puro** (zero dependência nova: sem scikit-learn/XGBoost/LightGBM, custo R$ 0,00). Padronização (z-score) + regularização L2 (necessária com poucas amostras).
+
+**Frase tecnicamente correta**: *a regressão logística foi validada com um dataset controlado de teste (`dataOrigin = TEST_FIXTURE`) e atingiu AUC 0,84 em validação, contra 0,54 de scores aleatórios — isso demonstra que a implementação consegue aprender um sinal conhecido de verdade (peso do sinal real muito maior que o peso do ruído).*
+
+**Nunca escrever**: "o modelo do Patrono atingiu AUC 0,84 sobre suas vendas reais" — isso ainda não aconteceu; nenhum dado de venda real da proprietária foi usado para produzir esse número.
 
 `ExpectedCommissionValue` é **derivado** (`predictedConversionProbability × comissão estimada da oportunidade`) — não é um segundo modelo de regressão treinado nesta rodada. `calcularMAE`/`calcularRMSE` estão prontas em `lib/ml-model.ts` para quando um alvo de regressão direto for treinado.
 
@@ -77,14 +101,18 @@ Usa o vínculo real já existente (`Sale.contentId`). **Limitação honesta**: o
 5. Calcula um **baseline determinístico** (RULE_BASED: prevê sempre a taxa média de conversão do treino) para comparação.
 6. Registra `MLTrainingRun` (sempre, sucesso ou falha) e um `MLModel` `CANDIDATE` (nunca `ACTIVE` automaticamente).
 
-Testado ponta a ponta com 250 amostras rotuladas reais (inseridas deliberadamente para testar o pipeline, nunca fingidas como produção): `treinarModeloConversao` recusou treinar com 0 amostras, e treinou com sucesso com 250 (AUC 0,82 vs. baseline 0,50).
+Testado ponta a ponta com 250 amostras `TEST_FIXTURE` (dados de teste controlados, nunca produção): `treinarModeloConversao` recusou treinar com 0 amostras, e treinou com sucesso com 250 (AUC 0,82 vs. baseline 0,50) — isso valida o **motor** (TEST_MODEL = VALIDATED), não produz um modelo de produção (esse exige `dataOrigin = REAL_OPERATION`, ver "Proveniência dos dados" acima).
+
+## Primeiro modelo de PRODUÇÃO (ainda não existe)
+
+O primeiro modelo verdadeiramente pessoal da proprietária só nasce quando o workspace real acumular, via `REAL_OPERATION`: publicações reais, cliques reais, vendas reais, comissões reais — na quantidade mínima definida pelo `MLReadinessGate` (hoje 200 amostras rotuladas, 20 positivas). Quando isso acontecer pela primeira vez, o registro (`MLTrainingRun`/`MLModel`) deve reportar, no mínimo: número de exemplos reais usados, janela temporal coberta, target (`converted`), lista de features, métricas do baseline, AUC/métrica obtida, versão do modelo e data do treinamento — os mesmos campos que `treinarModeloConversao()` já registra automaticamente em `MLTrainingRun.metrics`/`baselineMetrics`/`sampleCount`/`trainingDate`.
 
 ## Model Registry, Promotion Gate, Rollback
 
 `lib/ml-model-registry.ts` — estados `CANDIDATE → VALIDATED → ACTIVE → DEPRECATED/ROLLED_BACK` (`lib/ml-types.ts`).
 
 - **`avaliarPromocaoModelo`** (Promotion Gate): só aprova se o candidato tiver ROC-AUC calculável **e** superar o baseline por uma margem mínima (0,02) — nunca por empate/ruído. Testado: candidato com 0,51 vs. baseline 0,50 → rejeitado; 0,82 vs. 0,50 → aprovado.
-- **`promoverModelo`**: ao promover, o `ACTIVE` anterior da mesma família vira `DEPRECATED` — nunca dois modelos `ACTIVE` ao mesmo tempo.
+- **`promoverModelo`**: além da margem de AUC, exige `dataOrigin = REAL_OPERATION` — um modelo `TEST_FIXTURE`/`DEMO`/`SEED`/`SYNTHETIC_TEST` é recusado mesmo com métricas excelentes (testado). Ao promover, o `ACTIVE` anterior da mesma família vira `DEPRECATED` — nunca dois modelos `ACTIVE` ao mesmo tempo.
 - **`rollbackModelo`**: reverte o `ACTIVE` atual para `ROLLED_BACK` e reativa a versão `DEPRECATED` mais recente (ou nenhuma, se não houver — o Patrono volta sozinho ao baseline `RULE_BASED`, nunca fica travado esperando um modelo).
 
 `MLPrediction` registra `modelFamily`+`modelVersion` em toda previsão — qualquer decisão sabe exatamente qual versão do modelo a gerou (regra 29).
@@ -155,6 +183,10 @@ Escolhi "Fone X" porque:
 - Histórico real de conversão nessa categoria: 62/100
 ```
 
+## Interface (futura) — linguagem enquanto não há dados suficientes
+
+Enquanto `PRODUCTION_MODEL = NOT_ACTIVE`, qualquer tela deve mostrar algo simples e honesto, como *"Patrono está começando a aprender"* ou *"Coletando resultados para personalizar suas decisões"*. **Nunca** exibir algo como "Machine Learning já otimizou suas vendas" antes de isso ser verdade (antes de existir um `MLModel` `ACTIVE` com `dataOrigin = REAL_OPERATION`). Nenhuma tela de ML foi implementada nesta rodada — esta seção é só a diretriz para quando ela existir.
+
 ## ML Audit Log
 
 Reaproveita o `AuditLog` já existente (`lib/ml-audit.ts`, `registrarAuditoriaML`) — nenhuma tabela nova. Cada previsão registra `decisionType`/`modelFamily`/`modelVersion`/probabilidade/valor esperado — nunca secrets, nunca biometria.
@@ -165,6 +197,7 @@ R$ 0,00 — nenhuma biblioteca nova, nenhum serviço de ML pago (Vertex AI/SageM
 
 ## O que está EXECUTADO REALMENTE vs. PREPARADO
 
-- **Executado e testado com dados reais inseridos deliberadamente** (metodologia padrão de fixture do projeto, nunca produção fingida): feature store, readiness gate, treinamento (convergência real, AUC real), model registry (promoção/rollback), integração no Autopilot (ranking muda de verdade, fallback funciona de verdade), correlação hook/CTA, CreativeExperiment (epsilon-greedy real, vencedor real), guardas de privacidade/identidade.
-- **Nenhum modelo `ACTIVE` em produção ainda** — nenhum workspace real (fora de teste) acumulou as 200+ amostras rotuladas necessárias. Isso é o estado correto e esperado do cold start, não uma limitação escondida.
-- **Não implementado nesta rodada**: drift detection sofisticado, aprendizado de apresentação do Digital Twin (falta metadado estruturado no schema), Multi-Armed Bandit além de epsilon-greedy, modelo de regressão direto para `ExpectedCommissionValue` (hoje derivado).
+- **ML_ENGINE = IMPLEMENTED, testado com dados de teste controlados** (`dataOrigin = TEST_FIXTURE`, metodologia padrão de fixture do projeto, nunca produção fingida): feature store, readiness gate, treinamento (convergência real, AUC real), model registry (promoção/rollback), integração no Autopilot (ranking muda de verdade, fallback funciona de verdade), correlação hook/CTA, CreativeExperiment (epsilon-greedy real, vencedor real), guardas de privacidade/identidade e de proveniência de dados (fixture nunca conta para prontidão/promoção de produção).
+- **TEST_MODEL = VALIDATED** — o modelo de regressão logística treinado sobre os 250 fixtures de teste prova que o motor aprende um sinal real (AUC 0,84/0,82 conforme o cenário) — isso é validação técnica do motor, nunca um modelo de produção.
+- **PRODUCTION_MODEL = NOT_ACTIVE** — nenhum workspace real (fora de teste) acumulou as 200+ amostras `REAL_OPERATION` necessárias. Isso é o estado correto e esperado do cold start, não uma limitação escondida.
+- **Não implementado nesta rodada**: drift detection sofisticado, aprendizado de apresentação do Digital Twin (falta metadado estruturado no schema), Multi-Armed Bandit além de epsilon-greedy, modelo de regressão direto para `ExpectedCommissionValue` (hoje derivado), tela de UI mostrando o status de aprendizado.

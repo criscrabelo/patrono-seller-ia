@@ -645,6 +645,12 @@ model MLTrainingRun {
   datasetVersion String // versão/hash do snapshot de dados usado
   status         String @default("RUNNING") // RUNNING | COMPLETED | FAILED (ver lib/ml-types.ts)
 
+  // Proveniência dos dados usados neste treinamento (correção pós-aprovação
+  // do complemento ML — nunca REQUIRED-inferida, sempre declarada por quem
+  // chama). Só REAL_OPERATION treina um modelo elegível para produção —
+  // ver lib/ml-types.ts (MLDataOrigin) e MACHINE-LEARNING.md.
+  dataOrigin String
+
   sampleCount   Int
   featureNames  String[]
   metrics       Json? // {rocAuc, precision, recall, mae, rmse, ...}
@@ -676,6 +682,13 @@ model MLModel {
   trainingRun            MLTrainingRun? @relation(fields: [trainingRunId], references: [id])
   trainingDate           DateTime
   trainingDatasetVersion String
+
+  // Proveniência dos dados de treinamento — só um modelo treinado com
+  // dataOrigin = REAL_OPERATION pode ser promovido a ACTIVE
+  // (lib/ml-model-registry.ts, promoverModelo()). Um modelo TEST_FIXTURE/
+  // DEMO/SEED/SYNTHETIC_TEST existe só para validar o motor de ML
+  // (o "TEST_MODEL"), nunca para operar no workspace real.
+  dataOrigin String
 
   features        String[]
   metrics         Json
@@ -737,6 +750,14 @@ model MLFeatureSnapshot {
   entityType     String // "Conteudo" | "Produto"
   entityId       String?
   featureVersion String
+
+  // Proveniência real do dado (MLDataOrigin, lib/ml-types.ts):
+  // REAL_OPERATION | TEST_FIXTURE | DEMO | SEED | SYNTHETIC_TEST. Nunca
+  // opcional — o MLReadinessGate de produção só conta REAL_OPERATION
+  // (regra pós-aprovação: dado de teste/fixture/demo/seed nunca conta
+  // para decidir se o workspace real está pronto para treinar/ativar um
+  // modelo).
+  dataOrigin String
 
   features Json
   label    Json?

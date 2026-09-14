@@ -11,9 +11,10 @@
  */
 
 import { prisma } from './prisma'
-import { avaliarProntidaoMLDoWorkspace } from './ml-readiness-gate'
+import { avaliarProntidaoMLDoWorkspace, ORIGENS_PRODUCAO } from './ml-readiness-gate'
 import { vetorizarFeatures, nomesDoVetorDeFeatures, treinarRegressaoLogistica, preverProbabilidade, calcularRocAuc, calcularPrecisionRecall, calcularCalibracao } from './ml-model'
 import type { ContentMLFeatures } from './ml-feature-store'
+import type { MLDataOrigin } from './ml-types'
 
 export const CONVERSION_MODEL_FAMILY = 'conversion_probability'
 
@@ -23,9 +24,9 @@ export interface AmostraRotulada {
   capturedAt: Date
 }
 
-async function carregarAmostrasRotuladas(workspaceId: string, entityType: string = 'Conteudo'): Promise<AmostraRotulada[]> {
+async function carregarAmostrasRotuladas(workspaceId: string, origens: MLDataOrigin[], entityType: string = 'Conteudo'): Promise<AmostraRotulada[]> {
   const snapshots = await prisma.mLFeatureSnapshot.findMany({
-    where: { workspaceId, entityType, labeledAt: { not: null } },
+    where: { workspaceId, entityType, labeledAt: { not: null }, dataOrigin: { in: origens } },
     orderBy: { capturedAt: 'asc' },
     select: { features: true, label: true, capturedAt: true },
   })
@@ -56,14 +57,29 @@ export type TrainingPipelineResultado =
 /**
  * Roda o pipeline completo para `workspaceId`. Sempre checa o Readiness
  * Gate primeiro — nunca treina com dados insuficientes.
+ *
+ * `origens` (correção pós-aprovação do complemento ML) define quais
+ * `MLDataOrigin` alimentam o treinamento. O PADRÃO é `ORIGENS_PRODUCAO`
+ * (só `REAL_OPERATION`) — este é o único caminho que produz um modelo
+ * elegível para `ACTIVE` no workspace real (o "PRODUCTION_MODEL"). Um
+ * valor diferente só existe para os TESTES do próprio motor de ML
+ * validarem convergência/AUC/promoção/rollback contra dados de teste
+ * controlados (o "TEST_MODEL") — nunca usado fora de teste. Exige
+ * exatamente UMA origem por treinamento (nunca mistura), para que o
+ * `dataOrigin` do modelo resultante seja sempre inequívoco.
  */
-export async function treinarModeloConversao(workspaceId: string): Promise<TrainingPipelineResultado> {
-  const prontidao = await avaliarProntidaoMLDoWorkspace(workspaceId, CONVERSION_MODEL_FAMILY)
+export async function treinarModeloConversao(workspaceId: string, origens: MLDataOrigin[] = ORIGENS_PRODUCAO): Promise<TrainingPipelineResultado> {
+  if (origens.length !== 1) {
+    return { status: 'FAILED', motivo: 'Um treinamento precisa de exatamente uma origem de dados (dataOrigin) — nunca misturar REAL_OPERATION com dados de teste.', trainingRunId: null }
+  }
+  const dataOrigin = origens[0]
+
+  const prontidao = await avaliarProntidaoMLDoWorkspace(workspaceId, CONVERSION_MODEL_FAMILY, 'Conteudo', undefined, origens)
   if (prontidao.estado === 'INSUFFICIENT_DATA' || prontidao.estado === 'READY_FOR_STATISTICS') {
     return { status: 'INSUFFICIENT_DATA', motivo: prontidao.motivo }
   }
 
-  const amostras = await carregarAmostrasRotuladas(workspaceId)
+  const amostras = await carregarAmostrasRotuladas(workspaceId, origens)
   if (amostras.length === 0) {
     return { status: 'INSUFFICIENT_DATA', motivo: 'Nenhuma amostra rotulada encontrada.' }
   }
@@ -79,6 +95,7 @@ export async function treinarModeloConversao(workspaceId: string): Promise<Train
       status: 'RUNNING',
       sampleCount: amostras.length,
       featureNames,
+      dataOrigin,
     },
   })
 
@@ -146,6 +163,7 @@ export async function treinarModeloConversao(workspaceId: string): Promise<Train
         baselineMetrics: baselineMetrics as never,
         status: 'CANDIDATE',
         artifact: { pesos: modelo.pesos, bias: modelo.bias, padronizacao: modelo.padronizacao } as never,
+        dataOrigin,
       },
     })
 

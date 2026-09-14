@@ -7,10 +7,23 @@
  * COLD START → RULE_BASED → STATISTICAL_LEARNING → MACHINE_LEARNING →
  * CONTINUOUS LEARNING (regra 3), mapeado nos 4 estados de
  * `MLReadinessState` (lib/ml-types.ts).
+ *
+ * Correção pós-aprovação do complemento ML: a prontidão de PRODUÇÃO só
+ * conta amostras com `dataOrigin = REAL_OPERATION`. 250 registros
+ * `TEST_FIXTURE`/`DEMO`/`SEED`/`SYNTHETIC_TEST` mais 3 publicações reais
+ * NUNCA resulta em `READY_FOR_ML` — resulta em `INSUFFICIENT_DATA`, porque
+ * só 3 amostras reais existem. `contarAmostrasRotuladas`/
+ * `avaliarProntidaoMLDoWorkspace` aceitam um parâmetro `origens` só para
+ * permitir que os PRÓPRIOS TESTES do motor de ML validem o gate contra
+ * dados de teste — o padrão (nunca sobrescrito em produção) é sempre
+ * `['REAL_OPERATION']`.
  */
 
 import { prisma } from './prisma'
-import type { MLReadinessState } from './ml-types'
+import type { MLReadinessState, MLDataOrigin } from './ml-types'
+
+/** Único conjunto de origem que conta para prontidão de PRODUÇÃO — nunca alterado silenciosamente. */
+export const ORIGENS_PRODUCAO: MLDataOrigin[] = ['REAL_OPERATION']
 
 export interface LimiaresProntidaoML {
   minimoParaEstatistica: number
@@ -73,10 +86,20 @@ export function avaliarProntidaoML(input: MLReadinessInput, limiares: LimiaresPr
   }
 }
 
-/** Conta amostras rotuladas reais de um workspace — nunca inventa contagem. */
-export async function contarAmostrasRotuladas(workspaceId: string, entityType: string = 'Conteudo'): Promise<{ total: number; positivas: number }> {
+/**
+ * Conta amostras rotuladas reais de um workspace — nunca inventa
+ * contagem. `origens` filtra por `MLDataOrigin`; o padrão (`ORIGENS_PRODUCAO`
+ * = só `REAL_OPERATION`) é o que qualquer chamada de produção deve usar.
+ * Um valor diferente só existe para os testes do próprio motor de ML
+ * validarem o gate contra dados de teste conhecidos.
+ */
+export async function contarAmostrasRotuladas(
+  workspaceId: string,
+  entityType: string = 'Conteudo',
+  origens: MLDataOrigin[] = ORIGENS_PRODUCAO
+): Promise<{ total: number; positivas: number }> {
   const snapshots = await prisma.mLFeatureSnapshot.findMany({
-    where: { workspaceId, entityType, labeledAt: { not: null } },
+    where: { workspaceId, entityType, labeledAt: { not: null }, dataOrigin: { in: origens } },
     select: { label: true },
   })
   const total = snapshots.length
@@ -88,9 +111,13 @@ export async function avaliarProntidaoMLDoWorkspace(
   workspaceId: string,
   family: string,
   entityType: string = 'Conteudo',
-  limiares: LimiaresProntidaoML = LIMIARES_PRONTIDAO_PADRAO
+  limiares: LimiaresProntidaoML = LIMIARES_PRONTIDAO_PADRAO,
+  origens: MLDataOrigin[] = ORIGENS_PRODUCAO
 ): Promise<MLReadinessResultado> {
+  // Um modelo ACTIVE só existe se `promoverModelo()` já confirmou
+  // dataOrigin=REAL_OPERATION (lib/ml-model-registry.ts) — não precisa
+  // refiltrar aqui, mas nunca assume isso sem essa garantia upstream.
   const hasActiveModel = (await prisma.mLModel.count({ where: { workspaceId, family, status: 'ACTIVE' } })) > 0
-  const { total, positivas } = await contarAmostrasRotuladas(workspaceId, entityType)
+  const { total, positivas } = await contarAmostrasRotuladas(workspaceId, entityType, origens)
   return avaliarProntidaoML({ labeledSampleCount: total, positiveSampleCount: positivas, hasActiveModel }, limiares)
 }
