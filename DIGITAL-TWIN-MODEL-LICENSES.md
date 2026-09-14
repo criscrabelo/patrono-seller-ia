@@ -1,15 +1,31 @@
 # Digital Twin — Licenças de Modelos Avaliados
 
-**Criado:** Rodada 7 (Digital Twin Real).
+**Criado:** Rodada 7 (Digital Twin Real). **Atualizado:** Rodada 8 — correção real do Chatterbox (módulo/repositório verificados via PyPI de verdade) e inventário de dependências do MuseTalk.
 
 **Regra de pesquisa:** este ambiente de desenvolvimento não tem acesso à internet externa nesta rodada — toda linha reflete o conhecimento disponível sobre cada projeto no momento em que a Rodada 7 foi escrita, registrado como **A VERIFICAR** onde não há confirmação ao vivo contra a documentação/licença atual. Antes de instalar qualquer um em produção, reconferir a licença/termos vigentes.
 
 | Modelo | Função | Licença código | Licença pesos | Comercial | GPU | Decisão |
 |---|---|---|---|---|---|---|
-| **Chatterbox TTS** (Resemble AI, oficial) | Clonagem de voz (voice cloning), TTS | MIT | MIT (conforme repositório oficial) | Sim — self-hosted | CPU funciona, GPU acelera | **ADOTADO** (self-hosted apenas — nunca a API paga da Resemble). `verificarDisponibilidadeChatterbox()` — não instalado neste ambiente nesta rodada. |
+| **Chatterbox TTS** (Resemble AI, oficial, pacote `chatterbox-tts` 0.1.7 no PyPI, módulo `chatterbox`) | Clonagem de voz (voice cloning), TTS multilíngue (inclui `pt`, via `ChatterboxMultilingualTTS`, `REPO_ID = ResembleAI/chatterbox`) | MIT | MIT (conforme repositório oficial) | Sim — self-hosted | CPU funciona, GPU acelera | **ADOTADO** (self-hosted apenas — nunca a API paga da Resemble). Pacote confirmado instalável via PyPI nesta rodada; pesos bloqueados por acesso ao Hugging Face neste ambiente (ver `DIGITAL-TWIN-BENCHMARK.md`). **Correção Rodada 8:** não existe repositório dedicado "pt-br" — é o mesmo `ResembleAI/chatterbox` multilíngue. |
 | **MuseTalk** | Lip-sync (sincronização labial) | MIT (código) | Modelos informados pelo projeto como disponíveis para uso comercial — **A VERIFICAR** antes de produção | Sim, conforme informado pelo projeto | GPU recomendada (VRAM ainda não medida neste ambiente) | **CANDIDATO PRINCIPAL** (`AVAILABLE_CANDIDATE`). `verificarDisponibilidadeMuseTalk()` — não instalado neste ambiente nesta rodada. Reconferir a licença de cada dependência efetivamente usada antes de integrar em produção. |
 | **Wav2Lip** (tradicional, projeto original) | Lip-sync | Código com uso restrito conforme o projeto original | Modelos publicados restritos a uso pessoal/acadêmico/pesquisa/não comercial | **NÃO** — incompatível com finalidade comercial do Patrono | GPU | **BLOCKED_BY_LICENSE** — nunca integrado (`lib/lipsync-provider.ts`, `bloquearMotor()` impede uso mesmo por engano). |
 | **LivePortrait** | Geração/animação de retrato (avatar) | Mista — cadeia de dependências inclui componentes de detecção facial com restrições comerciais não totalmente esclarecidas | Não totalmente esclarecida nesta rodada | **NÃO CONFIRMADO** | GPU | **BLOCKED_BY_LICENSE** nesta rodada — só reavaliar se TODA a cadeia de dependências for confirmada compatível com uso comercial. |
+
+## Inventário de dependências do MuseTalk (Rodada 8, regra 17)
+
+Antes de qualquer instalação definitiva, cada dependência da cadeia do MuseTalk precisa ser verificada individualmente — **licença MIT do projeto principal não cobre automaticamente as dependências**. Nenhuma foi instalada/verificada ao vivo nesta rodada (sem acesso ao Hugging Face); linhas marcadas **A VERIFICAR**:
+
+| Dependência | Função na cadeia | Licença (a confirmar) | Status |
+|---|---|---|---|
+| MuseTalk (núcleo) | Lip-sync | MIT (código) | A VERIFICAR (pesos) |
+| Whisper (OpenAI) | Alinhamento áudio/texto | MIT | A VERIFICAR contra a versão exata usada |
+| ft-mse-vae | Codificação de frames | A VERIFICAR | A VERIFICAR |
+| DWPose | Estimativa de pose | A VERIFICAR — projetos de pose estimation frequentemente têm licenças de pesos separadas do código | A VERIFICAR |
+| S3FD | Detecção facial | A VERIFICAR | A VERIFICAR |
+| MMDetection | Framework de detecção (OpenMMLab) | Apache 2.0 (código), mas modelos individuais variam | A VERIFICAR modelo específico usado |
+| MMPose | Framework de pose (OpenMMLab) | Apache 2.0 (código), modelos variam | A VERIFICAR modelo específico usado |
+
+**Regra permanente desta seção:** se qualquer dependência acima não puder ser confirmada como compatível com uso comercial, o MuseTalk **não é usado** até a cadeia ser resolvida (substituição do componente problemático ou confirmação da licença) — nunca "assumir que deve estar tudo bem".
 
 ## Regra permanente
 

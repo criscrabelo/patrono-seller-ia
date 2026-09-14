@@ -38,6 +38,10 @@ Estas já estavam em uso antes desta rodada (não foram adicionadas agora), mas 
 
 Nenhuma integração nova paga foi contratada nesta rodada. Nenhum dos dois foi desligado — a decisão de mantê-los é anterior a este ciclo de trabalho (já estavam em produção).
 
+## Rodada 8 — Digital Twin Operacional (nenhuma dependência paga)
+
+Job Queue real usa o Postgres já existente — nenhum Redis/BullMQ/fila SaaS. Worker roda local/máquina própria — nenhum cloud GPU contratado. Testado nesta rodada: PyPI é acessível (o pacote `chatterbox-tts` é baixável de graça), mas o Hugging Face Hub está bloqueado pela política de rede deste ambiente — geração real de voz/avatar segue indisponível aqui, sem custo algum envolvido na tentativa.
+
 ## Rodada 7 — Digital Twin (nenhuma dependência paga)
 
 Chatterbox TTS (Resemble AI) usado apenas na versão **self-hosted/open source**, nunca a API paga. MuseTalk (lip-sync) avaliado como candidato open source com uso comercial informado pelo projeto (ver `DIGITAL-TWIN-MODEL-LICENSES.md`). Wav2Lip e LivePortrait ficam `BLOCKED_BY_LICENSE` — nunca integrados. Nenhum modelo pesado foi baixado/instalado neste ambiente; nenhum HeyGen/Synthesia/ElevenLabs/D-ID/cloud GPU contratado.

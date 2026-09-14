@@ -84,6 +84,21 @@ Nenhum serviço pago contratado (HeyGen, Synthesia, ElevenLabs, D-ID, cloud GPU 
 - **Segurança:** revogação (`lib/digital-twin-revoke.ts`) desativa perfil/voz imediatamente; isolamento cross-workspace testado (`tests/rodada7-digital-twin-real.test.ts`).
 - **Tela:** Configurações → Conta → Digital Twin (`/conta/digital-twin`) — status real, CTA "Criar meu Digital Twin", sem redesenho do resto do Patrono.
 
+## Rodada 8 — Digital Twin Operacional + Primeira Prévia Real
+
+Ver `DIGITAL-TWIN-WORKER.md` e `DIGITAL-TWIN-BENCHMARK.md`. Nesta rodada:
+
+- **Onboarding completo na UI:** `/conta/digital-twin` — consentimento (imagem/voz), upload de foto/vídeo de referência, voz (gravação pelo navegador via `MediaRecorder` ou upload de arquivo, com texto guiado em pt-BR), aprovação única do perfil, preferências globais (usar Digital Twin/voz automaticamente, permitir fallback, canal prioritário, estilo padrão).
+- **Chatterbox corrigido:** o módulo Python correto é `chatterbox` (não `chatterbox_tts`) — descoberto inspecionando o pacote real via PyPI. Seleção de provider `PT_BR_SINGLE_LANGUAGE → MULTILINGUAL_PT → VOICE_ONLY_FALLBACK` (não existe checkpoint pt-BR dedicado — é o modelo multilíngue).
+- **Job Queue real:** Postgres, claim atômico (`SELECT FOR UPDATE SKIP LOCKED`), heartbeat, retry automático, worker offline nunca perde o job.
+- **Patrono Generation Worker:** processo separado (`worker/digital-twin-worker.ts`), scripts de instalação assistida para Windows, nunca dentro do request HTTP.
+- **Runtime classificado:** `GPU_READY | GPU_LIMITED | CPU_ONLY | UNSUPPORTED`, com rótulos amigáveis na UI.
+- **DigitalTwinPreviewScore:** nota composta com threshold; regeneração automática (até 3 tentativas) antes de acionar a usuária.
+- **DigitalTwinIdentityLock:** depois da aprovação, o Autopilot só usa referências do perfil aprovado.
+- **Dois kill switches independentes:** Autopilot (publicação) e Digital Twin (identidade/voz) — testados como independentes.
+- **CreativePresenterMode integrado ao Autopilot:** escolha automática (`DIGITAL_TWIN > VOICE_ONLY > MOTION_GRAPHICS > PRODUCT_ONLY`), nunca perguntado a cada postagem.
+- **Segunda prévia com produto:** layout `PRESENTER_PRODUCT_PANEL` (produto autorizado ao lado do avatar) ou `PRESENTER_INTRO_BROLL` — nunca finge que o avatar segura o produto fisicamente.
+
 ## O que ainda não existe
 
-Nenhuma geração de avatar real; nenhuma clonagem de voz real executada de verdade (Chatterbox/MuseTalk não instalados neste ambiente); nenhum treinamento; onboarding completo (foto/vídeo/voz/prévia/aprovação) ainda não tem UI de várias etapas — só o bootstrap do perfil e upload de assets via API.
+Nenhuma geração de voz/avatar/lip-sync real (Chatterbox/MuseTalk não conseguem baixar pesos neste ambiente — Hugging Face bloqueado pela política de rede, confirmado via teste real). O que roda de verdade sem GPU: fallback Motion Graphics/Product Only (FFmpeg), job queue completo, onboarding, preferências, kill switches.
