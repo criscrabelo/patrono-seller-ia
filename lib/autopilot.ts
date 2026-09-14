@@ -21,13 +21,15 @@
  * publicado — nunca chama a publicação real.
  */
 
-import type { AffiliateOpportunity, OpportunitySource } from './affiliate-discovery'
+import type { AffiliateOpportunity, OpportunitySource, OpportunityScorer } from './affiliate-discovery'
 import { AutomationFeasibilityScorer, calcularFeasibility, type FeasibilityBreakdown } from './automation-feasibility'
 import { direitosDaPolicy, mediaRightsGate, type MediaRightsRecord, type MediaUsagePolicy } from './media-rights'
 import { decidirDisclosure } from './compliance-engine'
 import { TikTokPreflightNotConfigured, tiktokHumanConsentGate, type TikTokPreflightValidator } from './tiktok-preflight'
 import { InstagramPreflightValidator } from './instagram-preflight'
 import type { RendererProvider } from './creative-factory'
+import { MLBlendedScorer } from './opportunity-score-composite'
+import type { OpportunityMLPrediction } from './ml-engine'
 
 export type AutopilotStepStatus =
   | 'NO_OPPORTUNITY'
@@ -96,6 +98,15 @@ export interface AutopilotPublisher {
   publicar(params: { channel: 'tiktok' | 'instagram'; contentUrl: string; legenda: string }): Promise<string>
 }
 
+/**
+ * PatronoMLEngine (Rodada 9, complemento ML, regra 43) — fonte opcional de
+ * previsão de conversão por oportunidade. Injetável para não acoplar
+ * `runAutopilot` diretamente ao Prisma (mesmo padrão de `store`/`publisher`).
+ */
+export interface MLPredictionSource {
+  preverOportunidades(workspaceId: string, candidatos: AffiliateOpportunity[]): Promise<OpportunityMLPrediction[]>
+}
+
 export interface AutopilotDeps {
   opportunitySources: OpportunitySource[]
   mediaRightsResolver: (opportunity: AffiliateOpportunity) => { policy: MediaUsagePolicy; source: string }
@@ -106,6 +117,10 @@ export interface AutopilotDeps {
   store: AutopilotStore
   publisher: AutopilotPublisher
   limits?: AutopilotLimits
+  /** Scorer explícito — quando informado, tem prioridade sobre `mlEngine` (nunca sobrescrito). */
+  scorer?: OpportunityScorer
+  /** Rodada 9, complemento ML (regra 43) — opcional; ausência preserva 100% o comportamento anterior. */
+  mlEngine?: MLPredictionSource
 }
 
 /** Toda etapa relevante é registrada — nunca só as duas últimas (regra 31: trilha completa). */
@@ -169,8 +184,34 @@ export async function runAutopilot(
     return resultadoVazio('NO_OPPORTUNITY', null)
   }
 
-  // 2. Pontuar via AutomationFeasibilityScorer.
-  const scorer = new AutomationFeasibilityScorer()
+  // 2. Pontuar. Por padrão, AutomationFeasibilityScorer (Rodada 5) —
+  // preservado exatamente. Quando `deps.mlEngine` é informado (Rodada 9,
+  // complemento ML) e nenhum `deps.scorer` explícito foi passado, o score
+  // evolui para o composto (External Market Signals + Automation
+  // Feasibility + ML Prediction) via MLBlendedScorer. Falha do ML NUNCA
+  // bloqueia o Autopilot (regra 44) — cai para o score determinístico.
+  let scorer: OpportunityScorer
+  if (deps.scorer) {
+    scorer = deps.scorer
+  } else if (deps.mlEngine) {
+    try {
+      const predicoes = await deps.mlEngine.preverOportunidades(workspaceId, candidatos)
+      const mapaPredicoes = new Map(predicoes.map((p) => [p.opportunityKey, p]))
+      scorer = new MLBlendedScorer(new Map(), mapaPredicoes)
+      await tocaAuditoria(deps.store, workspaceId, audit, 'ml_prediction', `${predicoes.length} previsão(ões) de ML consultada(s) — detalhes em MLPrediction/AuditLog.`)
+    } catch (e) {
+      scorer = new AutomationFeasibilityScorer()
+      await tocaAuditoria(
+        deps.store,
+        workspaceId,
+        audit,
+        'ml_prediction_failed',
+        `Falha ao consultar o PatronoMLEngine — usando o score determinístico (o Autopilot nunca trava por causa do ML): ${e instanceof Error ? e.message : 'erro desconhecido'}.`
+      )
+    }
+  } else {
+    scorer = new AutomationFeasibilityScorer()
+  }
   const ranqueados = scorer.rank(candidatos)
   await tocaAuditoria(deps.store, workspaceId, audit, 'score', `Ranking calculado para ${ranqueados.length} candidato(s).`)
 
