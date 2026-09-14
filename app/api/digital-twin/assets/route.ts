@@ -6,8 +6,7 @@ import { registrarAuditoria } from '@/lib/audit-log'
 import { uploadBufferPrivado, criarUrlAssinada } from '@/lib/supabase'
 import { calcularExpiracaoPreview } from '@/lib/digital-twin-retention'
 import { DIGITAL_TWIN_ASSET_TYPES, ehTipoDeAssetValido } from '@/lib/digital-twin-asset-types'
-
-const BUCKET_PRIVADO = 'digital-twin-private'
+import { BUCKET_DIGITAL_TWIN_PRIVADO as BUCKET_PRIVADO } from '@/lib/digital-twin-store'
 
 /** Lista assets do PRÓPRIO workspace, com URL assinada temporária (nunca pública/permanente). */
 export async function GET() {

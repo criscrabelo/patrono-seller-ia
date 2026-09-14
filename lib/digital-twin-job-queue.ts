@@ -19,6 +19,7 @@ export interface DigitalTwinJobRow {
   workspaceId: string
   profileId: string
   status: string
+  jobType: string
   workerId: string | null
   claimedAt: Date | null
   heartbeatAt: Date | null
@@ -68,7 +69,7 @@ export async function reivindicarProximoJob(
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, "workspaceId", "profileId", status, "workerId", "claimedAt", "heartbeatAt", attempts, error, "resultAssetId"
+    RETURNING id, "workspaceId", "profileId", status, "jobType", "workerId", "claimedAt", "heartbeatAt", attempts, error, "resultAssetId"
   `)
 
   return rows[0] ?? null
@@ -130,12 +131,29 @@ export async function falharJob(
 }
 
 /**
+ * Nomes amigáveis por etapa (regra 31 da Retomada da Rodada 9) — a
+ * proprietária vê o que está acontecendo agora, nunca uma estimativa de
+ * tempo (que dependeria de hardware/fila e seria só um chute).
+ */
+const NOME_AMIGAVEL_POR_ETAPA: Record<string, string> = {
+  PREPARING_AUDIO: 'Preparando áudio',
+  GENERATING_VOICE: 'Gerando voz',
+  GENERATING_AVATAR: 'Criando avatar',
+  LIP_SYNC: 'Sincronizando fala',
+  RENDERING: 'Montando vídeo',
+  VALIDATING: 'Validando',
+  CANCELLED: 'Cancelado',
+}
+
+/**
  * Status amigável para a UI: um job `QUEUED` sem worker nenhum ainda não
- * é "falha" — é só "aguardando processador" (regra 36).
+ * é "falha" — é só "aguardando processador" (regra 36). Cada etapa
+ * intermediária tem seu próprio nome (regra 31), em vez de um genérico
+ * "Processando" que escondia o progresso real do job.
  */
 export function statusAmigavelParaUsuaria(job: Pick<DigitalTwinJobRow, 'status' | 'workerId'>): string {
   if (job.status === 'QUEUED' && !job.workerId) return 'Aguardando processador'
   if (job.status === 'FAILED') return 'Falhou'
   if (job.status === 'READY') return 'Pronto'
-  return 'Processando'
+  return NOME_AMIGAVEL_POR_ETAPA[job.status] ?? 'Processando'
 }

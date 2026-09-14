@@ -22,7 +22,7 @@ import {
   falharJob,
   STALE_TIMEOUT_MS_PADRAO,
 } from '../lib/digital-twin-job-queue'
-import { processarJobDeVerdade, detectarCapacidadesDeGeracao } from '../lib/digital-twin-worker-core'
+import { processarJobDeVerdade, detectarCapacidadesDeGeracao, type JobDeProducao } from '../lib/digital-twin-worker-core'
 import { detectarCapacidadesRuntime } from '../lib/digital-twin-runtime'
 import { REQUIRED_WORKER_VERSION } from '../lib/digital-twin-worker-version'
 import { verificarTokenWorker } from '../lib/digital-twin-worker-token'
@@ -74,11 +74,13 @@ async function processarUmJob(workspaceIdPareado: string | null): Promise<boolea
 
   try {
     // job.contentId/overlay/legenda viriam do próprio registro em produção;
-    // este worker só demonstra o fluxo real de claim → processar → completar/falhar.
+    // jobType e resultAssetId (usado como entrada de áudio/vídeo já gerado
+    // por uma etapa anterior) vêm de verdade do `DigitalTwinJob`.
     const resultado = await processarJobDeVerdade({
       id: job.id,
       workspaceId: job.workspaceId,
       profileId: job.profileId,
+      jobType: job.jobType as JobDeProducao['jobType'],
       mediaAssetUrl: job.resultAssetId ?? '',
       overlayTexto: 'Patrono',
       legenda: 'Confira o preço atual.',

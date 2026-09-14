@@ -85,6 +85,17 @@ describe('Job Queue real (Postgres, claim atômico)', () => {
     assert.equal(statusAmigavelParaUsuaria({ status: 'QUEUED', workerId: null }), 'Aguardando processador')
   })
 
+  // Retomada da Rodada 9 (regra 31) — cada etapa tem um nome próprio, nunca um "Processando" genérico escondendo o progresso real.
+  test('cada etapa do job tem um nome amigável próprio (regra 31 da Retomada), nunca "Processando" genérico', () => {
+    assert.equal(statusAmigavelParaUsuaria({ status: 'PREPARING_AUDIO', workerId: 'w1' }), 'Preparando áudio')
+    assert.equal(statusAmigavelParaUsuaria({ status: 'GENERATING_VOICE', workerId: 'w1' }), 'Gerando voz')
+    assert.equal(statusAmigavelParaUsuaria({ status: 'GENERATING_AVATAR', workerId: 'w1' }), 'Criando avatar')
+    assert.equal(statusAmigavelParaUsuaria({ status: 'LIP_SYNC', workerId: 'w1' }), 'Sincronizando fala')
+    assert.equal(statusAmigavelParaUsuaria({ status: 'RENDERING', workerId: 'w1' }), 'Montando vídeo')
+    assert.equal(statusAmigavelParaUsuaria({ status: 'VALIDATING', workerId: 'w1' }), 'Validando')
+    assert.equal(statusAmigavelParaUsuaria({ status: 'CANCELLED', workerId: 'w1' }), 'Cancelado')
+  })
+
   test('falha com tentativas restantes reagenda (QUEUED) — retry automático', async () => {
     const job = await prisma.digitalTwinJob.create({ data: { workspaceId, profileId, status: 'QUEUED' } })
     await reivindicarProximoJob('worker-x', undefined, prisma)
@@ -351,7 +362,7 @@ describe('Worker core — fallback sem GPU', () => {
     const profile = await prisma.digitalTwinProfile.create({ data: { workspaceId: user.workspaceId, ownerUserId: user.id, displayName: 'x' } })
 
     const resultado = await processarJobDeVerdade({
-      id: 'j1', workspaceId: user.workspaceId, profileId: profile.id, mediaAssetUrl: '', overlayTexto: 'x', legenda: 'y',
+      id: 'j1', workspaceId: user.workspaceId, profileId: profile.id, jobType: 'AVATAR_PREVIEW', mediaAssetUrl: '', overlayTexto: 'x', legenda: 'y',
     })
     assert.equal(resultado.sucesso, false)
     assert.notEqual(resultado.modo, 'DIGITAL_TWIN') // sem chatterbox/musetalk neste ambiente

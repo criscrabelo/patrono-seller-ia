@@ -10,6 +10,9 @@
 import { prisma } from './prisma'
 import type { DigitalTwinProfile, VoiceProfile, IdentityConsent, VoiceConsent } from './digital-twin'
 
+/** Bucket PRIVADO do Supabase Storage usado por todos os assets do Digital Twin (rosto/voz/vídeo de referência/prévias) — nunca público. */
+export const BUCKET_DIGITAL_TWIN_PRIVADO = 'digital-twin-private'
+
 export async function obterPerfilDigitalTwin(workspaceId: string) {
   return prisma.digitalTwinProfile.findUnique({ where: { workspaceId } })
 }

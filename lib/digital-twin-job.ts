@@ -22,6 +22,10 @@ export const DIGITAL_TWIN_JOB_STATUSES = [
 ] as const
 export type DigitalTwinJobStatus = (typeof DIGITAL_TWIN_JOB_STATUSES)[number]
 
+/** Finalidade do job (Rodada 9, campo `DigitalTwinJob.jobType`) — nunca rotula uma prévia de voz sozinha como avatar/lip-sync. */
+export const DIGITAL_TWIN_JOB_TYPES = ['VOICE_PREVIEW', 'AVATAR_PREVIEW', 'PRODUCT_PREVIEW', 'PUBLISH'] as const
+export type DigitalTwinJobType = (typeof DIGITAL_TWIN_JOB_TYPES)[number]
+
 /** Etapas em que é seguro tentar de novo sem custo computacional desperdiçado (regra 38). */
 export const ETAPAS_RETRYAVEIS: DigitalTwinJobStatus[] = ['PREPARING_AUDIO', 'GENERATING_VOICE', 'GENERATING_AVATAR', 'LIP_SYNC', 'RENDERING']
 
