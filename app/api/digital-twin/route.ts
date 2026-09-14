@@ -28,7 +28,15 @@ export async function GET() {
   const preferencias = contexto.profile
     ? await prisma.digitalTwinProfile.findUnique({
         where: { id: contexto.profile.id },
-        select: { autoUseDigitalTwin: true, autoUseVoice: true, allowFallback: true, priorityChannel: true, defaultStyle: true },
+        select: {
+          autoUseDigitalTwin: true,
+          autoUseVoice: true,
+          allowFallback: true,
+          priorityChannel: true,
+          defaultStyle: true,
+          workerPaused: true,
+          voiceApprovedAt: true,
+        },
       })
     : null
 
@@ -91,6 +99,7 @@ export async function PATCH(req: NextRequest) {
   if (typeof body.autoUseDigitalTwin === 'boolean') data.autoUseDigitalTwin = body.autoUseDigitalTwin
   if (typeof body.autoUseVoice === 'boolean') data.autoUseVoice = body.autoUseVoice
   if (typeof body.allowFallback === 'boolean') data.allowFallback = body.allowFallback
+  if (typeof body.workerPaused === 'boolean') data.workerPaused = body.workerPaused
   if (typeof body.priorityChannel === 'string' && CANAIS_VALIDOS.includes(body.priorityChannel)) data.priorityChannel = body.priorityChannel
   if (typeof body.defaultStyle === 'string' && ESTILOS_VALIDOS.includes(body.defaultStyle)) data.defaultStyle = body.defaultStyle
 

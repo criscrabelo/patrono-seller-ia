@@ -10,6 +10,8 @@ interface StatusResposta {
     displayName: string
     enabled: boolean
     approvedAt: string | null
+    voiceApprovedAt: string | null
+    workerPaused: boolean
     autoUseDigitalTwin: boolean
     autoUseVoice: boolean
     allowFallback: boolean
@@ -39,18 +41,24 @@ export default function DigitalTwinPage() {
   const [criando, setCriando] = useState(false)
   const [enviando, setEnviando] = useState<string | null>(null)
   const [gravando, setGravando] = useState(false)
+  const [assets, setAssets] = useState<{ id: string; type: string; purpose: string | null; url: string }[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
 
   async function carregar() {
     const res = await fetch('/api/digital-twin')
     if (res.ok) setStatus(await res.json())
+    const resAssets = await fetch('/api/digital-twin/assets')
+    if (resAssets.ok) setAssets(await resAssets.json())
     setCarregando(false)
   }
 
   useEffect(() => {
     carregar()
   }, [])
+
+  const gravacaoOriginal = assets.find((a) => a.type === 'VOICE_REFERENCE')
+  const vozDigitalPreview = assets.find((a) => a.type === 'GENERATED_PREVIEW' && a.purpose === 'voice_preview')
 
   async function criarMeuDigitalTwin() {
     setCriando(true)
@@ -128,6 +136,23 @@ export default function DigitalTwinPage() {
       const d = await res.json().catch(() => ({}))
       toast({ title: d.error || 'Ainda não é possível aprovar.', variant: 'destructive' })
     }
+  }
+
+  async function aprovarVoz() {
+    const res = await fetch('/api/digital-twin/voice-approve', { method: 'POST' })
+    if (res.ok) {
+      toast({ title: 'Voz aprovada! O Autopilot já pode reutilizá-la.', variant: 'success' })
+      carregar()
+    } else {
+      const d = await res.json().catch(() => ({}))
+      toast({ title: d.error || 'Ainda não é possível aprovar a voz.', variant: 'destructive' })
+    }
+  }
+
+  async function refazerVoz() {
+    await fetch('/api/digital-twin/voice-approve', { method: 'DELETE' })
+    toast({ title: 'Aprovação da voz desfeita — envie uma nova referência quando quiser.' })
+    carregar()
   }
 
   async function atualizarPreferencia(campo: string, valor: boolean | string) {
@@ -241,6 +266,38 @@ export default function DigitalTwinPage() {
             </section>
           )}
 
+          {/* Comparação de voz (Rodada 9, regra 11/22) — aprovação ÚNICA, separada da aprovação do avatar completo. */}
+          {gravacaoOriginal && (
+            <section className="rounded-lg border border-border p-4 space-y-3">
+              <h2 className="text-sm font-semibold text-white">Comparar minha voz</h2>
+              <div className="space-y-2">
+                <p className="text-xs text-white/60">Ouvir minha gravação</p>
+                <audio controls src={gravacaoOriginal.url} className="w-full h-8" />
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs text-white/60">Ouvir minha voz digital</p>
+                {vozDigitalPreview ? (
+                  <audio controls src={vozDigitalPreview.url} className="w-full h-8" />
+                ) : (
+                  <p className="text-xs text-white/40">Prévia ainda não gerada — aguardando o processador de vídeos.</p>
+                )}
+              </div>
+              {status?.profile?.voiceApprovedAt ? (
+                <button onClick={refazerVoz} className="text-xs text-white/60 underline">
+                  Refazer referência de voz
+                </button>
+              ) : (
+                <button
+                  onClick={aprovarVoz}
+                  disabled={!vozDigitalPreview}
+                  className="rounded-lg border border-border px-3 py-2 text-xs text-white disabled:opacity-40"
+                >
+                  Aprovar minha voz
+                </button>
+              )}
+            </section>
+          )}
+
           {identityOk && voiceConsentOk && (
             <button onClick={aprovarDigitalTwin} className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-primary-dark hover:bg-accent-light">
               Aprovar meu Digital Twin
@@ -289,6 +346,10 @@ export default function DigitalTwinPage() {
           <label className="flex items-center justify-between text-xs text-white/80">
             Permitir fallback (sem GPU)
             <input type="checkbox" checked={status.profile.allowFallback} onChange={(e) => atualizarPreferencia('allowFallback', e.target.checked)} />
+          </label>
+          <label className="flex items-center justify-between text-xs text-white/80">
+            Pausar processador local (worker)
+            <input type="checkbox" checked={status.profile.workerPaused} onChange={(e) => atualizarPreferencia('workerPaused', e.target.checked)} />
           </label>
           <label className="flex items-center justify-between text-xs text-white/80">
             Canal prioritário
