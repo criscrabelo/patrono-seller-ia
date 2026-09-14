@@ -30,6 +30,22 @@ export async function POST(req: NextRequest) {
   const consent =
     tipo === 'identity' ? await prisma.identityConsent.create({ data: dataConsent }) : await prisma.voiceConsent.create({ data: dataConsent })
 
+  // Amarra o consentimento ao perfil automaticamente — a usuária nunca
+  // precisa "linkar" nada manualmente (regra 1: sem passo técnico).
+  const profile = await prisma.digitalTwinProfile.findUnique({ where: { workspaceId: session.user.workspaceId } })
+  if (profile) {
+    if (tipo === 'identity') {
+      await prisma.digitalTwinProfile.update({ where: { id: profile.id }, data: { identityConsentId: consent.id } })
+    } else {
+      const voiceProfile = profile.voiceProfileId
+        ? await prisma.voiceProfile.update({ where: { id: profile.voiceProfileId }, data: { consentId: consent.id } })
+        : await prisma.voiceProfile.create({ data: { workspaceId: session.user.workspaceId, ownerUserId: session.user.id, consentId: consent.id } })
+      if (!profile.voiceProfileId) {
+        await prisma.digitalTwinProfile.update({ where: { id: profile.id }, data: { voiceProfileId: voiceProfile.id } })
+      }
+    }
+  }
+
   await registrarAuditoria({
     workspaceId: session.user.workspaceId,
     userId: session.user.id,

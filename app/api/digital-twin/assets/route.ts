@@ -4,9 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { registrarAuditoria } from '@/lib/audit-log'
 import { uploadBufferPrivado, criarUrlAssinada } from '@/lib/supabase'
+import { calcularExpiracaoPreview } from '@/lib/digital-twin-retention'
+import { DIGITAL_TWIN_ASSET_TYPES, ehTipoDeAssetValido } from '@/lib/digital-twin-asset-types'
 
 const BUCKET_PRIVADO = 'digital-twin-private'
-const TIPOS_VALIDOS = ['FACE_IMAGE', 'REFERENCE_VIDEO', 'VOICE_REFERENCE', 'CONSENT_EVIDENCE', 'GENERATED_PREVIEW']
 
 /** Lista assets do PRÓPRIO workspace, com URL assinada temporária (nunca pública/permanente). */
 export async function GET() {
@@ -48,8 +49,8 @@ export async function POST(req: NextRequest) {
   const file = form.get('file')
   const purpose = form.get('purpose')
 
-  if (typeof type !== 'string' || !TIPOS_VALIDOS.includes(type)) {
-    return NextResponse.json({ error: `type precisa ser um de: ${TIPOS_VALIDOS.join(', ')}` }, { status: 400 })
+  if (typeof type !== 'string' || !ehTipoDeAssetValido(type)) {
+    return NextResponse.json({ error: `type precisa ser um de: ${DIGITAL_TWIN_ASSET_TYPES.join(', ')}` }, { status: 400 })
   }
   if (!(file instanceof File)) {
     return NextResponse.json({ error: 'file é obrigatório.' }, { status: 400 })
@@ -67,6 +68,9 @@ export async function POST(req: NextRequest) {
       storagePath,
       mimeType: file.type || 'application/octet-stream',
       purpose: typeof purpose === 'string' ? purpose : null,
+      // Prévias geradas expiram (limpeza automática) — referências
+      // permanentes de identidade/voz nunca expiram por esta rotina.
+      expiresAt: type === 'GENERATED_PREVIEW' ? calcularExpiracaoPreview() : null,
     },
   })
 
