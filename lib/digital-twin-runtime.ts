@@ -78,3 +78,34 @@ export function atendeRequisitosMinimosAvatar(caps: DigitalTwinRuntimeCapabiliti
   if (caps.freeDiskGB != null && caps.freeDiskGB < REQUISITOS_MINIMOS_AVATAR_LOCAL.discoLivreGBMinimo) return false
   return true
 }
+
+// ── Classificação amigável (Rodada 8, regra 13) ───────────────────────────
+// Nunca mostrar CUDA/VRAM cru para a usuária comum — a tela traduz para
+// "Pronto para gerar avatar" / "Modo leve disponível".
+
+export const RUNTIME_CLASSES = ['GPU_READY', 'GPU_LIMITED', 'CPU_ONLY', 'UNSUPPORTED'] as const
+export type RuntimeClass = (typeof RUNTIME_CLASSES)[number]
+
+export function classificarRuntime(caps: DigitalTwinRuntimeCapabilities): RuntimeClass {
+  if (caps.gpuDetected && caps.cudaAvailable && caps.vramGB != null && caps.vramGB >= REQUISITOS_MINIMOS_AVATAR_LOCAL.vramGBMinima) {
+    return 'GPU_READY'
+  }
+  if (caps.gpuDetected && caps.cudaAvailable) {
+    return 'GPU_LIMITED' // GPU existe, mas VRAM abaixo do recomendado
+  }
+  if (caps.cpuCores >= 2 && caps.totalRamGB >= 4) {
+    return 'CPU_ONLY' // sem GPU, mas dá pra rodar o fallback (voz + motion graphics)
+  }
+  return 'UNSUPPORTED'
+}
+
+const ROTULOS_AMIGAVEIS: Record<RuntimeClass, string> = {
+  GPU_READY: 'Pronto para gerar avatar',
+  GPU_LIMITED: 'Modo leve disponível (GPU limitada)',
+  CPU_ONLY: 'Modo leve disponível',
+  UNSUPPORTED: 'Ambiente insuficiente — usando apenas recursos básicos',
+}
+
+export function rotuloAmigavelRuntime(classe: RuntimeClass): string {
+  return ROTULOS_AMIGAVEIS[classe]
+}
