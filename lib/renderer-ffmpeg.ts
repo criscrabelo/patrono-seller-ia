@@ -25,6 +25,7 @@ import { tmpdir } from 'os'
 import ffmpegStatic from 'ffmpeg-static'
 import type { RendererProvider } from './creative-factory'
 import { uploadBuffer } from './supabase'
+import { analisarAudio } from './audio-ffprobe'
 
 const execFileAsync = promisify(execFile)
 const BUCKET_RENDERS = 'creative-renders'
@@ -45,6 +46,37 @@ async function baixarImagem(url: string, destino: string): Promise<void> {
   if (!res.ok) throw new Error(`Não consegui baixar a mídia (HTTP ${res.status}): ${url}`)
   const ab = await res.arrayBuffer()
   await writeFile(destino, Buffer.from(ab))
+}
+
+function formatarTimestampSrt(segundos: number): string {
+  const totalMs = Math.max(Math.round(segundos * 1000), 0)
+  const ms = totalMs % 1000
+  const totalSeg = Math.floor(totalMs / 1000)
+  const s = totalSeg % 60
+  const totalMin = Math.floor(totalSeg / 60)
+  const m = totalMin % 60
+  const h = Math.floor(totalMin / 60)
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0')
+  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`
+}
+
+/** Escapa o caminho do arquivo `.srt` para uso dentro do filtro `subtitles=filename='...'`. */
+function escaparCaminhoFiltro(caminho: string): string {
+  return caminho.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'")
+}
+
+/**
+ * Legenda queimada via `subtitles`/libass — usado no lugar de `drawtext`
+ * porque nem todo build do `ffmpeg-static` traz o filtro `drawtext`
+ * compilado (verificado nesta rodada: o build usado neste ambiente não
+ * tem `drawtext`, mas tem `subtitles`/`ass` via libass). Gera um `.srt`
+ * cobrindo toda a duração do vídeo e devolve o filtro pronto para `-vf`.
+ */
+async function prepararFiltroLegenda(legenda: string, duracaoSegundos: number, caminhoSrt: string): Promise<string> {
+  const srt = `1\n${formatarTimestampSrt(0)} --> ${formatarTimestampSrt(duracaoSegundos)}\n${legenda}\n`
+  await writeFile(caminhoSrt, srt, 'utf-8')
+  const caminhoEscapado = escaparCaminhoFiltro(caminhoSrt)
+  return `subtitles=filename='${caminhoEscapado}':force_style='Fontsize=16,PrimaryColour=&Hffffff&,BackColour=&H80000000&,BorderStyle=3,Outline=0,Alignment=2,MarginV=60'`
 }
 
 export interface RendererFFmpegOverlay {
@@ -211,6 +243,57 @@ export class RendererFFmpeg implements RendererProvider {
       return { url, durationSeconds: duracaoSegundos }
     } finally {
       await Promise.allSettled([unlink(entrada), unlink(saida)])
+    }
+  }
+
+  /**
+   * Prévia real sem GPU (Rodada 9, regra 16) — foto + voz clonada (já
+   * sintetizada e aprovada no Voice Quality Gate, recebida como arquivo
+   * LOCAL) + motion graphics (zoompan) + legenda. A duração do vídeo segue
+   * a duração real do áudio (nunca um valor arbitrário). NUNCA rotulado
+   * como lip-sync — quem chama usa o status `READY_VOICE_ONLY_PREVIEW`.
+   */
+  async renderVoiceOnlyPreview(params: { imagemUrl: string; audioLocalPath: string; legenda: string }): Promise<{ url: string; durationSeconds: number }> {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const tmp = tmpdir()
+    const entrada = join(tmp, `voice-only-in-${id}.jpg`)
+    const legendaSrt = join(tmp, `voice-only-legenda-${id}.srt`)
+    const saida = join(tmp, `voice-only-out-${id}.mp4`)
+
+    try {
+      await baixarImagem(params.imagemUrl, entrada)
+
+      const analiseAudio = await analisarAudio(params.audioLocalPath)
+      const duracaoSegundos = analiseAudio.duracaoSegundos ?? 6
+      const fps = 30
+      const totalFrames = Math.max(Math.round(duracaoSegundos * fps), fps)
+      const filtroLegenda = await prepararFiltroLegenda(params.legenda, duracaoSegundos, legendaSrt)
+      const filtros = [
+        `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920`,
+        `zoompan=z='min(zoom+0.0006,1.08)':d=${totalFrames}:s=1080x1920:fps=${fps}`,
+        filtroLegenda,
+      ].join(',')
+
+      await execFileAsync(ffmpegBin(), [
+        '-loop', '1',
+        '-i', entrada,
+        '-i', params.audioLocalPath,
+        '-vf', filtros,
+        '-t', String(duracaoSegundos),
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-shortest',
+        '-y',
+        saida,
+      ])
+
+      const buffer = await readFile(saida)
+      const url = await uploadBuffer(buffer, BUCKET_RENDERS, `voice-only-${id}.mp4`, 'video/mp4')
+      return { url, durationSeconds: duracaoSegundos }
+    } finally {
+      await Promise.allSettled([unlink(entrada), unlink(legendaSrt), unlink(saida)])
     }
   }
 
