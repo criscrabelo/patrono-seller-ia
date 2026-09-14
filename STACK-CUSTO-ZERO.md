@@ -38,6 +38,10 @@ Estas já estavam em uso antes desta rodada (não foram adicionadas agora), mas 
 
 Nenhuma integração nova paga foi contratada nesta rodada. Nenhum dos dois foi desligado — a decisão de mantê-los é anterior a este ciclo de trabalho (já estavam em produção).
 
+## Rodada 7 — Digital Twin (nenhuma dependência paga)
+
+Chatterbox TTS (Resemble AI) usado apenas na versão **self-hosted/open source**, nunca a API paga. MuseTalk (lip-sync) avaliado como candidato open source com uso comercial informado pelo projeto (ver `DIGITAL-TWIN-MODEL-LICENSES.md`). Wav2Lip e LivePortrait ficam `BLOCKED_BY_LICENSE` — nunca integrados. Nenhum modelo pesado foi baixado/instalado neste ambiente; nenhum HeyGen/Synthesia/ElevenLabs/D-ID/cloud GPU contratado.
+
 ## Nenhuma dependência paga NOVA nesta rodada
 
 Tudo que foi adicionado agora (Workspace, AffiliateProgram, Sale, Commission, AuditLog, testes) usa **apenas** a stack já existente: mesmo Postgres (Prisma), mesmo framework (Next.js), zero bibliotecas novas. Os testes usam o test runner nativo do Node (`node --test`) — nenhuma dependência de teste foi adicionada ao `package.json`.
