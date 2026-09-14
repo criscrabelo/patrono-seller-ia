@@ -18,13 +18,15 @@ import { deveAbortarPorKillSwitch, type DigitalTwinJobType, type DigitalTwinJobS
 import { carregarContextoDigitalTwin, listarAssetsDigitalTwin, BUCKET_DIGITAL_TWIN_PRIVADO } from './digital-twin-store'
 import { gerarPreviaDeVoz } from './digital-twin-voice-job'
 import { gerarPreviaLipSync, gerarPreviaVozSomente } from './digital-twin-lipsync-job'
-import { criarUrlAssinada } from './supabase'
+import { criarUrlAssinada, uploadBufferPrivado } from './supabase'
 import { baixarComRetomada } from './digital-twin-model-cache'
+import { calcularExpiracaoPreview } from './digital-twin-retention'
 import { RendererFFmpeg } from './renderer-ffmpeg'
 import type { RendererProvider } from './creative-factory'
 import { prisma } from './prisma'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { readFile } from 'fs/promises'
 
 /** Terceiro kill switch (regra 34) — lido direto do banco a cada job, nunca cacheado. */
 async function workerEstaPausado(profileId: string): Promise<boolean> {
@@ -147,6 +149,25 @@ async function baixarAssetParaArquivoLocal(storagePath: string, sufixo: string):
 }
 
 /**
+ * Salva o resultado real de um job (voz/avatar) como um `DigitalTwinAsset`
+ * de verdade (`GENERATED_PREVIEW`) no bucket privado — sem isso, a prévia
+ * gerada nunca aparecia para a página "Configurações → Digital Twin"
+ * consultar (ela busca assets por `type`/`purpose`, nunca por um caminho
+ * de arquivo local do worker). Expira como qualquer outra prévia
+ * (`calcularExpiracaoPreview`), igual ao upload manual em
+ * `app/api/digital-twin/assets/route.ts`.
+ */
+async function salvarPreviaComoAssetPrivado(workspaceId: string, profileId: string, caminhoLocal: string, mimeType: string, purpose: string): Promise<string> {
+  const buffer = await readFile(caminhoLocal)
+  const storagePath = `previews/${profileId}/${purpose}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  await uploadBufferPrivado(buffer, BUCKET_DIGITAL_TWIN_PRIVADO, storagePath, mimeType)
+  const asset = await prisma.digitalTwinAsset.create({
+    data: { workspaceId, profileId, type: 'GENERATED_PREVIEW', purpose, storagePath, mimeType, expiresAt: calcularExpiracaoPreview() },
+  })
+  return asset.id
+}
+
+/**
  * Chama de verdade os pipelines de voz/avatar já existentes
  * (`gerarPreviaDeVoz`/`gerarPreviaLipSync`/`gerarPreviaVozSomente`),
  * roteando pelo `jobType` (regra 31 da Retomada da Rodada 9) — antes,
@@ -165,29 +186,50 @@ export async function processarEtapaDeVozOuAvatar(
     return { sucesso: false, modo, status: 'FAILED', motivo: 'Nenhum VoiceProfile configurado para este workspace.' }
   }
 
+  const assets = await listarAssetsDigitalTwin(job.workspaceId, job.profileId)
+
   if (job.jobType === 'VOICE_PREVIEW') {
+    // Chatterbox é zero-shot (regra 10 da Continuação) — nunca inventa um
+    // "voiceId" persistente; usa o áudio de referência JÁ autorizado
+    // (VOICE_REFERENCE) diretamente como `audioPromptPath` a cada síntese.
+    const voiceReference = assets.find((a) => a.type === 'VOICE_REFERENCE' && a.active)
+    if (!voiceReference) {
+      return { sucesso: false, modo, status: 'FAILED', motivo: 'Nenhum áudio de referência de voz (VOICE_REFERENCE) autorizado encontrado para este perfil.' }
+    }
+    let audioPromptPath: string
+    try {
+      audioPromptPath = await baixarAssetParaArquivoLocal(voiceReference.storagePath, '.wav')
+    } catch (e) {
+      return { sucesso: false, modo, status: 'FAILED', motivo: e instanceof Error ? e.message : 'Falha ao obter o áudio de referência de voz.' }
+    }
     const resultado = await gerarPreviaDeVoz({
       provider: new ChatterboxVoiceCloneProvider(),
-      // O voiceId devolvido pelo provider real ainda não é persistido em
-      // nenhum campo (a clonagem real nunca completou nesta sandbox —
-      // Hugging Face bloqueado); o id do VoiceProfile serve como
-      // identificador estável nesse meio-tempo.
-      voiceId: contexto.voiceProfile.id,
+      audioPromptPath,
+      idioma: contexto.voiceProfile.language ?? 'pt',
       texto: job.legenda || undefined,
       resolverParaCaminhoLocal: async (caminho) => caminho, // provider local (subprocesso na mesma máquina) já devolve caminho local
     })
-    if (resultado.status !== 'READY') {
+    if (resultado.status !== 'READY' || !resultado.audioPath) {
       return { sucesso: false, modo, status: 'FAILED', motivo: resultado.motivo }
     }
-    return { sucesso: true, modo, status: 'READY', motivo: resultado.motivo, contentUrl: resultado.audioPath ?? undefined }
+
+    // Persiste a prévia como um DigitalTwinAsset real (GENERATED_PREVIEW) —
+    // antes desta correção, nada convertia o áudio gerado num asset
+    // consultável pela UI (statusAmigavelParaUsuaria()/página do Digital
+    // Twin ficavam "órfãs" sem nenhum dado real para mostrar).
+    let assetId: string
+    try {
+      assetId = await salvarPreviaComoAssetPrivado(job.workspaceId, job.profileId, resultado.audioPath, 'audio/wav', 'voice_preview')
+    } catch (e) {
+      return { sucesso: false, modo, status: 'FAILED', motivo: e instanceof Error ? e.message : 'Falha ao salvar a prévia de voz no storage privado.' }
+    }
+    return { sucesso: true, modo, status: 'READY', motivo: resultado.motivo, contentUrl: assetId }
   }
 
   if (job.jobType === 'AVATAR_PREVIEW') {
     if (!job.mediaAssetUrl) {
       return { sucesso: false, modo, status: 'FAILED', motivo: 'Áudio da voz ainda não foi gerado — gere e aprove a prévia de voz antes do avatar.' }
     }
-
-    const assets = await listarAssetsDigitalTwin(job.workspaceId, job.profileId)
 
     if (modo === 'DIGITAL_TWIN') {
       const referenceVideo = assets.find((a) => a.type === 'REFERENCE_VIDEO' && a.active)

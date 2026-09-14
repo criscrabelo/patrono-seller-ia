@@ -120,9 +120,16 @@ export function podeGerarComDigitalTwin(params: {
 // ── Providers desacoplados (contratos apenas) ────────────────────────────
 // Nenhuma implementação concreta nesta rodada — nenhum SaaS pago contratado.
 
+/**
+ * O Chatterbox é zero-shot (regra 10 da Continuação da Retomada da Rodada
+ * 9, confirmado inspecionando o código real de `chatterbox/mtl_tts.py`:
+ * `generate(text, language_id, audio_prompt_path=...)`) — não existe
+ * nenhum conceito de "voice ID" persistente devolvido por uma etapa de
+ * enrollment/clonagem. Cada síntese recebe o áudio de referência
+ * autorizado diretamente (`audioPromptPath`); não inventar um voiceId.
+ */
 export interface VoiceCloneProvider {
-  clonarVoz(params: { referenceAudio: string; consentId: string }): Promise<{ voiceId: string; provider: string }>
-  sintetizar(params: { voiceId: string; texto: string }): Promise<{ audioUrl: string }>
+  sintetizar(params: { audioPromptPath: string; texto: string; idioma?: string }): Promise<{ audioUrl: string }>
 }
 
 export interface AvatarVideoProvider {

@@ -24,21 +24,23 @@ export interface VoicePreviewJobResultado {
 
 export interface VoicePreviewJobDeps {
   provider: VoiceCloneProvider
-  voiceId: string
+  /** Áudio de referência JÁ autorizado pela proprietária (arquivo local — o Chatterbox é zero-shot, sem voiceId persistente; ver `lib/digital-twin.ts`). */
+  audioPromptPath: string
+  idioma?: string
   texto?: string
   /** Resolve a URL/caminho devolvido pelo provider para um arquivo local (necessário para o Voice Quality Gate via FFmpeg). */
   resolverParaCaminhoLocal: (audioUrl: string) => Promise<string>
 }
 
 /**
- * Reference Audio já foi usado na clonagem (etapa anterior, fora deste
- * job) — aqui só a síntese de um texto novo + validação. Nunca publica;
- * só marca READY/FAILED para uma PRÉVIA privada.
+ * Só a síntese de um texto novo (a partir do áudio de referência já
+ * autorizado) + validação. Nunca publica; só marca READY/FAILED para uma
+ * PRÉVIA privada.
  */
 export async function gerarPreviaDeVoz(deps: VoicePreviewJobDeps): Promise<VoicePreviewJobResultado> {
   let audioUrl: string
   try {
-    const resultado = await deps.provider.sintetizar({ voiceId: deps.voiceId, texto: deps.texto ?? TEXTO_PREVIA_VOZ })
+    const resultado = await deps.provider.sintetizar({ audioPromptPath: deps.audioPromptPath, texto: deps.texto ?? TEXTO_PREVIA_VOZ, idioma: deps.idioma })
     audioUrl = resultado.audioUrl
   } catch (e) {
     return { status: 'FAILED', audioPath: null, qualidade: null, motivo: e instanceof Error ? e.message : 'Falha ao sintetizar voz.' }

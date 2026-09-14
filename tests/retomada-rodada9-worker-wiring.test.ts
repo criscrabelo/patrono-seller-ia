@@ -62,12 +62,29 @@ describe('Retomada Rodada 9 — roteamento real por jobType no worker', () => {
     await limpar(user.workspaceId)
   })
 
-  test('VOICE_PREVIEW com VoiceProfile configurado tenta o Chatterbox real (falha honesta, nunca fabrica áudio)', async () => {
-    const { user, profile } = await novoWorkspaceComPerfil('r9w-voz-com-perfil')
+  test('VOICE_PREVIEW sem VOICE_REFERENCE cadastrado falha com motivo claro (nunca inventa um audioPromptPath)', async () => {
+    const { user, profile } = await novoWorkspaceComPerfil('r9w-voz-sem-referencia')
     const voiceProfile = await prisma.voiceProfile.create({ data: { workspaceId: user.workspaceId, ownerUserId: user.id, provider: 'chatterbox-tts' } })
     await prisma.digitalTwinProfile.update({ where: { id: profile.id }, data: { voiceProfileId: voiceProfile.id } })
     const contexto = await carregarContextoDigitalTwin(user.workspaceId)
     const job: JobDeProducao = { id: 'j2', workspaceId: user.workspaceId, profileId: profile.id, jobType: 'VOICE_PREVIEW', mediaAssetUrl: '', overlayTexto: 'x', legenda: 'Prévia de teste.' }
+
+    const resultado = await processarEtapaDeVozOuAvatar(job, 'VOICE_ONLY', contexto, CAPACIDADES_SEM_MUSETALK)
+    assert.equal(resultado.sucesso, false)
+    assert.match(resultado.motivo, /VOICE_REFERENCE/)
+
+    await limpar(user.workspaceId)
+  })
+
+  test('VOICE_PREVIEW com VOICE_REFERENCE cadastrado tenta baixar o asset do storage privado (falha honesta nesta sandbox, nunca fabrica áudio)', async () => {
+    const { user, profile } = await novoWorkspaceComPerfil('r9w-voz-com-referencia')
+    const voiceProfile = await prisma.voiceProfile.create({ data: { workspaceId: user.workspaceId, ownerUserId: user.id, provider: 'chatterbox-tts' } })
+    await prisma.digitalTwinProfile.update({ where: { id: profile.id }, data: { voiceProfileId: voiceProfile.id } })
+    await prisma.digitalTwinAsset.create({
+      data: { workspaceId: user.workspaceId, profileId: profile.id, type: 'VOICE_REFERENCE', storagePath: 'voz-referencia.wav', mimeType: 'audio/wav' },
+    })
+    const contexto = await carregarContextoDigitalTwin(user.workspaceId)
+    const job: JobDeProducao = { id: 'j2b', workspaceId: user.workspaceId, profileId: profile.id, jobType: 'VOICE_PREVIEW', mediaAssetUrl: '', overlayTexto: 'x', legenda: 'Prévia de teste.' }
 
     const resultado = await processarEtapaDeVozOuAvatar(job, 'VOICE_ONLY', contexto, CAPACIDADES_SEM_MUSETALK)
     assert.equal(resultado.sucesso, false)

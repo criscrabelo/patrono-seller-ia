@@ -347,12 +347,11 @@ describe('Job de voz — Reference Audio → Chatterbox → texto novo → Voice
     await gerarAudioTeste(audio, 3)
 
     const providerOk: VoiceCloneProvider = {
-      clonarVoz: async () => ({ voiceId: 'v1', provider: 'chatterbox' }),
       sintetizar: async () => ({ audioUrl: 'https://fake/audio.wav' }),
     }
     const resultado = await gerarPreviaDeVoz({
       provider: providerOk,
-      voiceId: 'v1',
+      audioPromptPath: 'ref.wav',
       resolverParaCaminhoLocal: async () => audio,
     })
     assert.equal(resultado.status, 'READY')
@@ -366,10 +365,9 @@ describe('Job de voz — Reference Audio → Chatterbox → texto novo → Voice
 
   test('falha na síntese nunca finge sucesso', async () => {
     const providerFalho: VoiceCloneProvider = {
-      clonarVoz: async () => ({ voiceId: 'v1', provider: 'chatterbox' }),
       sintetizar: async () => { throw new Error('Chatterbox indisponível neste teste') },
     }
-    const resultado = await gerarPreviaDeVoz({ provider: providerFalho, voiceId: 'v1', resolverParaCaminhoLocal: async () => 'x' })
+    const resultado = await gerarPreviaDeVoz({ provider: providerFalho, audioPromptPath: 'ref.wav', resolverParaCaminhoLocal: async () => 'x' })
     assert.equal(resultado.status, 'FAILED')
   })
 
@@ -377,10 +375,9 @@ describe('Job de voz — Reference Audio → Chatterbox → texto novo → Voice
     const audioVazio = join(tmpdir(), `voz-vazia-${randomUUID()}.wav`)
     await writeFile(audioVazio, Buffer.alloc(0))
     const providerOk: VoiceCloneProvider = {
-      clonarVoz: async () => ({ voiceId: 'v1', provider: 'chatterbox' }),
       sintetizar: async () => ({ audioUrl: 'https://fake/audio.wav' }),
     }
-    const resultado = await gerarPreviaDeVoz({ provider: providerOk, voiceId: 'v1', resolverParaCaminhoLocal: async () => audioVazio })
+    const resultado = await gerarPreviaDeVoz({ provider: providerOk, audioPromptPath: 'ref.wav', resolverParaCaminhoLocal: async () => audioVazio })
     assert.equal(resultado.status, 'FAILED')
     await unlink(audioVazio)
   })
@@ -514,7 +511,6 @@ describe('MuseTalk — versão preferida 1.5 e dependências revalidadas individ
 describe('Segunda prévia com produto — pipeline completo até o Quality Gate', () => {
   const produto = { nome: 'Fone Bluetooth XPTO', categoria: 'eletrônicos', preco: 99.9, precoConsultadoEm: '2026-09-14', isAffiliate: true }
   const providerVoz: VoiceCloneProvider = {
-    clonarVoz: async () => ({ voiceId: 'v1', provider: 'chatterbox' }),
     sintetizar: async () => ({ audioUrl: 'https://fake/audio.wav' }),
   }
   const providerLipSync: LipSyncProvider = { sincronizar: async () => ({ videoUrl: 'https://fake/video.mp4' }) }
@@ -536,7 +532,7 @@ describe('Segunda prévia com produto — pipeline completo até o Quality Gate'
   test('modo sem avatar/voz (MOTION_GRAPHICS) nunca tenta montar a segunda prévia do Digital Twin', async () => {
     const r = await gerarSegundaPreviaComProduto({
       modo: 'MOTION_GRAPHICS', produto, produtoVisivelNoAsset: true, identidadeAprovada: true,
-      vozDeps: { provider: providerVoz, voiceId: 'v1', resolverParaCaminhoLocal: async () => audioOk },
+      vozDeps: { provider: providerVoz, audioPromptPath: 'ref.wav', resolverParaCaminhoLocal: async () => audioOk },
       lipSyncDeps: null, vozSomenteDeps: null,
       commercialDisclosureNecessario: true, commercialDisclosureAplicado: true, tiktokPreflightStatus: 'TECHNICALLY_VALID',
     })
@@ -546,7 +542,7 @@ describe('Segunda prévia com produto — pipeline completo até o Quality Gate'
   test('DIGITAL_TWIN com voz+avatar+disclosures+preflight todos ok => aprovado, nunca publicado', async () => {
     const r = await gerarSegundaPreviaComProduto({
       modo: 'DIGITAL_TWIN', produto, produtoVisivelNoAsset: true, identidadeAprovada: true,
-      vozDeps: { provider: providerVoz, voiceId: 'v1', resolverParaCaminhoLocal: async () => audioOk },
+      vozDeps: { provider: providerVoz, audioPromptPath: 'ref.wav', resolverParaCaminhoLocal: async () => audioOk },
       lipSyncDeps: { disponivel: true, provider: providerLipSync, referenceVideoUrl: 'ref.mp4', audioUrl: 'a.wav', resolverParaCaminhoLocal: async () => videoOk },
       vozSomenteDeps: null,
       commercialDisclosureNecessario: true, commercialDisclosureAplicado: true, tiktokPreflightStatus: 'TECHNICALLY_VALID',
@@ -558,7 +554,7 @@ describe('Segunda prévia com produto — pipeline completo até o Quality Gate'
   test('commercial disclosure necessário mas não aplicado reprova a segunda prévia', async () => {
     const r = await gerarSegundaPreviaComProduto({
       modo: 'DIGITAL_TWIN', produto, produtoVisivelNoAsset: true, identidadeAprovada: true,
-      vozDeps: { provider: providerVoz, voiceId: 'v1', resolverParaCaminhoLocal: async () => audioOk },
+      vozDeps: { provider: providerVoz, audioPromptPath: 'ref.wav', resolverParaCaminhoLocal: async () => audioOk },
       lipSyncDeps: { disponivel: true, provider: providerLipSync, referenceVideoUrl: 'ref.mp4', audioUrl: 'a.wav', resolverParaCaminhoLocal: async () => videoOk },
       vozSomenteDeps: null,
       commercialDisclosureNecessario: true, commercialDisclosureAplicado: false, tiktokPreflightStatus: 'TECHNICALLY_VALID',
@@ -569,7 +565,7 @@ describe('Segunda prévia com produto — pipeline completo até o Quality Gate'
   test('TikTok preflight bloqueado por política reprova a segunda prévia', async () => {
     const r = await gerarSegundaPreviaComProduto({
       modo: 'DIGITAL_TWIN', produto, produtoVisivelNoAsset: true, identidadeAprovada: true,
-      vozDeps: { provider: providerVoz, voiceId: 'v1', resolverParaCaminhoLocal: async () => audioOk },
+      vozDeps: { provider: providerVoz, audioPromptPath: 'ref.wav', resolverParaCaminhoLocal: async () => audioOk },
       lipSyncDeps: { disponivel: true, provider: providerLipSync, referenceVideoUrl: 'ref.mp4', audioUrl: 'a.wav', resolverParaCaminhoLocal: async () => videoOk },
       vozSomenteDeps: null,
       commercialDisclosureNecessario: true, commercialDisclosureAplicado: true, tiktokPreflightStatus: 'BLOCKED_BY_POLICY',
@@ -580,7 +576,7 @@ describe('Segunda prévia com produto — pipeline completo até o Quality Gate'
   test('sem mídia autorizada do produto, nunca finge posse física (MediaRightsGate reprova)', async () => {
     const r = await gerarSegundaPreviaComProduto({
       modo: 'DIGITAL_TWIN', produto, produtoVisivelNoAsset: false, identidadeAprovada: true,
-      vozDeps: { provider: providerVoz, voiceId: 'v1', resolverParaCaminhoLocal: async () => audioOk },
+      vozDeps: { provider: providerVoz, audioPromptPath: 'ref.wav', resolverParaCaminhoLocal: async () => audioOk },
       lipSyncDeps: { disponivel: true, provider: providerLipSync, referenceVideoUrl: 'ref.mp4', audioUrl: 'a.wav', resolverParaCaminhoLocal: async () => videoOk },
       vozSomenteDeps: null,
       commercialDisclosureNecessario: true, commercialDisclosureAplicado: true, tiktokPreflightStatus: 'TECHNICALLY_VALID',

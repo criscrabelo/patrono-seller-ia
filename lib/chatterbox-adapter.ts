@@ -116,32 +116,31 @@ export const TEXTO_GUIADO_ONBOARDING_VOZ =
 export class ChatterboxVoiceCloneProvider implements VoiceCloneProvider {
   constructor(private pythonBin: string = 'python3') {}
 
-  async clonarVoz(params: { referenceAudio: string; consentId: string }): Promise<{ voiceId: string; provider: string }> {
+  /**
+   * Zero-shot (regra 10 da Continuação da Retomada da Rodada 9) — sem
+   * `clonarVoz()`/`voiceId`. Cada síntese recebe `audioPromptPath`
+   * diretamente (o áudio de referência JÁ autorizado pela proprietária —
+   * o consentimento é checado antes disso, no kill switch do worker;
+   * nunca duplicado aqui). Confirmado inspecionando o código real do
+   * pacote instalado (`chatterbox/mtl_tts.py`:
+   * `generate(text, language_id, audio_prompt_path=...)`).
+   */
+  async sintetizar(params: { audioPromptPath: string; texto: string; idioma?: string }): Promise<{ audioUrl: string }> {
+    if (!params.audioPromptPath) throw new Error('Síntese de voz exige audioPromptPath (áudio de referência autorizado) — nunca sintetizar sem ele.')
     const disponibilidade = await verificarDisponibilidadeChatterbox(this.pythonBin)
     const selecao = selecionarProviderChatterbox(disponibilidade)
     if (selecao.tier === 'VOICE_ONLY_FALLBACK') throw new Error(selecao.motivo)
-    if (!params.consentId) throw new Error('Clonagem de voz exige consentId válido — nunca clonar sem consentimento registrado.')
 
-    // Chamada real ficaria aqui (subprocesso Python com o script oficial do
-    // Chatterbox). Confere o acesso ao Hugging Face antes de tentar — se o
-    // bloqueio for deste ambiente (CURRENT_ENVIRONMENT_NETWORK_RESTRICTION),
-    // a mensagem nunca afirma que o modelo está indisponível.
+    // Chamada real ficaria aqui (subprocesso Python com
+    // ChatterboxMultilingualTTS.generate(texto, language_id=idioma,
+    // audio_prompt_path=params.audioPromptPath)). Confere o acesso ao
+    // Hugging Face antes de tentar — se o bloqueio for deste ambiente
+    // (CURRENT_ENVIRONMENT_NETWORK_RESTRICTION), a mensagem nunca afirma
+    // que o modelo está indisponível.
     const hf = await verificarAcessoHuggingFace()
     throw new Error(
       hf.status === 'CURRENT_ENVIRONMENT_NETWORK_RESTRICTION'
         ? `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas o Hugging Face Hub está bloqueado neste ambiente específico (${hf.detalhe}) — o modelo em si é público. Retestar na máquina real.`
-        : `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas os pesos do modelo não puderam ser obtidos (${hf.detalhe}).`
-    )
-  }
-
-  async sintetizar(params: { voiceId: string; texto: string }): Promise<{ audioUrl: string }> {
-    const disponibilidade = await verificarDisponibilidadeChatterbox(this.pythonBin)
-    const selecao = selecionarProviderChatterbox(disponibilidade)
-    if (selecao.tier === 'VOICE_ONLY_FALLBACK') throw new Error(selecao.motivo)
-    const hf = await verificarAcessoHuggingFace()
-    throw new Error(
-      hf.status === 'CURRENT_ENVIRONMENT_NETWORK_RESTRICTION'
-        ? `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas o Hugging Face Hub está bloqueado neste ambiente específico (${hf.detalhe}).`
         : `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas os pesos do modelo não puderam ser obtidos (${hf.detalhe}).`
     )
   }
