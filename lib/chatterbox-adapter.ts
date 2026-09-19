@@ -35,18 +35,64 @@
  */
 
 import { execFile } from 'child_process'
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { promisify } from 'util'
 import type { VoiceCloneProvider } from './digital-twin'
 import { verificarAcessoHuggingFace } from './digital-twin-network-access'
 
 const execFileAsync = promisify(execFile)
 
+/**
+ * Descobre o Python que tem o Chatterbox instalado — nunca assume `python3`
+ * (que não existe no Windows) nem uma pasta fixa.
+ *
+ * Ordem: `DIGITAL_TWIN_PYTHON` (caminho direto do interpretador) →
+ * `DIGITAL_TWIN_VENV` (raiz do virtualenv) → `worker/.venv-digital-twin`
+ * (padrão histórico) → `python3`/`python` do PATH.
+ *
+ * O venv NÃO pode ser assumido dentro do repositório: num caminho profundo
+ * (ex.: a pasta do OneDrive da proprietária) a instalação do PyTorch estoura
+ * o limite de 260 caracteres do Windows, e o venv precisa morar num caminho
+ * curto como `C:\patrono-venv`. Ver DIGITAL-TWIN-WINDOWS-INSTALL.md.
+ */
+export function resolverPythonDoChatterbox(): string {
+  const direto = process.env.DIGITAL_TWIN_PYTHON
+  if (direto && existsSync(direto)) return direto
+
+  const candidatosDeVenv = [
+    process.env.DIGITAL_TWIN_VENV,
+    join(process.cwd(), 'worker', '.venv-digital-twin'),
+  ].filter((v): v is string => Boolean(v))
+
+  for (const venv of candidatosDeVenv) {
+    for (const rel of [join('Scripts', 'python.exe'), join('bin', 'python')]) {
+      const caminho = join(venv, rel)
+      if (existsSync(caminho)) return caminho
+    }
+  }
+
+  return process.platform === 'win32' ? 'python' : 'python3'
+}
+
 export type ChatterboxAvailability =
   | { available: false; reason: string }
   | { available: true; pythonVersion: string }
 
-/** Nunca assume que o Chatterbox está instalado — tenta importar de verdade (módulo correto: `chatterbox`). */
-export async function verificarDisponibilidadeChatterbox(pythonBin: string = 'python3'): Promise<ChatterboxAvailability> {
+/**
+ * Nunca assume que o Chatterbox está instalado — tenta importar de verdade
+ * (módulo correto: `chatterbox`).
+ *
+ * O padrão é o interpretador RESOLVIDO, não `python3`: esta função é chamada
+ * sem argumento por `detectarCapacidadesDeGeracao()`, e no Windows `python3`
+ * não existe. O efeito era silencioso e grave — a detecção devolvia
+ * `available: false` com o Chatterbox instalado e funcionando, o worker
+ * concluía que não havia voz disponível e caía no fallback de motion
+ * graphics, que então falhava por falta de asset de mídia. Verificado na
+ * máquina real: `Chatterbox=false` mesmo após a síntese já ter funcionado.
+ */
+export async function verificarDisponibilidadeChatterbox(pythonBin: string = resolverPythonDoChatterbox()): Promise<ChatterboxAvailability> {
   try {
     const { stdout } = await execFileAsync(pythonBin, ['-c', 'import chatterbox; import sys; print(sys.version)'])
     return { available: true, pythonVersion: stdout.trim() }
@@ -113,8 +159,51 @@ export const TEXTO_GUIADO_ONBOARDING_VOZ =
   'Olá! Esta é a minha voz para o Patrono. Hoje é um bom dia para encontrar ofertas incríveis, ' +
   'com números como 10, 25 e 100, e preços como R$ 49,90. Espero que você aproveite!'
 
+/** Script de síntese que roda no venv do worker (subprocesso local). */
+const CAMINHO_SCRIPT_SINTESE = join(process.cwd(), 'worker', 'chatterbox_synthesize.py')
+
+/**
+ * Teto de tempo para uma síntese. Generoso de propósito: medido na máquina
+ * real da proprietária (CPU, sem GPU), a síntese roda a ~7x o tempo real e
+ * a carga do modelo leva ~1 min por processo — ver DIGITAL-TWIN-BENCHMARK.md.
+ * Um teto apertado transformaria "lento, mas funcionando" em falha.
+ */
+const TIMEOUT_SINTESE_MS = 30 * 60 * 1000
+
+type RespostaDoScript =
+  | { ok: true; saida: string; duracaoSegundos: number; segundosSintese: number }
+  | { ok: false; erro: string; tipo?: string }
+
+/**
+ * O script garante UMA linha de JSON no stdout (o resto vai para stderr).
+ * Ainda assim lemos a última linha não vazia: em Windows um `print` de
+ * biblioteca pode furar o contrato, e falhar por isso seria falha boba.
+ */
+function interpretarSaidaDoScript(stdout: string): RespostaDoScript {
+  const linhas = stdout.split('\n').map((l) => l.trim()).filter(Boolean)
+  const ultima = linhas[linhas.length - 1]
+  if (!ultima) return { ok: false, erro: 'O script de síntese não devolveu resultado (stdout vazio).' }
+  try {
+    return JSON.parse(ultima) as RespostaDoScript
+  } catch {
+    return { ok: false, erro: `Resposta ilegível do script de síntese: ${ultima.slice(0, 200)}` }
+  }
+}
+
+/**
+ * Quando o script sai com código != 0, o `execFile` rejeita — mas o JSON de
+ * erro ainda está no stdout do próprio erro. Recuperá-lo dá uma mensagem
+ * útil ("Idioma não suportado") em vez de "Command failed with exit code 2".
+ */
+function extrairErroDoScript(e: unknown): string | null {
+  const stdout = (e as { stdout?: string } | null)?.stdout
+  if (!stdout) return null
+  const resposta = interpretarSaidaDoScript(stdout)
+  return resposta.ok ? null : resposta.erro
+}
+
 export class ChatterboxVoiceCloneProvider implements VoiceCloneProvider {
-  constructor(private pythonBin: string = 'python3') {}
+  constructor(private pythonBin: string = resolverPythonDoChatterbox()) {}
 
   /**
    * Zero-shot (regra 10 da Continuação da Retomada da Rodada 9) — sem
@@ -131,17 +220,55 @@ export class ChatterboxVoiceCloneProvider implements VoiceCloneProvider {
     const selecao = selecionarProviderChatterbox(disponibilidade)
     if (selecao.tier === 'VOICE_ONLY_FALLBACK') throw new Error(selecao.motivo)
 
-    // Chamada real ficaria aqui (subprocesso Python com
-    // ChatterboxMultilingualTTS.generate(texto, language_id=idioma,
-    // audio_prompt_path=params.audioPromptPath)). Confere o acesso ao
-    // Hugging Face antes de tentar — se o bloqueio for deste ambiente
-    // (CURRENT_ENVIRONMENT_NETWORK_RESTRICTION), a mensagem nunca afirma
-    // que o modelo está indisponível.
-    const hf = await verificarAcessoHuggingFace()
-    throw new Error(
-      hf.status === 'CURRENT_ENVIRONMENT_NETWORK_RESTRICTION'
-        ? `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas o Hugging Face Hub está bloqueado neste ambiente específico (${hf.detalhe}) — o modelo em si é público. Retestar na máquina real.`
-        : `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas os pesos do modelo não puderam ser obtidos (${hf.detalhe}).`
-    )
+    // Síntese real: subprocesso Python NESTA MESMA MÁQUINA (worker local) —
+    // o áudio de referência nunca é enviado para fora. O texto vai por
+    // arquivo UTF-8, nunca por argv: no Windows a acentuação em argv
+    // depende da code page do console e se corrompe em silêncio.
+    const dir = mkdtempSync(join(tmpdir(), 'chatterbox-'))
+    const arquivoTexto = join(dir, 'texto.txt')
+    const arquivoSaida = join(dir, `voz-${Date.now()}.wav`)
+    writeFileSync(arquivoTexto, params.texto, 'utf8')
+
+    try {
+      const { stdout } = await execFileAsync(
+        this.pythonBin,
+        [
+          CAMINHO_SCRIPT_SINTESE,
+          '--prompt', params.audioPromptPath,
+          '--texto-arquivo', arquivoTexto,
+          '--saida', arquivoSaida,
+          '--idioma', params.idioma ?? 'pt',
+          '--device', 'cpu',
+        ],
+        { maxBuffer: 10 * 1024 * 1024, timeout: TIMEOUT_SINTESE_MS }
+      )
+
+      const resultado = interpretarSaidaDoScript(stdout)
+      if (!resultado.ok) throw new Error(`${selecao.tier} — ${resultado.erro}`)
+
+      // `audioUrl` aqui é um CAMINHO LOCAL de propósito: o worker resolve
+      // com `resolverParaCaminhoLocal: (c) => c`, porque o provider roda na
+      // mesma máquina e não há upload intermediário.
+      return { audioUrl: resultado.saida }
+    } catch (e) {
+      // Falha do subprocesso: pode ser erro do modelo OU pesos inacessíveis.
+      // Distinguir importa — culpar o modelo quando o problema é a rede
+      // deste ambiente já levou a diagnóstico errado antes.
+      const bruto = e instanceof Error ? e.message : String(e)
+      const doScript = extrairErroDoScript(e)
+      if (doScript) throw new Error(`Provider ${selecao.tier} (${selecao.modelo}): ${doScript}`)
+
+      const hf = await verificarAcessoHuggingFace()
+      if (hf.status === 'CURRENT_ENVIRONMENT_NETWORK_RESTRICTION') {
+        throw new Error(
+          `Provider selecionado (${selecao.tier} — ${selecao.modelo}), mas o Hugging Face Hub está bloqueado neste ambiente específico (${hf.detalhe}) — o modelo em si é público. Retestar na máquina real.`
+        )
+      }
+      throw new Error(`Provider ${selecao.tier} (${selecao.modelo}) falhou ao sintetizar: ${bruto}`)
+    } finally {
+      // Só o texto temporário é removido — o .wav gerado é o retorno da
+      // função e quem o consome (o worker) é que decide quando descartar.
+      try { rmSync(arquivoTexto, { force: true }) } catch { /* temporário: limpar é best-effort */ }
+    }
   }
 }

@@ -96,7 +96,11 @@ export async function avancarStatus(jobId: string, workerId: string, novoStatus:
 export async function completarJob(jobId: string, workerId: string, resultAssetId: string, client: PrismaClient = prismaPadrao): Promise<boolean> {
   const resultado = await client.digitalTwinJob.updateMany({
     where: { id: jobId, workerId },
-    data: { status: 'READY', resultAssetId, heartbeatAt: new Date() },
+    // `error: null` é essencial: com o retry automático (regra 31), um job
+    // que falhou e deu certo na tentativa seguinte ficava READY carregando a
+    // mensagem da falha anterior — e a UI mostra `ultimoJob.erro` ao lado do
+    // status. A proprietária via a prévia pronta e um erro junto.
+    data: { status: 'READY', resultAssetId, error: null, heartbeatAt: new Date() },
   })
   return resultado.count === 1
 }

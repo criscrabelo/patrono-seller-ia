@@ -27,6 +27,14 @@ interface StatusResposta {
   ultimoJob: { id: string; jobType: string; status: string; statusAmigavel: string; emAndamento: boolean; erro: string | null } | null
 }
 
+interface TokenWorker {
+  id: string
+  label: string | null
+  createdAt: string
+  revokedAt: string | null
+  lastUsedAt: string | null
+}
+
 const TEXTO_GUIADO_VOZ =
   'Olá! Esta é a minha voz para o Patrono. Hoje é um bom dia para encontrar ofertas incríveis, ' +
   'com números como 10, 25 e 100, e preços como R$ 49,90. Espero que você aproveite!'
@@ -43,6 +51,11 @@ export default function DigitalTwinPage() {
   const [enviando, setEnviando] = useState<string | null>(null)
   const [gravando, setGravando] = useState(false)
   const [assets, setAssets] = useState<{ id: string; type: string; purpose: string | null; url: string }[]>([])
+  const [tokens, setTokens] = useState<TokenWorker[]>([])
+  const [gerandoToken, setGerandoToken] = useState(false)
+  // Só existe enquanto a tela estiver aberta: o servidor guarda apenas o
+  // hash, então este é o único momento em que o valor pode ser copiado.
+  const [tokenRecemGerado, setTokenRecemGerado] = useState<string | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
 
@@ -51,7 +64,41 @@ export default function DigitalTwinPage() {
     if (res.ok) setStatus(await res.json())
     const resAssets = await fetch('/api/digital-twin/assets')
     if (resAssets.ok) setAssets(await resAssets.json())
+    const resTokens = await fetch('/api/digital-twin/worker-token')
+    if (resTokens.ok) setTokens(await resTokens.json())
     setCarregando(false)
+  }
+
+  /**
+   * Gera um token de pareamento do processador local. O valor em texto puro
+   * só volta NESTA resposta — o servidor guarda apenas o hash SHA-256 — por
+   * isso ele fica na tela até a usuária sair, e a tela diz isso claramente.
+   */
+  async function gerarToken() {
+    setGerandoToken(true)
+    const res = await fetch('/api/digital-twin/worker-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'Este computador' }),
+    })
+    setGerandoToken(false)
+    if (!res.ok) {
+      toast({ title: 'Não consegui gerar o token agora.', variant: 'destructive' })
+      return
+    }
+    const criado = await res.json()
+    setTokenRecemGerado(criado.token)
+    carregar()
+  }
+
+  async function revogarToken(id: string) {
+    const res = await fetch(`/api/digital-twin/worker-token?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (res.ok) {
+      toast({ title: 'Token revogado — o processador que o usava para de pegar tarefas.', variant: 'success' })
+      carregar()
+    } else {
+      toast({ title: 'Não consegui revogar o token agora.', variant: 'destructive' })
+    }
   }
 
   useEffect(() => {
@@ -303,9 +350,16 @@ export default function DigitalTwinPage() {
                   Refazer referência de voz
                 </button>
               ) : (
+                // Habilitado pela GRAVAÇÃO de referência, não pela prévia
+                // gerada. Exigir a prévia criava um impasse circular: a
+                // prévia só é gerada com a voz aprovada (`VoiceProfile.enabled`,
+                // exigido por `podeGerarComDigitalTwin()`), e a voz só era
+                // aprovável com a prévia pronta — na prática, nenhuma voz
+                // jamais saía da primeira vez. Ouvir a prévia antes continua
+                // recomendado, só deixou de ser pré-requisito.
                 <button
                   onClick={aprovarVoz}
-                  disabled={!vozDigitalPreview}
+                  disabled={!gravacaoOriginal}
                   className="rounded-lg border border-border px-3 py-2 text-xs text-white disabled:opacity-40"
                 >
                   Aprovar minha voz
@@ -344,6 +398,76 @@ export default function DigitalTwinPage() {
             <button onClick={refazer} className="text-xs text-white/60 underline">
               Refazer referências
             </button>
+          )}
+        </div>
+      )}
+
+      {status?.profile && (
+        <div className="space-y-3 rounded-lg border border-border p-4">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Cpu className="h-4 w-4" /> Processador de vídeos deste computador
+          </h2>
+          <p className="text-xs text-white/60">
+            Para o programa instalado no seu computador processar seus vídeos, ele precisa de um código de
+            pareamento. Gere um aqui e cole no arquivo de configuração do processador. Nunca use sua senha.
+          </p>
+
+          {tokenRecemGerado && (
+            <div className="space-y-2 rounded-lg border border-accent/40 bg-accent/5 p-3">
+              <p className="text-xs font-medium text-accent">
+                Copie agora — este código não aparece de novo. Guardamos só uma versão embaralhada dele.
+              </p>
+              <code className="block break-all rounded bg-background px-2 py-1.5 font-mono text-[11px] text-white/90">
+                {tokenRecemGerado}
+              </code>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(tokenRecemGerado)
+                    toast({ title: 'Código copiado.', variant: 'success' })
+                  }}
+                  className="text-xs text-accent underline"
+                >
+                  Copiar código
+                </button>
+                <button onClick={() => setTokenRecemGerado(null)} className="text-xs text-white/60 underline">
+                  Já copiei, pode esconder
+                </button>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={gerarToken}
+            disabled={gerandoToken}
+            className="rounded-lg border border-border px-3 py-2 text-xs text-white hover:bg-white/5 disabled:opacity-50"
+          >
+            {gerandoToken ? 'Gerando…' : 'Gerar código de pareamento'}
+          </button>
+
+          {tokens.length > 0 && (
+            <ul className="space-y-1.5 pt-1">
+              {tokens.map((t) => (
+                <li key={t.id} className="flex items-center justify-between gap-3 text-xs text-white/70">
+                  <span>
+                    {t.label || 'Sem apelido'}
+                    <span className="text-white/40">
+                      {' · '}criado em {new Date(t.createdAt).toLocaleDateString('pt-BR')}
+                      {t.lastUsedAt
+                        ? ` · usado pela última vez em ${new Date(t.lastUsedAt).toLocaleDateString('pt-BR')}`
+                        : ' · nunca usado'}
+                    </span>
+                  </span>
+                  {t.revokedAt ? (
+                    <span className="shrink-0 text-white/40">revogado</span>
+                  ) : (
+                    <button onClick={() => revogarToken(t.id)} className="shrink-0 text-white/60 underline hover:text-white">
+                      Revogar
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

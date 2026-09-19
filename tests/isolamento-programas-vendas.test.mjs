@@ -10,11 +10,12 @@
 import { test, describe, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { execCli, PRISMA_CLI, TSX_CLI } from './_exec-cli.mjs'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:3100'
 
 function sqlAtivarUsuario(email) {
-  execFileSync('npx', ['prisma', 'db', 'execute', '--stdin'], {
+  execCli(PRISMA_CLI, ['db', 'execute', '--stdin'], {
     input: `UPDATE "User" SET status = 'ativo' WHERE email = '${email}';`,
     stdio: ['pipe', 'ignore', 'inherit'],
   })

@@ -16,6 +16,7 @@
  */
 import { test, describe, before } from 'node:test'
 import assert from 'node:assert/strict'
+import { execCli, PRISMA_CLI, TSX_CLI } from './_exec-cli.mjs'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:3100'
 const SEGREDO = process.env.CRON_SECRET
@@ -77,7 +78,7 @@ describe('Sessão de usuária comum não substitui o segredo', () => {
     })
 
     const { execFileSync } = await import('node:child_process')
-    execFileSync('npx', ['prisma', 'db', 'execute', '--stdin'], {
+    execCli(PRISMA_CLI, ['db', 'execute', '--stdin'], {
       input: `UPDATE "User" SET status = 'ativo' WHERE email = '${email}';`,
       stdio: ['pipe', 'ignore', 'inherit'],
     })

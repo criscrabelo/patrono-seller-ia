@@ -13,8 +13,11 @@
 # completo antes de instalar (regra 5 da Rodada 9).
 
 param(
-    [switch]$PularInicioAutomatico
+    [switch]$PularInicioAutomatico,
+    [string]$VenvPath
 )
+
+. (Join-Path $PSScriptRoot "resolver-venv.ps1")
 
 Write-Host "=== Patrono Generation Worker - instalacao ===" -ForegroundColor Cyan
 
@@ -22,13 +25,38 @@ function Test-Command($nome) {
     return [bool](Get-Command $nome -ErrorAction SilentlyContinue)
 }
 
+# Descobre um Python REAL. `Get-Command python` sozinho nao serve no Windows:
+# ele encontra o atalho da Microsoft Store em WindowsApps, que nao e um
+# interpretador - responde "Python was not found" e faz o venv falhar.
+# Verificado na maquina da proprietaria: o diagnostico chegou a reportar
+# "pythonDisponivel: true" por causa desse atalho, sem haver Python algum.
+function Get-PythonReal {
+    $candidatos = @()
+    if ($env:DIGITAL_TWIN_PYTHON) { $candidatos += $env:DIGITAL_TWIN_PYTHON }
+    $candidatos += "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe"
+    $candidatos += (Get-ChildItem "$env:LOCALAPPDATA\Programs\Python" -Directory -ErrorAction SilentlyContinue |
+                    Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName "python.exe" })
+    $doPath = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if ($doPath -and $doPath -notlike "*\WindowsApps\*") { $candidatos += $doPath }
+
+    foreach ($c in $candidatos) {
+        if (-not $c -or -not (Test-Path $c)) { continue }
+        $v = & $c --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and "$v" -match "^Python 3") { return @{ Caminho = $c; Versao = "$v" } }
+    }
+    return $null
+}
+
 # 1. Detectar Python
-if (-not (Test-Command "python")) {
-    Write-Host "Python nao encontrado. Instale o Python 3.11 (https://www.python.org/downloads/) e rode este script de novo." -ForegroundColor Yellow
+$python = Get-PythonReal
+if (-not $python) {
+    Write-Host "Python 3 nao encontrado." -ForegroundColor Yellow
+    Write-Host "Instale com:  winget install --id Python.Python.3.11 --scope user" -ForegroundColor Yellow
+    Write-Host "(ou baixe em https://www.python.org/downloads/) e rode este script de novo." -ForegroundColor Yellow
     exit 1
 }
-$pythonVersion = python --version
-Write-Host "Python detectado: $pythonVersion"
+$pythonBin = $python.Caminho
+Write-Host "Python detectado: $($python.Versao)  ($pythonBin)"
 
 # 2. Detectar FFmpeg (o projeto ja usa ffmpeg-static via npm, mas o worker
 #    Python pode precisar de um ffmpeg no PATH para pos-processamento).
@@ -48,10 +76,20 @@ if ($temNvidia) {
 }
 
 # 4. Criar ambiente virtual Python ISOLADO (nunca polui o Python do sistema).
-$venvPath = Join-Path $PSScriptRoot ".venv-digital-twin"
-if (-not (Test-Path $venvPath)) {
+#    O local NAO e fixo dentro do repositorio: em caminho profundo (OneDrive)
+#    a instalacao do PyTorch estoura o limite de 260 caracteres do Windows.
+#    Ver worker/resolver-venv.ps1 para o porque e a ordem de resolucao.
+$venvPath = Get-CaminhoVenvDigitalTwin -VenvPath $VenvPath -RaizWorker $PSScriptRoot
+if (-not $venvPath) {
+    $venvPath = Get-CaminhoVenvParaCriar -VenvPath $VenvPath -RaizWorker $PSScriptRoot
     Write-Host "Criando ambiente virtual isolado em $venvPath ..."
-    python -m venv $venvPath
+    & $pythonBin -m venv $venvPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Falha ao criar o ambiente virtual." -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "Ambiente virtual ja existe em $venvPath"
 }
 
 # 5. Instalar dependencias fixas (requirements-chatterbox.txt) - versoes
@@ -72,7 +110,10 @@ if (-not $PularInicioAutomatico) {
     Write-Host ""
     $resposta = Read-Host "Quer que o processador de videos inicie sozinho quando voce entrar no Windows? (s/n)"
     if ($resposta -eq 's') {
-        $acao = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -File `"$PSScriptRoot\start-digital-twin-worker.ps1`""
+        # O -VenvPath e passado explicitamente: a tarefa agendada roda numa
+        # sessao propria, sem as variaveis de ambiente desta janela, e nao
+        # teria como descobrir um venv fora do local padrao.
+        $acao = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -File `"$PSScriptRoot\start-digital-twin-worker.ps1`" -VenvPath `"$venvPath`""
         $gatilho = New-ScheduledTaskTrigger -AtLogOn
         Register-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -Action $acao -Trigger $gatilho -Description "Patrono Generation Worker - processa videos do Digital Twin localmente" -Force | Out-Null
         Write-Host "Inicio automatico configurado. Para desativar depois: .\stop-digital-twin-worker.ps1 -RemoverInicioAutomatico" -ForegroundColor Green

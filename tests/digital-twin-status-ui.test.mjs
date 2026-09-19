@@ -16,6 +16,7 @@ import { test, describe, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { execCli, PRISMA_CLI, TSX_CLI } from './_exec-cli.mjs'
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:3100'
 const email = `dt-status-${Date.now()}@teste.local`
@@ -49,7 +50,7 @@ before(async () => {
   })
   assert.equal(reg.status, 201, 'não consegui criar a conta de teste')
 
-  execFileSync('npx', ['prisma', 'db', 'execute', '--stdin'], {
+  execCli(PRISMA_CLI, ['db', 'execute', '--stdin'], {
     input: `UPDATE "User" SET status = 'ativo' WHERE email = '${email}';`,
     stdio: ['pipe', 'ignore', 'inherit'],
   })
@@ -81,7 +82,7 @@ before(async () => {
 describe('GET /api/digital-twin — statusAmigavelParaUsuaria() agora chega na UI', () => {
   test('job em GENERATING_VOICE aparece como "Gerando voz", em andamento', async () => {
     const jobId = randomUUID()
-    execFileSync('npx', ['prisma', 'db', 'execute', '--stdin'], {
+    execCli(PRISMA_CLI, ['db', 'execute', '--stdin'], {
       input: `INSERT INTO "DigitalTwinJob" (id, "workspaceId", "profileId", status, "jobType", attempts, "createdAt", "updatedAt")
               SELECT '${jobId}', "workspaceId", id, 'GENERATING_VOICE', 'VOICE_PREVIEW', 0, now(), now()
               FROM "DigitalTwinProfile" WHERE id = '${profileId}';`,
@@ -98,7 +99,7 @@ describe('GET /api/digital-twin — statusAmigavelParaUsuaria() agora chega na U
 
   test('job READY não fica marcado como em andamento', async () => {
     const jobId = randomUUID()
-    execFileSync('npx', ['prisma', 'db', 'execute', '--stdin'], {
+    execCli(PRISMA_CLI, ['db', 'execute', '--stdin'], {
       input: `INSERT INTO "DigitalTwinJob" (id, "workspaceId", "profileId", status, "jobType", attempts, "createdAt", "updatedAt")
               SELECT '${jobId}', "workspaceId", id, 'READY', 'VOICE_PREVIEW', 0, now(), now()
               FROM "DigitalTwinProfile" WHERE id = '${profileId}';`,

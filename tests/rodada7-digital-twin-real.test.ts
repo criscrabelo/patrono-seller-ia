@@ -49,6 +49,10 @@ describe('Persistência real — DigitalTwinProfile/VoiceProfile/Consents/Asset'
     await prisma.voiceProfile.deleteMany({ where: { workspaceId } })
     await prisma.identityConsent.deleteMany({ where: { workspaceId } })
     await prisma.voiceConsent.deleteMany({ where: { workspaceId } })
+    // Faltava: `revogarIdentityConsent()`/`revogarVoiceConsent()`, chamadas
+    // neste próprio teste, gravam AuditLog — e a FK `AuditLog_workspaceId_fkey`
+    // impedia o delete do workspace abaixo, derrubando o hook de limpeza.
+    await prisma.auditLog.deleteMany({ where: { workspaceId } })
     await prisma.user.deleteMany({ where: { workspaceId } })
     await prisma.workspace.deleteMany({ where: { id: workspaceId } })
     await prisma.$disconnect()

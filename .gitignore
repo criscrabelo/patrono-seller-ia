@@ -46,3 +46,10 @@ next-env.d.ts
 *.pt
 *.safetensors
 *.ckpt
+
+# Ambiente isolado de teste do Digital Twin (nunca versionar — contem chaves do projeto de teste)
+.env.digital-twin-test
+
+# Cache do Python do worker (gerado ao importar chatterbox_synthesize.py)
+__pycache__/
+*.pyc

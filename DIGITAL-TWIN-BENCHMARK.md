@@ -116,3 +116,86 @@ Diferente das Rodadas 8 e 9 (que decidiram não instalar o stack pesado "só par
 ### Custo (Retomada)
 
 R$ 0,00 — `pip install` contra PyPI é gratuito; nenhum peso de modelo foi baixado (o download real do Hugging Face foi bloqueado antes de transferir qualquer byte de peso).
+
+---
+
+## Máquina real da proprietária — primeira voz clonada de verdade (Windows, sem GPU)
+
+Primeira execução fora da sandbox de desenvolvimento. Todos os números abaixo
+foram **medidos nesta máquina**, não estimados. O bloqueio de rede que limitava
+as rodadas anteriores não existe aqui: `huggingface.co` responde 200.
+
+### Hardware real
+
+| Item | Valor |
+|---|---|
+| Windows | 11 Home, build 26200 |
+| CPU | Intel Core 7 240H — 10 núcleos físicos / 16 threads |
+| RAM | 15,7 GB (2×8 GB @ 5600 MHz) |
+| GPU | Intel(R) Graphics integrada, ~2 GB — **nenhuma GPU NVIDIA** |
+| CUDA / driver NVIDIA | ausentes (`nvidia-smi` e `nvcc` não existem) |
+| Disco livre | 723 GB |
+
+Classificação resultante (`classificarMaquina()`): **`VOICE_ONLY`** — confirmada
+por medição. `FULL_DIGITAL_TWIN` e `VOICE_AND_LIPSYNC` são inatingíveis aqui:
+`REQUISITOS_MINIMOS_AVATAR_LOCAL` exige 8 GB de VRAM e não há GPU NVIDIA.
+
+### Ambiente instalado
+
+| Item | Versão | Onde |
+|---|---|---|
+| Python | 3.11.9 (64-bit) | `%LOCALAPPDATA%\Programs\Python\Python311` (escopo de usuário) |
+| FFmpeg | 9.0.1 (Gyan.FFmpeg via winget) | pacote do WinGet |
+| torch / torchaudio | **2.6.0+cpu** — build sem CUDA | venv |
+| chatterbox-tts | 0.1.7 | venv |
+| venv | 2,03 GB | **`C:\patrono-venv`** (ver abaixo) |
+| Pesos do modelo | 2,99 GB | `~/.cache/huggingface` |
+
+### Medições de síntese (CPU, 10 threads)
+
+| Teste | Entrada | Saída | Tempo | Resultado |
+|---|---|---|---|---|
+| `ChatterboxMultilingualTTS.from_pretrained('cpu')` — 1ª vez | — | modelo carregado | **561,4 s** (inclui baixar 2,99 GB) | **TESTADO REALMENTE** |
+| `from_pretrained` com pesos em cache | — | modelo carregado | ~60 s por processo | **TESTADO REALMENTE** |
+| `generate(texto, language_id='pt', audio_prompt_path=...)` — script direto | texto pt-BR + gravação real de 18,3 s | WAV 12,6 s, 24 kHz mono | **91,2 s** | **TESTADO REALMENTE** — voz clonada audível |
+| `ChatterboxVoiceCloneProvider.sintetizar()` — pelo adapter do Patrono | WebM do bucket + texto pt-BR | WAV 9,5 s | **101,6 s** (carga + síntese) | **TESTADO REALMENTE** |
+
+**Fator de tempo real: ~7,2×** — cada segundo de fala custa ~7 s de CPU. Um
+vídeo com 30 s de narração leva ~3,5 min; com 60 s, ~7 min. Utilizável para
+alguns vídeos por dia; inviável para lote grande. Como a carga do modelo custa
+~1 min por processo, o worker deve ficar **residente**, não subir e descer por job.
+
+### Bugs reais encontrados e corrigidos nesta execução
+
+Nenhum destes é defensividade hipotética — todos falharam de verdade aqui:
+
+1. **`sintetizar()` nunca sintetizava.** O método lançava erro em todos os
+   caminhos; onde deveria estar a chamada ao Python havia o comentário
+   "Chamada real ficaria aqui". Implementado em `worker/chatterbox_synthesize.py`
+   + `lib/chatterbox-adapter.ts`.
+2. **Caminho longo demais para o venv.** `worker\.venv-digital-twin` dentro do
+   repositório (que fica no OneDrive) gera caminhos de **266 caracteres**, acima
+   do limite de 260 do Windows; o `pip install` do PyTorch morreu aos 1,6 GB com
+   `OSError [Errno 2]`. O venv passou a ser configurável (`worker/resolver-venv.ps1`),
+   com padrão `C:\patrono-venv`. Efeito colateral positivo: fica fora do OneDrive,
+   que senão sincronizaria ~2 GB para a nuvem.
+3. **Atalho falso do Python.** `Get-Command python` encontra o stub da Microsoft
+   Store em `WindowsApps`, que não é interpretador — o diagnóstico chegou a
+   reportar `pythonDisponivel: true` sem haver Python instalado. `setup-` passou
+   a validar executando `--version`.
+4. **Acentuação corrompida.** O Python no Windows escreve stdout em cp1252;
+   "áudio de referência" chegava como "�udio de refer�ncia" ao Node. Resolvido
+   com `reconfigure(encoding='utf-8')` e passando o texto por arquivo, nunca por `argv`.
+5. **Áudio de referência em WebM.** O worker baixa o `VOICE_REFERENCE` com sufixo
+   `.wav`, mas o navegador grava **WebM** — o librosa falha com `NoBackendError`,
+   uma exceção **sem mensagem**. O script transcodifica com ffmpeg antes de sintetizar.
+6. **ffmpeg fora do `PATH`.** O winget altera o PATH do usuário, mas processos
+   já abertos mantêm o antigo: `shutil.which("ffmpeg")` devolvia `None` com o
+   ffmpeg 9.0.1 instalado. A busca passou a cobrir `DIGITAL_TWIN_FFMPEG`, o
+   atalho do WinGet e a pasta real do pacote.
+
+### Custo
+
+R$ 0,00. Nenhum serviço pago, nenhuma GPU em nuvem, nenhuma API de voz.
+Python, FFmpeg, Chatterbox e os pesos do modelo são gratuitos e rodam local —
+o áudio da proprietária nunca sai da máquina dela.
