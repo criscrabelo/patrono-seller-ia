@@ -26,6 +26,8 @@ export interface DigitalTwinJobRow {
   attempts: number
   error: string | null
   resultAssetId: string | null
+  /** Conteúdo ligado ao job — é dele que sai o TEXTO falado da prévia. */
+  contentId: string | null
 }
 
 /**
@@ -69,7 +71,7 @@ export async function reivindicarProximoJob(
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, "workspaceId", "profileId", status, "jobType", "workerId", "claimedAt", "heartbeatAt", attempts, error, "resultAssetId"
+    RETURNING id, "workspaceId", "profileId", status, "jobType", "workerId", "claimedAt", "heartbeatAt", attempts, error, "resultAssetId", "contentId"
   `)
 
   return rows[0] ?? null

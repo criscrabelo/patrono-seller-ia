@@ -30,6 +30,14 @@ import { verificarTokenWorker } from '../lib/digital-twin-worker-token'
 const WORKER_ID = process.env.DIGITAL_TWIN_WORKER_ID || `worker-${randomUUID().slice(0, 8)}`
 const HEARTBEAT_INTERVAL_MS = 30_000
 const POLL_INTERVAL_MS = 5_000
+/**
+ * De quanto em quanto tempo o worker renova `GenerationWorkerHealth.lastSeenAt`.
+ * Precisa ser bem menor que a janela de 5 min que a tela usa para dizer
+ * "processador conectado" — antes disso a saúde só era gravada UMA vez, no
+ * startup, e um worker rodando há mais de 5 minutos aparecia como
+ * "nenhum conectado" mesmo processando jobs normalmente.
+ */
+const HEALTH_REFRESH_MS = 60_000
 const MAX_TENTATIVAS = 3 // regra 31: máximo 2-3 tentativas automáticas
 
 const prisma = new PrismaClient()
@@ -64,6 +72,26 @@ async function registrarSaudeWorker() {
   })
 }
 
+/**
+ * Texto falado pela prévia — vem do PRÓPRIO job, pelo `Conteudo` ligado em
+ * `DigitalTwinJob.contentId`, nunca de uma frase fixa no código. Enquanto a
+ * frase era constante (`'Confira o preço atual.'`), toda prévia saía com o
+ * mesmo áudio de 2,5s: impossível avaliar a voz num texto de verdade e
+ * impossível gerar duas prévias diferentes.
+ *
+ * `narracao` é o campo do que é FALADO; `roteiro` é o fallback natural. As
+ * legendas de rede social não entram: são texto para ler na tela, com
+ * hashtags e emojis que não se narra.
+ */
+async function textoFaladoDoJob(contentId: string | null): Promise<string | null> {
+  if (!contentId) return null
+  const conteudo = await prisma.conteudo.findUnique({
+    where: { id: contentId },
+    select: { narracao: true, roteiro: true },
+  })
+  return conteudo?.narracao?.trim() || conteudo?.roteiro?.trim() || null
+}
+
 async function processarUmJob(workspaceIdPareado: string | null): Promise<boolean> {
   const job = await reivindicarProximoJob(WORKER_ID, STALE_TIMEOUT_MS_PADRAO, prisma, workspaceIdPareado ?? undefined)
   if (!job) return false
@@ -73,9 +101,12 @@ async function processarUmJob(workspaceIdPareado: string | null): Promise<boolea
   }, HEARTBEAT_INTERVAL_MS)
 
   try {
-    // job.contentId/overlay/legenda viriam do próprio registro em produção;
-    // jobType e resultAssetId (usado como entrada de áudio/vídeo já gerado
-    // por uma etapa anterior) vêm de verdade do `DigitalTwinJob`.
+    // jobType, resultAssetId (entrada de áudio/vídeo já gerado por uma etapa
+    // anterior) e agora também o TEXTO FALADO vêm de verdade do
+    // `DigitalTwinJob` — o texto pelo `Conteudo` ligado em `contentId`.
+    // Sem texto no job, `gerarPreviaDeVoz()` cai no `TEXTO_PREVIA_VOZ`
+    // padrão do próprio pipeline; o worker não inventa frase nenhuma.
+    const textoFalado = await textoFaladoDoJob(job.contentId)
     const resultado = await processarJobDeVerdade({
       id: job.id,
       workspaceId: job.workspaceId,
@@ -83,7 +114,7 @@ async function processarUmJob(workspaceIdPareado: string | null): Promise<boolea
       jobType: job.jobType as JobDeProducao['jobType'],
       mediaAssetUrl: job.resultAssetId ?? '',
       overlayTexto: 'Patrono',
-      legenda: 'Confira o preço atual.',
+      legenda: textoFalado ?? '',
     })
 
     if (resultado.sucesso && resultado.contentUrl) {
@@ -123,6 +154,14 @@ async function main() {
   }
 
   // Loop contínuo — processo de longa duração, nunca dentro de um request HTTP.
+  // A saúde é renovada periodicamente aqui: sem isso `lastSeenAt` ficava
+  // congelado no horário do startup e a tela passava a mentir "nenhum
+  // processador conectado" depois de 5 minutos de worker no ar.
+  const renovarSaude = setInterval(() => {
+    registrarSaudeWorker().catch(() => {})
+  }, HEALTH_REFRESH_MS)
+  renovarSaude.unref?.()
+
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const processou = await processarUmJob(workspaceIdPareado)

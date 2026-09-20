@@ -35,6 +35,20 @@ interface TokenWorker {
   lastUsedAt: string | null
 }
 
+/**
+ * Janela de "visto recentemente" do processador local. Mesma usada pela rota
+ * `GET /api/digital-twin`, para a tela nunca discordar do servidor.
+ */
+const JANELA_PROCESSADOR_MS = 5 * 60 * 1000
+
+/** "há 12 segundos" / "há 3 minutos" — sem jargão técnico na tela. */
+function vistoHa(iso: string): string {
+  const segundos = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  if (segundos < 60) return `há ${segundos} segundo${segundos === 1 ? '' : 's'}`
+  const minutos = Math.round(segundos / 60)
+  return `há ${minutos} minuto${minutos === 1 ? '' : 's'}`
+}
+
 const TEXTO_GUIADO_VOZ =
   'Olá! Esta é a minha voz para o Patrono. Hoje é um bom dia para encontrar ofertas incríveis, ' +
   'com números como 10, 25 e 100, e preços como R$ 49,90. Espero que você aproveite!'
@@ -50,7 +64,7 @@ export default function DigitalTwinPage() {
   const [criando, setCriando] = useState(false)
   const [enviando, setEnviando] = useState<string | null>(null)
   const [gravando, setGravando] = useState(false)
-  const [assets, setAssets] = useState<{ id: string; type: string; purpose: string | null; url: string }[]>([])
+  const [assets, setAssets] = useState<{ id: string; type: string; purpose: string | null; url: string; createdAt: string }[]>([])
   const [tokens, setTokens] = useState<TokenWorker[]>([])
   const [gerandoToken, setGerandoToken] = useState(false)
   // Só existe enquanto a tela estiver aberta: o servidor guarda apenas o
@@ -116,7 +130,12 @@ export default function DigitalTwinPage() {
   }, [status?.ultimoJob?.emAndamento])
 
   const gravacaoOriginal = assets.find((a) => a.type === 'VOICE_REFERENCE')
-  const vozDigitalPreview = assets.find((a) => a.type === 'GENERATED_PREVIEW' && a.purpose === 'voice_preview')
+  // Sempre a prévia MAIS RECENTE: a rota já devolve ordenado por createdAt
+  // desc, mas ordenar aqui também deixa a tela correta se essa ordem mudar
+  // — uma prévia antiga no player faria a proprietária julgar a voz errada.
+  const vozDigitalPreview = assets
+    .filter((a) => a.type === 'GENERATED_PREVIEW' && a.purpose === 'voice_preview')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
 
   async function criarMeuDigitalTwin() {
     setCriando(true)
@@ -236,6 +255,17 @@ export default function DigitalTwinPage() {
   const voiceConsentOk = status?.voiceConsent?.status === 'GRANTED'
   const aprovado = !!status?.profile?.approvedAt
 
+  // Processador conectado = VISTO RECENTEMENTE (`GenerationWorkerHealth.lastSeenAt`),
+  // nunca o campo `online`: ele é gravado como `true` no startup e ninguém o
+  // volta para `false` quando o processo morre — um worker desligado há dias
+  // continuaria aparecendo como conectado. A rota já aplica a mesma janela,
+  // mas repetir aqui mantém o indicador honesto enquanto a tela fica aberta
+  // entre duas cargas.
+  const processadores = (status?.workers ?? []).filter(
+    (w) => Date.now() - new Date(w.lastSeenAt).getTime() < JANELA_PROCESSADOR_MS
+  )
+  const processadorConectado = processadores.length > 0
+
   return (
     <div className="max-w-lg space-y-6 pb-12">
       <div>
@@ -335,12 +365,15 @@ export default function DigitalTwinPage() {
               <div className="space-y-2">
                 <p className="text-xs text-white/60">Ouvir minha voz digital</p>
                 {vozDigitalPreview ? (
-                  <audio controls src={vozDigitalPreview.url} className="w-full h-8" />
+                  // O player fica na seção "Minha voz digital" logo abaixo,
+                  // que continua visível depois da aprovação — aqui seria um
+                  // segundo player com o mesmo áudio.
+                  <p className="text-xs text-white/40">Prévia pronta — ouça em “Minha voz digital”, logo abaixo.</p>
                 ) : (
                   <p className="text-xs text-white/40">
-                    {status?.workers.length === 0
-                      ? 'Aguardando o processador de vídeos'
-                      : (status?.ultimoJob?.statusAmigavel ?? 'Aguardando o processador de vídeos')}
+                    {processadorConectado
+                      ? (status?.ultimoJob?.statusAmigavel ?? 'Aguardando o processador de vídeos')
+                      : 'Aguardando o processador de vídeos'}
                     {status?.ultimoJob?.erro ? ` — ${status.ultimoJob.erro}` : ''}
                   </p>
                 )}
@@ -376,6 +409,34 @@ export default function DigitalTwinPage() {
         </div>
       )}
 
+      {/*
+        Minha voz digital — FORA do bloco de onboarding (`!aprovado`), de
+        propósito. Enquanto este player morava lá dentro, ele sumia no
+        instante em que o Digital Twin era aprovado: a prévia real existia no
+        banco e no bucket, mas a proprietária não tinha como ouvi-la de novo.
+        A seção aparece sempre que existir uma prévia ativa, aprovada ou não.
+      */}
+      {status?.profile && vozDigitalPreview && (
+        <section className="space-y-3 rounded-lg border border-border p-4">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Mic className="w-4 h-4" /> Minha voz digital
+          </h2>
+          <p className="text-xs text-white/60">
+            Esta é a prévia mais recente gerada a partir da sua gravação de referência.
+          </p>
+          <audio controls src={vozDigitalPreview.url} className="w-full h-8" />
+          <p className="text-[11px] text-white/40">
+            Gerada em {new Date(vozDigitalPreview.createdAt).toLocaleString('pt-BR')}
+          </p>
+          {gravacaoOriginal && (
+            <div className="space-y-2 pt-2 border-t border-border">
+              <p className="text-xs text-white/60">Comparar com a minha gravação original</p>
+              <audio controls src={gravacaoOriginal.url} className="w-full h-8" />
+            </div>
+          )}
+        </section>
+      )}
+
       {status?.profile && (
         <div className="space-y-3 rounded-lg border border-border p-4">
           <div className="flex items-center gap-2 text-sm text-white">
@@ -391,7 +452,10 @@ export default function DigitalTwinPage() {
             <Cpu className="w-4 h-4" /> Infraestrutura: {status.runtime.cpuCores} CPU · {status.runtime.totalRamGB}GB RAM · {status.runtime.gpuDetected ? status.runtime.gpuName : 'sem GPU detectada'}
           </div>
           <div className="text-xs text-white/60">
-            Processador local: {status.workers.length > 0 ? `${status.workers.length} conectado(s)` : 'nenhum conectado — o Patrono usa o modo leve (sem GPU) enquanto isso'}
+            Processador local:{' '}
+            {processadorConectado
+              ? `${processadores.length} conectado(s) — visto ${vistoHa(processadores[0].lastSeenAt)}`
+              : 'nenhum conectado — o Patrono usa o modo leve (sem GPU) enquanto isso'}
           </div>
           <div className="text-xs text-white/50 pt-2 border-t border-border">{status.podeGerar.permitido ? 'Pronto para gerar conteúdo.' : status.podeGerar.motivo}</div>
           {aprovado && (
