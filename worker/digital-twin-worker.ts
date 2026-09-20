@@ -27,6 +27,9 @@ import { detectarCapacidadesRuntime } from '../lib/digital-twin-runtime'
 import { REQUIRED_WORKER_VERSION } from '../lib/digital-twin-worker-version'
 import { verificarTokenWorker } from '../lib/digital-twin-worker-token'
 import { comReconexao, classificarErroDeBanco, calcularEsperaBackoff, type TentativaReconexao } from '../lib/db-resiliencia'
+import { adquirirLock, liberarLock, caminhoDoLock, chaveDoLock, processoVivoReal } from '../lib/worker-lock'
+import { avaliarMemoriaParaJobPesado } from '../lib/worker-memoria'
+import { freemem } from 'os'
 
 const WORKER_ID = process.env.DIGITAL_TWIN_WORKER_ID || `worker-${randomUUID().slice(0, 8)}`
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -179,15 +182,57 @@ async function main() {
     process.exit(1)
   }
 
+  // Lock escopado por (destino do banco, workspace pareado): dois negócios
+  // distintos podem rodar workers próprios na mesma máquina sem se bloquear.
+  // A chave é um hash — a URL crua traz a senha do banco e nunca pode virar
+  // nome de arquivo no disco.
+  const caminhoLock = caminhoDoLock(chaveDoLock(process.env.DATABASE_URL ?? '', workspaceIdPareado))
+
   console.log(
     `[digital-twin-worker] ${WORKER_ID} iniciado. Chatterbox=${capacidades.chatterboxDisponivel} MuseTalk=${capacidades.musetalkDisponivel} Runtime=${capacidades.runtimeClasse} Pareado=${workspaceIdPareado ? 'sim' : 'não (sem escopo — só para desenvolvimento)'}`
   )
 
   if (modoUnico) {
+    // `--once` NÃO toma o lock de propósito: é ferramenta de diagnóstico
+    // manual, roda uma vez e sai. Só avisa se houver residente ativo, para
+    // quem estiver depurando saber que os dois podem competir por CPU.
+    const residente = adquirirLock(caminhoLock, process.pid, WORKER_ID, { processoVivo: processoVivoReal, agora: new Date() })
+    if (!residente.adquirido) {
+      console.warn(`[digital-twin-worker] --once: ${residente.mensagem} Seguindo mesmo assim (modo manual).`)
+    } else {
+      liberarLock(caminhoLock, process.pid)
+    }
     const processou = await processarUmJob(workspaceIdPareado)
     console.log(`[digital-twin-worker] --once: ${processou ? 'processou 1 job' : 'nenhum job na fila'}`)
     await prisma.$disconnect()
     return
+  }
+
+  // ── Trava de worker residente duplicado (Rodada 12) ───────────────────
+  // Com o restart automático do Task Scheduler, um worker que demore a
+  // morrer pode coexistir com o que o Windows acabou de subir. Dois
+  // residentes no mesmo destino brigam pela RAM do Chatterbox numa máquina
+  // CPU_ONLY. Isto NÃO substitui o SKIP LOCKED: aquele impede dois workers
+  // de pegarem o mesmo JOB; este impede dois PROCESSOS no mesmo destino.
+  const lock = adquirirLock(caminhoLock, process.pid, WORKER_ID, { processoVivo: processoVivoReal, agora: new Date() })
+  if (!lock.adquirido) {
+    // Saída LIMPA (código 0): não é erro. Se saísse com código 1, o Task
+    // Scheduler trataria como falha e ficaria reiniciando em laço.
+    console.log(`[digital-twin-worker] ${lock.mensagem}`)
+    await prisma.$disconnect()
+    process.exit(0)
+  }
+  console.log(`[digital-twin-worker] lock adquirido (${lock.motivo}). ${lock.mensagem}`)
+
+  const soltarLock = () => {
+    liberarLock(caminhoLock, process.pid)
+  }
+  process.on('exit', soltarLock)
+  for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.on(sinal, () => {
+      soltarLock()
+      process.exit(0)
+    })
   }
 
   // Loop contínuo — processo de longa duração, nunca dentro de um request HTTP.
@@ -226,9 +271,34 @@ async function main() {
   // banco inexistente, string inválida) continua derrubando o worker na
   // hora, alto — nunca engolido.
   let falhasSeguidas = 0
+  // Estado do gate de memória: serve só para logar a TRANSIÇÃO (entrou em
+  // espera / voltou a processar) em vez de repetir a mesma linha a cada 5s.
+  let esperandoMemoria = false
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
+      // ── Gate de memória (Rodada 12) ───────────────────────────────────
+      // Roda ANTES do claim: `reivindicarProximoJob()` já devolve o job
+      // reivindicado, e recusar depois exigiria devolvê-lo à fila. Todos os
+      // jobType atuais disparam Chatterbox e/ou FFmpeg, então "não
+      // reivindicar nada" é a decisão certa e a mais simples.
+      //
+      // AUTOMATION FIRST: nada vira FAILED. O job continua QUEUED e é
+      // processado sozinho quando houver memória — ninguém reaperta botão.
+      const memoria = avaliarMemoriaParaJobPesado(freemem())
+      if (!memoria.podeReivindicar) {
+        if (!esperandoMemoria) {
+          esperandoMemoria = true
+          console.warn(`[digital-twin-worker] aguardando memória: ${memoria.motivo}`)
+        }
+        await esperar(POLL_INTERVAL_MS)
+        continue
+      }
+      if (esperandoMemoria) {
+        esperandoMemoria = false
+        console.log(`[digital-twin-worker] memória liberada (${memoria.livreGB} GB livres, mínimo ${memoria.limiteGB} GB). Retomando o processamento da fila.`)
+      }
+
       const processou = await processarUmJob(workspaceIdPareado)
       if (falhasSeguidas > 0) {
         console.log(`[digital-twin-worker] conexão com o banco restabelecida após ${falhasSeguidas} tentativa(s). Retomando o polling.`)

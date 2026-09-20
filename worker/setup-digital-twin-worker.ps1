@@ -114,9 +114,39 @@ if (-not $PularInicioAutomatico) {
         # sessao propria, sem as variaveis de ambiente desta janela, e nao
         # teria como descobrir um venv fora do local padrao.
         $acao = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -File `"$PSScriptRoot\start-digital-twin-worker.ps1`" -VenvPath `"$venvPath`""
-        $gatilho = New-ScheduledTaskTrigger -AtLogOn
-        Register-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -Action $acao -Trigger $gatilho -Description "Patrono Generation Worker - processa videos do Digital Twin localmente" -Force | Out-Null
-        Write-Host "Inicio automatico configurado. Para desativar depois: .\stop-digital-twin-worker.ps1 -RemoverInicioAutomatico" -ForegroundColor Green
+
+        # WATCHDOG (Rodada 12) - mecanismo NATIVO do Windows, sem supervisor
+        # proprio. Em 20/09/2026 o worker foi encerrado de fora (pressao de
+        # memoria) e ficou horas parado, porque nada o trazia de volta. O
+        # backoff do db-resiliencia so cobre o worker VIVO perdendo o banco;
+        # nao cobre o processo morto.
+        #
+        # Dois gatilhos: logon (sessao da proprietaria) e boot (reinicio sem
+        # ninguem logar).
+        $gatilhos = @(
+            (New-ScheduledTaskTrigger -AtLogOn),
+            (New-ScheduledTaskTrigger -AtStartup)
+        )
+
+        # RestartCount/RestartInterval: o proprio agendador reergue o worker
+        # a cada 2 min se ele morrer. MultipleInstances IgnoreNew e a rede de
+        # seguranca do lado do Windows para a mesma coisa que o lock de PID
+        # garante do lado do Node - duas camadas, de proposito.
+        # ExecutionTimeLimit 0 = sem limite: processo residente nao expira.
+        # StartWhenAvailable: se a maquina estava desligada na hora do
+        # gatilho, roda assim que possivel.
+        $configuracoes = New-ScheduledTaskSettingsSet `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable `
+            -RestartCount 999 `
+            -RestartInterval (New-TimeSpan -Minutes 2) `
+            -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+            -MultipleInstances IgnoreNew
+
+        Register-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -Action $acao -Trigger $gatilhos -Settings $configuracoes -Description "Patrono Generation Worker - processa videos do Digital Twin localmente (reinicia sozinho se cair)" -Force | Out-Null
+        Write-Host "Inicio automatico configurado, com reinicio automatico a cada 2 min se o processo cair." -ForegroundColor Green
+        Write-Host "Para desativar depois: .\stop-digital-twin-worker.ps1 -RemoverInicioAutomatico" -ForegroundColor Green
     } else {
         Write-Host "Ok, o inicio automatico nao foi configurado. Use start-digital-twin-worker.ps1 quando quiser processar." -ForegroundColor Yellow
     }
