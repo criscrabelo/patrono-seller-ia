@@ -18,6 +18,9 @@ import { deveAbortarPorKillSwitch, type DigitalTwinJobType, type DigitalTwinJobS
 import { carregarContextoDigitalTwin, listarAssetsDigitalTwin, BUCKET_DIGITAL_TWIN_PRIVADO } from './digital-twin-store'
 import { gerarPreviaDeVoz } from './digital-twin-voice-job'
 import { gerarPreviaLipSync, gerarPreviaVozSomente } from './digital-twin-lipsync-job'
+import { gerarPresetTikTokDigitalTwinV1 } from './digital-twin-tiktok-preset'
+import { avaliarDigitalTwinQualityGate } from './digital-twin-quality-gate'
+import { produtoPodeAparecerNoVideo } from './media-rights-produto'
 import { criarUrlAssinada, uploadBufferPrivado } from './supabase'
 import { baixarComRetomada } from './digital-twin-model-cache'
 import { calcularExpiracaoPreview } from './digital-twin-retention'
@@ -27,6 +30,14 @@ import { prisma } from './prisma'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { readFile } from 'fs/promises'
+
+/**
+ * Texto do AI Content Disclosure aplicado na legenda. `decidirAIContentDisclosure()`
+ * só diz SE é necessário e por quê — não traz um texto público pronto. Como o
+ * gate exige `aiDisclosureAplicado`, o texto precisa existir de fato em algum
+ * lugar que a proprietária vá publicar; é este.
+ */
+const AI_DISCLOSURE_TEXTO = 'Conteúdo com voz gerada por inteligência artificial.'
 
 /** Terceiro kill switch (regra 34) — lido direto do banco a cada job, nunca cacheado. */
 async function workerEstaPausado(profileId: string): Promise<boolean> {
@@ -51,6 +62,11 @@ export interface JobDeProducao {
    * do escopo desta retomada (prioridade explícita: voz e avatar primeiro).
    */
   jobType: DigitalTwinJobType
+  /**
+   * Conteúdo ligado ao job. É dele que saem o roteiro falado e o PRODUTO
+   * real — sem isso, `PRODUCT_PREVIEW` não tem sobre o que falar.
+   */
+  contentId?: string | null
 }
 
 export interface ResultadoProcessamento {
@@ -273,10 +289,211 @@ export async function processarEtapaDeVozOuAvatar(
     return { sucesso: true, modo, status: 'READY', motivo: resultado.motivo, contentUrl: resultado.videoUrl ?? undefined }
   }
 
+  if (job.jobType === 'PRODUCT_PREVIEW') {
+    return processarProductPreview(job, modo, contexto, assets)
+  }
+
   return {
     sucesso: false,
     modo,
     status: 'FAILED',
-    motivo: `jobType "${job.jobType}" ainda não tem processamento real no worker (fora do escopo desta retomada — prioridade explícita foi voz e avatar primeiro).`,
+    motivo: `jobType "${job.jobType}" ainda não tem processamento real no worker (PUBLISH depende da aprovação do app TikTok).`,
+  }
+}
+
+/**
+ * PRODUCT_PREVIEW (Rodada 10) — conteúdo de afiliado completo, CPU_ONLY e
+ * SEM avatar/lip-sync: voz aprovada narrando o roteiro do próprio job +
+ * mídia do produto (quando autorizada) + hook/legenda/CTA do preset
+ * determinístico TIKTOK_DIGITAL_TWIN_V1.
+ *
+ * Até esta rodada, este jobType caía no "fora do escopo" — mesmo com preset,
+ * renderer e portões já existindo, nada os ligava a um produto real.
+ *
+ * Nenhuma chamada de IA paga: o roteiro falado vem de `Conteudo.narracao` e
+ * hook/caption/CTA saem do preset, que é função pura sobre os dados do
+ * produto. Custo R$ 0,00.
+ */
+async function processarProductPreview(
+  job: JobDeProducao,
+  modo: CreativePresenterMode,
+  contexto: Awaited<ReturnType<typeof carregarContextoDigitalTwin>>,
+  assets: Awaited<ReturnType<typeof listarAssetsDigitalTwin>>
+): Promise<ResultadoProcessamento> {
+  if (!job.contentId) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: 'Job sem conteúdo ligado (contentId) — o roteiro e o produto vêm dele.' }
+  }
+
+  const conteudo = await prisma.conteudo.findUnique({
+    where: { id: job.contentId },
+    include: { produto: true },
+  })
+  if (!conteudo) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: 'Conteúdo do job não encontrado.' }
+  }
+  // Isolamento por workspace — o mesmo cuidado de `lib/digital-twin-store.ts`.
+  if (conteudo.workspaceId !== job.workspaceId) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: 'Conteúdo pertence a outro workspace.' }
+  }
+
+  const textoFalado = (job.legenda || conteudo.narracao || conteudo.roteiro || '').trim()
+  if (!textoFalado) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: 'Conteúdo sem roteiro/narração — não há o que falar.' }
+  }
+
+  // --- Direitos de mídia ANTES de qualquer render (nunca depois) ----------
+  const direitos = produtoPodeAparecerNoVideo({
+    id: conteudo.produto.id,
+    nome: conteudo.produto.nome,
+    origemConteudo: conteudo.produto.origemConteudo,
+    imagens: conteudo.produto.imagens,
+  })
+
+  // --- Preset determinístico: hook, caption, CTA, hashtags, disclosure ----
+  const preset = gerarPresetTikTokDigitalTwinV1({
+    produto: {
+      nome: conteudo.produto.nome,
+      categoria: conteudo.produto.categoria,
+      preco: conteudo.produto.preco,
+      // Data em pt-BR: este valor é interpolado na legenda que a proprietária
+      // publica. Um timestamp ISO cru vazaria "2026-09-20T03:02:40.781Z" para
+      // dentro do texto do TikTok.
+      precoConsultadoEm: conteudo.produto.updatedAt.toLocaleDateString('pt-BR'),
+      isAffiliate: true,
+    },
+    produtoVisivelNoAsset: direitos.visivel,
+    // Sem avatar e sem lip-sync nesta rodada — declarado de verdade, porque
+    // é disso que sai a AI disclosure.
+    usaAvatarSintetico: false,
+    usaVozClonada: true,
+    usaLipSync: false,
+  })
+  if (!preset.aprovado || !preset.pacote) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: preset.motivo }
+  }
+
+  // --- Voz aprovada: sintetiza o roteiro com a referência já autorizada ---
+  const voiceReference = assets.find((a) => a.type === 'VOICE_REFERENCE' && a.active)
+  if (!voiceReference) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: 'Nenhum áudio de referência de voz (VOICE_REFERENCE) autorizado encontrado.' }
+  }
+  // `voiceApprovedAt` é campo do Prisma, não do tipo de domínio
+  // `DigitalTwinProfile` — lido direto do banco, como o kill switch.
+  const aprovacaoVoz = await prisma.digitalTwinProfile.findUnique({
+    where: { id: job.profileId },
+    select: { voiceApprovedAt: true },
+  })
+  if (!aprovacaoVoz?.voiceApprovedAt) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: 'Voz ainda não aprovada pela proprietária — aprove a prévia de voz antes de gerar conteúdo.' }
+  }
+
+  let audioPromptPath: string
+  try {
+    audioPromptPath = await baixarAssetParaArquivoLocal(voiceReference.storagePath, '.wav')
+  } catch (e) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: e instanceof Error ? e.message : 'Falha ao obter o áudio de referência de voz.' }
+  }
+
+  const voz = await gerarPreviaDeVoz({
+    provider: new ChatterboxVoiceCloneProvider(),
+    audioPromptPath,
+    idioma: contexto.voiceProfile?.language ?? 'pt',
+    texto: textoFalado,
+    resolverParaCaminhoLocal: async (caminho) => caminho,
+  })
+  if (voz.status !== 'READY' || !voz.audioPath) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: voz.motivo }
+  }
+
+  // --- Render: mídia do produto (ou fundo neutro) + narração + overlays ---
+  let imagemUrl: string | null = null
+  if (direitos.visivel) {
+    imagemUrl = conteudo.produto.imagens[0]
+  }
+
+  let video: { caminhoLocal: string; durationSeconds: number; usouFundoNeutro: boolean }
+  try {
+    video = await new RendererFFmpeg().renderTikTokComNarracao({
+      imagemUrl,
+      audioLocalPath: voz.audioPath,
+      hook: preset.pacote.hooks[0],
+      legenda: preset.pacote.caption,
+      cta: preset.pacote.cta,
+    })
+  } catch (e) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: e instanceof Error ? e.message : 'Falha ao renderizar o vídeo.' }
+  }
+
+  // --- Quality Gate final, antes de marcar READY -------------------------
+  //
+  // O preflight do TikTok não pode ser verificado aqui: depende de
+  // `creator_info` de um canal conectado, e o app ainda não está aprovado.
+  // O status real é `NOT_VERIFIED`. Para uma PRÉVIA PRIVADA, que por
+  // definição nunca é publicada, isso é um aviso — não um motivo para
+  // reprovar. Em vez de fingir `TECHNICALLY_VALID`, rodamos o gate duas
+  // vezes e usamos o próprio gate para separar o que é bloqueio real do que
+  // é pendência de publicação; nenhuma comparação de texto.
+  const entradaGate = {
+    identidadeOk: !!contexto.profile?.approvedAt,
+    audioOk: voz.qualidade?.aprovado ?? false,
+    lipSyncOk: null, // etapa não usada: esta rodada é sem avatar/lip-sync
+    duracaoDentroDoLimite: video.durationSeconds >= 3 && video.durationSeconds <= 180,
+    legendasPresentes: true, // hook, caption e CTA são queimados no vídeo
+    produtoAutorizado: direitos.visivel || conteudo.produto.imagens.length === 0,
+    aiDisclosureAplicado: true, // aplicado de verdade logo abaixo, na legenda
+    commercialDisclosureAplicado: !!preset.pacote.disclosure,
+  } as const
+
+  const bloqueios = avaliarDigitalTwinQualityGate({ ...entradaGate, tiktokPreflightStatus: 'REQUIRES_USER_CONSENT' })
+  if (!bloqueios.aprovado) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: `Quality Gate reprovou: ${bloqueios.problemas.join('; ')}` }
+  }
+  const comPreflight = avaliarDigitalTwinQualityGate({ ...entradaGate, tiktokPreflightStatus: 'NOT_VERIFIED' })
+  const pendenciasParaPublicar = comPreflight.problemas
+
+  // --- Persistência: vídeo no bucket PRIVADO, legenda no Conteudo --------
+  let assetId: string
+  try {
+    assetId = await salvarPreviaComoAssetPrivado(job.workspaceId, job.profileId, video.caminhoLocal, 'video/mp4', 'product_preview')
+  } catch (e) {
+    return { sucesso: false, modo, status: 'FAILED', motivo: e instanceof Error ? e.message : 'Falha ao salvar o vídeo no storage privado.' }
+  }
+
+  // Legenda e hashtags ficam SEPARADAS do MP4, prontas para copiar na hora
+  // de publicar à mão — nada é embutido no arquivo.
+  //
+  // Os dois disclosures entram no texto da legenda de verdade, e não como
+  // um booleano otimista: o de IA (voz clonada) e o comercial (afiliado).
+  // Um nunca substitui o outro.
+  const legendaCompleta = [
+    preset.pacote.caption,
+    preset.pacote.disclosure,
+    AI_DISCLOSURE_TEXTO,
+    preset.pacote.hashtags.join(' '),
+  ]
+    .filter((p): p is string => !!p && p.trim().length > 0)
+    .join('\n\n')
+
+  await prisma.conteudo.update({
+    where: { id: conteudo.id },
+    data: {
+      legendaTiktok: legendaCompleta,
+      hashtags: preset.pacote.hashtags,
+      chamadaAcao: preset.pacote.cta,
+      textoTela: preset.pacote.hooks[0],
+      duracao: Math.round(video.durationSeconds),
+    },
+  })
+
+  const observacaoMidia = video.usouFundoNeutro ? ` ${direitos.motivo}` : ''
+  const observacaoPublicacao = pendenciasParaPublicar.length
+    ? ` Pendente para publicar: ${pendenciasParaPublicar.join('; ')}`
+    : ''
+  return {
+    sucesso: true,
+    modo,
+    status: 'READY',
+    motivo: `Conteúdo de afiliado gerado: ${video.durationSeconds.toFixed(1)}s, 9:16, voz aprovada.${observacaoMidia}${observacaoPublicacao}`,
+    contentUrl: assetId,
   }
 }

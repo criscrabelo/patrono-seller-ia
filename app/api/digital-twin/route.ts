@@ -63,6 +63,38 @@ export async function GET() {
       }
     : null
 
+  // Legenda do último conteúdo gerado (Rodada 10) — entregue SEPARADA do
+  // MP4, de propósito: a proprietária baixa o vídeo e copia o texto na hora
+  // de publicar à mão. Nada é embutido no arquivo.
+  const conteudoRow = contexto.profile
+    ? await prisma.conteudo.findFirst({
+        where: { workspaceId: session.user.workspaceId, legendaTiktok: { not: null } },
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          id: true,
+          legendaTiktok: true,
+          hashtags: true,
+          chamadaAcao: true,
+          textoTela: true,
+          duracao: true,
+          updatedAt: true,
+          produto: { select: { nome: true } },
+        },
+      })
+    : null
+  const ultimoConteudo = conteudoRow
+    ? {
+        id: conteudoRow.id,
+        produtoNome: conteudoRow.produto.nome,
+        legenda: conteudoRow.legendaTiktok,
+        hashtags: conteudoRow.hashtags,
+        cta: conteudoRow.chamadaAcao,
+        hook: conteudoRow.textoTela,
+        duracaoSegundos: conteudoRow.duracao,
+        atualizadoEm: conteudoRow.updatedAt,
+      }
+    : null
+
   return NextResponse.json({
     profile: contexto.profile ? { ...contexto.profile, ...preferencias } : null,
     voiceProfile: contexto.voiceProfile ? { ...contexto.voiceProfile, referenceAudio: undefined } : null,
@@ -72,6 +104,7 @@ export async function GET() {
     runtime,
     workers,
     ultimoJob,
+    ultimoConteudo,
   })
 }
 

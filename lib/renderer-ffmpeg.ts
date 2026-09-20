@@ -79,6 +79,47 @@ async function prepararFiltroLegenda(legenda: string, duracaoSegundos: number, c
   return `subtitles=filename='${caminhoEscapado}':force_style='Fontsize=16,PrimaryColour=&Hffffff&,BackColour=&H80000000&,BorderStyle=3,Outline=0,Alignment=2,MarginV=60'`
 }
 
+/** Um bloco de texto queimado no vídeo, com janela de tempo própria. */
+export interface CueRoteiro {
+  texto: string
+  inicioSegundos: number
+  fimSegundos: number
+}
+
+/**
+ * Versão multi-bloco de `prepararFiltroLegenda`: hook, legenda e CTA aparecem
+ * em momentos diferentes do MESMO vídeo. Continua via `subtitles`/libass (e
+ * não `drawtext`) porque nem todo build do `ffmpeg-static` traz `drawtext`
+ * compilado — o mesmo motivo já documentado acima.
+ */
+async function prepararFiltroRoteiro(cues: CueRoteiro[], caminhoSrt: string): Promise<string> {
+  const blocos = cues
+    .filter((c) => c.texto.trim() && c.fimSegundos > c.inicioSegundos)
+    .map(
+      (c, i) =>
+        `${i + 1}\n${formatarTimestampSrt(c.inicioSegundos)} --> ${formatarTimestampSrt(c.fimSegundos)}\n${c.texto}\n`
+    )
+  await writeFile(caminhoSrt, blocos.join('\n'), 'utf-8')
+  const caminhoEscapado = escaparCaminhoFiltro(caminhoSrt)
+  return `subtitles=filename='${caminhoEscapado}':force_style='Fontsize=16,PrimaryColour=&Hffffff&,BackColour=&H80000000&,BorderStyle=3,Outline=0,Alignment=2,MarginV=60'`
+}
+
+/**
+ * Fundo neutro 9:16 gerado pelo próprio FFmpeg (`lavfi`), para quando o
+ * produto não tem mídia autorizada a aparecer. Não é "imagem de produto":
+ * é um fundo liso, deliberadamente sem nada que sugira o produto — o vídeo
+ * continua honesto, com voz e texto, sem fabricar uma foto que não existe.
+ */
+async function gerarFundoNeutro(destino: string): Promise<void> {
+  await execFileAsync(ffmpegBin(), [
+    '-f', 'lavfi',
+    '-i', 'color=c=0x14161A:s=1080x1920',
+    '-frames:v', '1',
+    '-y',
+    destino,
+  ])
+}
+
 export interface RendererFFmpegOverlay {
   texto: string
   posicao: 'topo' | 'centro' | 'rodape'
@@ -294,6 +335,91 @@ export class RendererFFmpeg implements RendererProvider {
       return { url, durationSeconds: duracaoSegundos }
     } finally {
       await Promise.allSettled([unlink(entrada), unlink(legendaSrt), unlink(saida)])
+    }
+  }
+
+  /**
+   * Conteúdo de afiliado completo, CPU_ONLY e sem avatar (Rodada 10) —
+   * mídia do produto (ou fundo neutro) + NARRAÇÃO REAL da voz aprovada +
+   * hook/legenda/CTA queimados, em 9:16.
+   *
+   * É o encontro de duas metades que já existiam separadas e nunca se
+   * falavam: `renderTikTokVideo()` compunha o visual do TikTok mas terminava
+   * com `-an` (vídeo mudo, duração fixa de 8s), e `renderVoiceOnlyPreview()`
+   * tinha a trilha de áudio real mas era foto + legenda única, sem
+   * hook/CTA. Nenhum caminho juntava produto e voz.
+   *
+   * Devolve o arquivo LOCAL (não sobe pra lugar nenhum): quem chama decide
+   * o destino — no Digital Twin é sempre o bucket PRIVADO, porque o vídeo
+   * carrega a voz da proprietária. Mesmo contrato de `gerarPreviaDeVoz()`.
+   *
+   * A duração segue a duração REAL do áudio, nunca um valor arbitrário.
+   */
+  async renderTikTokComNarracao(params: {
+    /** `null` quando o produto não tem mídia autorizada — vira fundo neutro. */
+    imagemUrl: string | null
+    audioLocalPath: string
+    hook: string
+    legenda: string
+    cta: string
+  }): Promise<{ caminhoLocal: string; durationSeconds: number; usouFundoNeutro: boolean }> {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const tmp = tmpdir()
+    const entrada = join(tmp, `tiktok-narracao-in-${id}.jpg`)
+    const roteiroSrt = join(tmp, `tiktok-narracao-srt-${id}.srt`)
+    const saida = join(tmp, `tiktok-narracao-out-${id}.mp4`)
+
+    const usouFundoNeutro = !params.imagemUrl
+    try {
+      if (params.imagemUrl) {
+        await baixarImagem(params.imagemUrl, entrada)
+      } else {
+        await gerarFundoNeutro(entrada)
+      }
+
+      const analiseAudio = await analisarAudio(params.audioLocalPath)
+      const duracaoSegundos = analiseAudio.duracaoSegundos ?? 8
+      const fps = 30
+      const totalFrames = Math.max(Math.round(duracaoSegundos * fps), fps)
+
+      // Hook nos primeiros segundos, CTA no fim, legenda no meio — as
+      // janelas saem da duração real, então nunca cortam a fala.
+      const fimHook = Math.min(2.5, duracaoSegundos * 0.2)
+      const inicioCta = Math.max(duracaoSegundos - 3, fimHook)
+      const filtroRoteiro = await prepararFiltroRoteiro(
+        [
+          { texto: params.hook, inicioSegundos: 0, fimSegundos: fimHook },
+          { texto: params.legenda, inicioSegundos: fimHook, fimSegundos: inicioCta },
+          { texto: params.cta, inicioSegundos: inicioCta, fimSegundos: duracaoSegundos },
+        ],
+        roteiroSrt
+      )
+
+      const filtros = [
+        `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920`,
+        `zoompan=z='min(zoom+0.0006,1.08)':d=${totalFrames}:s=1080x1920:fps=${fps}`,
+        filtroRoteiro,
+      ].join(',')
+
+      await execFileAsync(ffmpegBin(), [
+        '-loop', '1',
+        '-i', entrada,
+        '-i', params.audioLocalPath,
+        '-vf', filtros,
+        '-t', String(duracaoSegundos),
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-shortest',
+        '-y',
+        saida,
+      ])
+
+      return { caminhoLocal: saida, durationSeconds: duracaoSegundos, usouFundoNeutro }
+    } finally {
+      // `saida` NÃO entra aqui: é o retorno, quem chama apaga depois de subir.
+      await Promise.allSettled([unlink(entrada), unlink(roteiroSrt)])
     }
   }
 

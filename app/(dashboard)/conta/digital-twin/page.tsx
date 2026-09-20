@@ -25,6 +25,16 @@ interface StatusResposta {
   runtime: { cpuCores: number; totalRamGB: number; gpuDetected: boolean; gpuName: string | null }
   workers: { workerId: string; gpuDetected: boolean; gpuName: string | null; vramGB: number | null; version: string | null; lastSeenAt: string }[]
   ultimoJob: { id: string; jobType: string; status: string; statusAmigavel: string; emAndamento: boolean; erro: string | null } | null
+  ultimoConteudo: {
+    id: string
+    produtoNome: string
+    legenda: string | null
+    hashtags: string[]
+    cta: string | null
+    hook: string | null
+    duracaoSegundos: number | null
+    atualizadoEm: string
+  } | null
 }
 
 interface TokenWorker {
@@ -135,6 +145,9 @@ export default function DigitalTwinPage() {
   // — uma prévia antiga no player faria a proprietária julgar a voz errada.
   const vozDigitalPreview = assets
     .filter((a) => a.type === 'GENERATED_PREVIEW' && a.purpose === 'voice_preview')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+  const conteudoPreview = assets
+    .filter((a) => a.type === 'GENERATED_PREVIEW' && a.purpose === 'product_preview')
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
 
   async function criarMeuDigitalTwin() {
@@ -434,6 +447,52 @@ export default function DigitalTwinPage() {
               <audio controls src={gravacaoOriginal.url} className="w-full h-8" />
             </div>
           )}
+        </section>
+      )}
+
+      {/*
+        Conteúdo de afiliado (Rodada 10) — MP4 e legenda entregues SEPARADOS,
+        para publicar à mão no TikTok: o vídeo se baixa, o texto se copia.
+        Nada é embutido no arquivo e nada é publicado automaticamente.
+      */}
+      {status?.profile && conteudoPreview && (
+        <section className="space-y-3 rounded-lg border border-border p-4">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Sparkles className="w-4 h-4" /> Conteúdo pronto para o TikTok
+          </h2>
+          {status.ultimoConteudo && (
+            <p className="text-xs text-white/60">
+              {status.ultimoConteudo.produtoNome}
+              {status.ultimoConteudo.duracaoSegundos ? ` · ${status.ultimoConteudo.duracaoSegundos}s` : ''} · 9:16
+            </p>
+          )}
+
+          <video controls src={conteudoPreview.url} className="w-full rounded-lg max-h-[420px] bg-black" />
+          <a href={conteudoPreview.url} download className="inline-block text-xs text-accent underline">
+            Baixar o vídeo
+          </a>
+
+          {status.ultimoConteudo?.legenda && (
+            <div className="space-y-2 pt-2 border-t border-border">
+              <p className="text-xs text-white/60">Legenda para colar na publicação</p>
+              <pre className="whitespace-pre-wrap break-words rounded bg-background px-3 py-2 text-[11px] text-white/90 font-sans">
+                {status.ultimoConteudo.legenda}
+              </pre>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(status.ultimoConteudo!.legenda!)
+                  toast({ title: 'Legenda copiada.', variant: 'success' })
+                }}
+                className="text-xs text-accent underline"
+              >
+                Copiar legenda
+              </button>
+            </div>
+          )}
+
+          <p className="text-[11px] text-white/40">
+            Gerado em {new Date(conteudoPreview.createdAt).toLocaleString('pt-BR')}. Nada é publicado sem você.
+          </p>
         </section>
       )}
 

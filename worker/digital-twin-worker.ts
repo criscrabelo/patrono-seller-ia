@@ -115,6 +115,7 @@ async function processarUmJob(workspaceIdPareado: string | null): Promise<boolea
       mediaAssetUrl: job.resultAssetId ?? '',
       overlayTexto: 'Patrono',
       legenda: textoFalado ?? '',
+      contentId: job.contentId,
     })
 
     if (resultado.sucesso && resultado.contentUrl) {
