@@ -95,3 +95,30 @@ Nesta sandbox (sem Hugging Face, sem GPU), o resultado real e esperado é **falh
 ## Custo
 
 Nenhum serviço pago. Nenhum cloud GPU. **R$ 0,00.**
+
+## Pendência arquitetural — isolamento de `GenerationWorkerHealth` (registrada na Rodada 11)
+
+`GenerationWorkerHealth.workerId` é `@unique` **global**, não por workspace.
+Levantado na auditoria multi-workspace que precedeu a migration
+`20260920120000_produto_identidade_externa`. **Não foi corrigido ali de
+propósito** — a migration daquela rodada é aditiva e restrita a `Produto`, e
+misturar as duas mudanças confundiria o diagnóstico.
+
+O que acontece hoje: dois negócios independentes na mesma plataforma, cada um
+com um worker local chamado `worker-windows-local` (o nome padrão), gravam na
+**mesma linha** de saúde. Um sobrescreve o outro.
+
+O que NÃO acontece — e é o que importa: **nenhum job vaza**. A reivindicação
+filtra por `workspaceId` no próprio SQL e o `WorkerToken` é escopado a um
+único workspace. O dano é de observabilidade: a tela de um negócio pode
+mostrar "processador conectado" por causa do worker do outro, ou o contrário.
+
+Correção quando for necessário (não urgente enquanto houver um só negócio em
+operação): adicionar `workspaceId` ao modelo e trocar o `@unique` por
+`@@unique([workspaceId, workerId])`. É a mais barata das três limitações
+multi-workspace mapeadas — e a mais enganosa se ficar, porque produz
+informação errada na tela sem gerar erro nenhum.
+
+As outras duas, para contexto: `Workspace.ownerId @unique` + `User.workspaceId`
+único (uma pessoa pertence a exatamente um workspace) e `LinkDinamico.slug`
+único global. Ambas anteriores e documentadas no próprio `schema.prisma`.

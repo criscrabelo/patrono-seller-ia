@@ -29,6 +29,31 @@ export interface ProdutoParaDireitos {
   nome: string
   origemConteudo: string
   imagens: string[]
+  /**
+   * `Produto.origemDados` (Rodada 11): de onde o REGISTRO veio — `MANUAL`
+   * quando a proprietária cadastrou, `TIKTOK_SHOWCASE` quando foi importado
+   * da vitrine. Ausente equivale a `MANUAL`, preservando o comportamento de
+   * todo produto que já existia antes desta rodada.
+   */
+  origemDados?: string
+}
+
+/**
+ * Origens de DADOS cuja mídia não pode ser transformada sem verificação.
+ *
+ * Sincronizar produto e adquirir direito sobre a mídia são coisas
+ * separadas — e é justamente aqui que a diferença é aplicada. Uma imagem
+ * que chega pela API oficial da vitrine é do vendedor ou da plataforma, não
+ * da proprietária: recebê-la autoriza EXIBIR no Patrono, nunca compor um
+ * vídeo derivado. Tratar o recebimento como licença seria inventar uma
+ * autorização que ninguém concedeu.
+ *
+ * `UNKNOWN` já é o mais restritivo em `mediaRightsGate()`: permite exibir e
+ * bloqueia transformar/derivar/reusar. Quando os termos do TikTok Shop forem
+ * lidos e confirmados, é esta linha — e só ela — que muda.
+ */
+const ORIGENS_DE_DADOS_SEM_DIREITO_VERIFICADO: Record<string, MediaUsagePolicy> = {
+  tiktok_showcase: 'UNKNOWN',
 }
 
 /** Compara origem sem depender de acento/caixa — o cadastro aceita texto livre. */
@@ -57,6 +82,22 @@ function idDoAsset(produto: ProdutoParaDireitos): string {
 }
 
 export function resolverDireitosDoProduto(produto: ProdutoParaDireitos): MediaRightsRecord {
+  const origemDados = normalizar(produto.origemDados || 'MANUAL')
+
+  // A origem dos DADOS vence a origem declarada no cadastro. Um produto
+  // importado da vitrine pode ter `origemConteudo: 'Próprio'` herdado do
+  // formulário, mas a mídia continua sendo do vendedor/plataforma — deixar o
+  // cadastro mandar aqui abriria exatamente o buraco que esta regra fecha.
+  const policyDaOrigemDeDados = ORIGENS_DE_DADOS_SEM_DIREITO_VERIFICADO[origemDados]
+  if (policyDaOrigemDeDados) {
+    return direitosDaPolicy(policyDaOrigemDeDados, {
+      assetId: idDoAsset(produto),
+      source: `sincronizacao:${origemDados}`,
+      authorizingSource: `Importado de ${produto.origemDados} — termos de uso da mídia ainda não verificados`,
+      storageExpiresAt: null,
+    })
+  }
+
   const origem = normalizar(produto.origemConteudo || '')
   // Origem não reconhecida nunca vira "permitido por omissão".
   const policy = POLICY_POR_ORIGEM[origem] ?? 'UNKNOWN'

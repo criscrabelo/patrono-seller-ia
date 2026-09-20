@@ -195,6 +195,23 @@ model Produto {
   imagens         String[]
   videos          String[]
   status          String         @default("ativo")
+
+  // ── Identidade externa e sincronização automática (Rodada 11) ──────────
+  // AUTOMATION FIRST: a proprietária não deve cadastrar produto, preço,
+  // imagem, comissão ou disponibilidade à mão quando a plataforma oferecer
+  // isso por API oficial. Estes campos são o que torna essa importação
+  // IDEMPOTENTE — sem eles, cada sincronização duplicaria a vitrine inteira.
+  providerId  String? // 'tiktok-shop', 'amazon', 'mercado-livre'... (AFFILIATE_PROVIDER_REGISTRY)
+  externalId  String? // id do produto NA PLATAFORMA de origem
+  // MANUAL | TIKTOK_SHOWCASE | ... — alimenta o mapa de direitos de mídia
+  // (lib/media-rights-produto.ts). Nunca é inferido do provider: mídia de
+  // terceiro não pode entrar em vídeo como se fosse da proprietária.
+  origemDados String  @default("MANUAL")
+  sincronizadoEm DateTime?
+  // Quando sumiu da origem. Inativamos preservando histórico — `status`
+  // sozinho não distingue "a dona desativou" de "saiu da vitrine".
+  removidoDaOrigemEm DateTime?
+
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   conteudos       Conteudo[]
@@ -202,7 +219,12 @@ model Produto {
   sales           Sale[]
   commissions     Commission[]
 
+  // Garantia de idempotência no BANCO, não só na lógica — mesmo padrão de
+  // `Sale.idempotencyKey`. Em Postgres NULL não colide com NULL, então
+  // produto manual (providerId nulo) segue sem restrição.
+  @@unique([workspaceId, providerId, externalId])
   @@index([workspaceId])
+  @@index([workspaceId, origemDados])
 }
 
 model Conteudo {
