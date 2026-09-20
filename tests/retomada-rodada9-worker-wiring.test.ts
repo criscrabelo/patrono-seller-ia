@@ -136,16 +136,34 @@ describe('Retomada Rodada 9 — roteamento real por jobType no worker', () => {
     await limpar(user.workspaceId)
   })
 
-  test('jobType PRODUCT_PREVIEW/PUBLISH não tem processamento real no worker ainda — falha honesta, nunca finge', async () => {
-    const { user, profile } = await novoWorkspaceComPerfil('r9w-fora-escopo')
+  // Atualizado na Rodada 10: PRODUCT_PREVIEW deixou de ser "fora do escopo" e
+  // passou a ter processamento real (conteúdo de afiliado com voz aprovada).
+  // A falha honesta agora é sobre o que de fato falta — o conteúdo ligado ao
+  // job, de onde saem roteiro e produto.
+  test('PRODUCT_PREVIEW sem conteúdo ligado falha dizendo o que falta, nunca finge', async () => {
+    const { user, profile } = await novoWorkspaceComPerfil('r9w-product-sem-conteudo')
     const voiceProfile = await prisma.voiceProfile.create({ data: { workspaceId: user.workspaceId, ownerUserId: user.id, provider: 'chatterbox-tts' } })
     await prisma.digitalTwinProfile.update({ where: { id: profile.id }, data: { voiceProfileId: voiceProfile.id } })
     const contexto = await carregarContextoDigitalTwin(user.workspaceId)
-    const job: JobDeProducao = { id: 'j6', workspaceId: user.workspaceId, profileId: profile.id, jobType: 'PRODUCT_PREVIEW', mediaAssetUrl: '', overlayTexto: 'x', legenda: 'y' }
+    const job: JobDeProducao = { id: 'j6', workspaceId: user.workspaceId, profileId: profile.id, jobType: 'PRODUCT_PREVIEW', mediaAssetUrl: '', overlayTexto: 'x', legenda: 'y', contentId: null }
 
     const resultado = await processarEtapaDeVozOuAvatar(job, 'DIGITAL_TWIN', contexto, CAPACIDADES_SEM_MUSETALK)
     assert.equal(resultado.sucesso, false)
-    assert.match(resultado.motivo, /fora do escopo/)
+    assert.match(resultado.motivo, /contentId/)
+
+    await limpar(user.workspaceId)
+  })
+
+  test('PUBLISH continua sem processamento real — falha honesta, nunca finge', async () => {
+    const { user, profile } = await novoWorkspaceComPerfil('r9w-publish-fora-escopo')
+    const voiceProfile = await prisma.voiceProfile.create({ data: { workspaceId: user.workspaceId, ownerUserId: user.id, provider: 'chatterbox-tts' } })
+    await prisma.digitalTwinProfile.update({ where: { id: profile.id }, data: { voiceProfileId: voiceProfile.id } })
+    const contexto = await carregarContextoDigitalTwin(user.workspaceId)
+    const job: JobDeProducao = { id: 'j7', workspaceId: user.workspaceId, profileId: profile.id, jobType: 'PUBLISH', mediaAssetUrl: '', overlayTexto: 'x', legenda: 'y' }
+
+    const resultado = await processarEtapaDeVozOuAvatar(job, 'DIGITAL_TWIN', contexto, CAPACIDADES_SEM_MUSETALK)
+    assert.equal(resultado.sucesso, false)
+    assert.match(resultado.motivo, /não tem processamento real no worker/)
 
     await limpar(user.workspaceId)
   })

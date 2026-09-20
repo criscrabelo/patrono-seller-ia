@@ -26,6 +26,7 @@ import { processarJobDeVerdade, detectarCapacidadesDeGeracao, type JobDeProducao
 import { detectarCapacidadesRuntime } from '../lib/digital-twin-runtime'
 import { REQUIRED_WORKER_VERSION } from '../lib/digital-twin-worker-version'
 import { verificarTokenWorker } from '../lib/digital-twin-worker-token'
+import { comReconexao, classificarErroDeBanco, calcularEsperaBackoff, type TentativaReconexao } from '../lib/db-resiliencia'
 
 const WORKER_ID = process.env.DIGITAL_TWIN_WORKER_ID || `worker-${randomUUID().slice(0, 8)}`
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -38,6 +39,38 @@ const POLL_INTERVAL_MS = 5_000
  * "nenhum conectado" mesmo processando jobs normalmente.
  */
 const HEALTH_REFRESH_MS = 60_000
+
+/**
+ * Reconexão ao banco (Rodada 10.2). Base 2s, teto 60s: uma queda curta se
+ * resolve em segundos, e uma longa fica batendo de minuto em minuto sem
+ * martelar o pooler.
+ *
+ * `maxTentativas: 0` (sem limite) no LOOP residente é deliberado — desistir
+ * depois de N tentativas reproduziria o defeito que originou esta rodada: o
+ * worker morreu por um ConnectionReset e ficou 8 horas fora do ar. No
+ * STARTUP o limite é finito: ali um banco inalcançável quase sempre é
+ * ambiente errado, e é melhor falhar alto e cedo.
+ */
+const BACKOFF_BASE_MS = 2_000
+const BACKOFF_MAX_MS = 60_000
+const MAX_TENTATIVAS_STARTUP = 5
+
+const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+const depsReconexao = (maxTentativas: number) => ({
+  maxTentativas,
+  baseMs: BACKOFF_BASE_MS,
+  maxMs: BACKOFF_MAX_MS,
+  esperar,
+  aoRetentar: ({ tentativa, motivo, proximaEsperaMs }: TentativaReconexao) => {
+    console.warn(
+      `[digital-twin-worker] banco indisponível (tentativa ${tentativa}${maxTentativas > 0 ? `/${maxTentativas}` : ''}): ${motivo}. Nova tentativa em ${Math.round(proximaEsperaMs / 1000)}s.`
+    )
+  },
+  aoRecuperar: (tentativasGastas: number) => {
+    console.log(`[digital-twin-worker] conexão com o banco restabelecida após ${tentativasGastas} tentativa(s). Retomando o polling.`)
+  },
+})
 const MAX_TENTATIVAS = 3 // regra 31: máximo 2-3 tentativas automáticas
 
 const prisma = new PrismaClient()
@@ -133,10 +166,13 @@ async function processarUmJob(workspaceIdPareado: string | null): Promise<boolea
 
 async function main() {
   const modoUnico = process.argv.includes('--once')
-  await registrarSaudeWorker()
+  // Startup com retentativa LIMITADA: se o banco não responde nem no começo,
+  // costuma ser ambiente errado — melhor falhar alto depois de algumas
+  // tentativas do que ficar girando em silêncio na tarefa do logon.
+  await comReconexao(() => registrarSaudeWorker(), depsReconexao(MAX_TENTATIVAS_STARTUP))
   const capacidades = await detectarCapacidadesDeGeracao()
 
-  const workspaceIdPareado = await resolverWorkspacePareado()
+  const workspaceIdPareado = await comReconexao(() => resolverWorkspacePareado(), depsReconexao(MAX_TENTATIVAS_STARTUP))
   if (process.env.DIGITAL_TWIN_WORKER_TOKEN && !workspaceIdPareado) {
     console.error('[digital-twin-worker] Token inválido/revogado — o worker não vai reivindicar nenhum job. Gere um novo token em Configurações → Digital Twin.')
     await prisma.$disconnect()
@@ -158,19 +194,66 @@ async function main() {
   // A saúde é renovada periodicamente aqui: sem isso `lastSeenAt` ficava
   // congelado no horário do startup e a tela passava a mentir "nenhum
   // processador conectado" depois de 5 minutos de worker no ar.
+  //
+  // HEARTBEAT HONESTO: quando o banco cai, esta escrita falha e o
+  // `lastSeenAt` PARA de avançar — é exatamente o que a tela precisa para
+  // dizer "nenhum processador conectado" em vez de mentir. Nada aqui grava
+  // um estado otimista de fora do banco. O `catch` só evita derrubar o
+  // processo por causa do timer; a falha é registrada (uma vez por queda,
+  // para não inundar o log) em vez de ser engolida como antes.
+  let saudeFalhando = false
   const renovarSaude = setInterval(() => {
-    registrarSaudeWorker().catch(() => {})
+    registrarSaudeWorker()
+      .then(() => {
+        if (saudeFalhando) {
+          saudeFalhando = false
+          console.log('[digital-twin-worker] heartbeat voltou a ser gravado.')
+        }
+      })
+      .catch((e) => {
+        if (!saudeFalhando) {
+          saudeFalhando = true
+          console.warn(
+            `[digital-twin-worker] heartbeat NÃO gravado: ${classificarErroDeBanco(e).motivo}. A tela vai mostrar "nenhum processador conectado" até voltar — e isso está correto.`
+          )
+        }
+      })
   }, HEALTH_REFRESH_MS)
   renovarSaude.unref?.()
 
+  // Loop residente. Uma falha TRANSITÓRIA de conexão não mata mais o
+  // processo: espera com backoff e volta ao polling. Erro fatal (credencial,
+  // banco inexistente, string inválida) continua derrubando o worker na
+  // hora, alto — nunca engolido.
+  let falhasSeguidas = 0
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const processou = await processarUmJob(workspaceIdPareado)
-    if (!processou) await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+    try {
+      const processou = await processarUmJob(workspaceIdPareado)
+      if (falhasSeguidas > 0) {
+        console.log(`[digital-twin-worker] conexão com o banco restabelecida após ${falhasSeguidas} tentativa(s). Retomando o polling.`)
+        falhasSeguidas = 0
+      }
+      if (!processou) await esperar(POLL_INTERVAL_MS)
+    } catch (e) {
+      const diagnostico = classificarErroDeBanco(e)
+      if (diagnostico.classe === 'FATAL') throw e
+
+      falhasSeguidas++
+      const espera = calcularEsperaBackoff(falhasSeguidas, { baseMs: BACKOFF_BASE_MS, maxMs: BACKOFF_MAX_MS })
+      console.warn(
+        `[digital-twin-worker] banco indisponível (tentativa ${falhasSeguidas}): ${diagnostico.motivo}. Nova tentativa em ${Math.round(espera / 1000)}s.`
+      )
+      await esperar(espera)
+    }
   }
 }
 
 main().catch((e) => {
-  console.error('[digital-twin-worker] erro fatal:', e)
+  // Só chega aqui erro FATAL (ou transitório que esgotou o limite do
+  // startup). Falha transitória no loop residente nunca mais cai neste ponto.
+  const diagnostico = classificarErroDeBanco(e)
+  console.error(`[digital-twin-worker] erro fatal (${diagnostico.classe}): ${diagnostico.motivo}`)
+  console.error(e)
   process.exit(1)
 })
