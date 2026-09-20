@@ -159,8 +159,17 @@ export const TEXTO_GUIADO_ONBOARDING_VOZ =
   'Olá! Esta é a minha voz para o Patrono. Hoje é um bom dia para encontrar ofertas incríveis, ' +
   'com números como 10, 25 e 100, e preços como R$ 49,90. Espero que você aproveite!'
 
-/** Script de síntese que roda no venv do worker (subprocesso local). */
-const CAMINHO_SCRIPT_SINTESE = join(process.cwd(), 'worker', 'chatterbox_synthesize.py')
+/**
+ * Script de síntese que roda no venv do worker (subprocesso local).
+ *
+ * `DIGITAL_TWIN_SYNTH_SCRIPT` tem precedência sobre o caminho derivado do
+ * diretório atual: uma tarefa agendada do Windows roda a partir de
+ * `System32`, não da pasta do projeto, e ali `process.cwd()` apontaria para
+ * um lugar onde o script não existe. `start-digital-twin-worker.ps1` define
+ * essa variável com o caminho absoluto.
+ */
+const CAMINHO_SCRIPT_SINTESE =
+  process.env.DIGITAL_TWIN_SYNTH_SCRIPT || join(process.cwd(), 'worker', 'chatterbox_synthesize.py')
 
 /**
  * Teto de tempo para uma síntese. Generoso de propósito: medido na máquina
