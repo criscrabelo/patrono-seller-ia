@@ -24,6 +24,7 @@
 import type { AffiliateOpportunity, OpportunitySource, OpportunityScorer } from './affiliate-discovery'
 import { AutomationFeasibilityScorer, calcularFeasibility, type FeasibilityBreakdown } from './automation-feasibility'
 import { direitosDaPolicy, mediaRightsGate, type MediaRightsRecord, type MediaUsagePolicy } from './media-rights'
+import { formatarBRLOuNulo } from './formato-moeda'
 import { decidirDisclosure } from './compliance-engine'
 import { TikTokPreflightNotConfigured, tiktokHumanConsentGate, type TikTokPreflightValidator } from './tiktok-preflight'
 import { InstagramPreflightValidator } from './instagram-preflight'
@@ -140,7 +141,8 @@ async function tocaAuditoria(
 /** Gera a legenda SÓ a partir de dados presentes na oportunidade — nunca inventa benefício/preço/desconto. */
 function legendaFactual(op: AffiliateOpportunity): string {
   const partes = [op.productName]
-  if (op.price != null) partes.push(`Preço consultado em ${op.lastVerifiedAt}: R$ ${op.price.toFixed(2)}`)
+  const precoFormatado = formatarBRLOuNulo(op.price)
+  if (precoFormatado) partes.push(`Preço consultado em ${op.lastVerifiedAt}: ${precoFormatado}`)
   else partes.push('Confira o preço atual.')
   return partes.join(' — ')
 }

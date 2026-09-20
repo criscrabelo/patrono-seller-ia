@@ -14,6 +14,8 @@
  * disponível, nunca hardcoded num componente de tela.
  */
 
+import { formatarBRLOuNulo } from './formato-moeda'
+
 export interface ImageGeneratorProvider {
   generate(params: { prompt: string; baseImageUrl?: string }): Promise<{ url: string; provider: string }>
 }
@@ -122,7 +124,13 @@ export interface PacoteCriativoTikTokFirst {
 }
 
 export function gerarPacoteCriativoTikTokFirst(fonte: FonteFatualProduto): PacoteCriativoTikTokFirst {
-  const precoTexto = fonte.preco != null && fonte.precoConsultadoEm ? `R$ ${fonte.preco.toFixed(2)} (consultado em ${fonte.precoConsultadoEm})` : 'confira o preço atual'
+  // Formatação brasileira de verdade (R$ 199,00). O valor não muda — só a
+  // escrita: esta legenda é publicada.
+  const precoFormatado = formatarBRLOuNulo(fonte.preco)
+  const precoTexto =
+    precoFormatado && fonte.precoConsultadoEm
+      ? `${precoFormatado} (consultado em ${fonte.precoConsultadoEm})`
+      : 'confira o preço atual'
 
   const hooks: [string, string, string] = [
     `Achei isso: ${fonte.nome}`,
