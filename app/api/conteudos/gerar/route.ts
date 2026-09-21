@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     let geradoSemIaPaga = false
     let limitacoesDoGratuito: string[] = []
     try {
-      gerado = await gerarConteudo(produtoData, configGeracao)
+      gerado = await gerarConteudo(produtoData, configGeracao, session.user.workspaceId)
     } catch (e) {
       if (!(e instanceof BloqueadoPorPoliticaDeCusto)) throw e
       const gratuito = gerarConteudoGratuito({

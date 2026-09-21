@@ -51,8 +51,9 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < numerosValidos.length; i++) {
     const numero = numerosValidos[i]
     const resultado = body.imagemUrl
-      ? await enviarImagem(cfg, { numero, imageUrl: body.imagemUrl, legenda: body.mensagem })
-      : await enviarTexto(cfg, { numero, mensagem: body.mensagem })
+      // O workspace da sessão é o que o gate usa para apurar o orçamento.
+      ? await enviarImagem(cfg, { numero, imageUrl: body.imagemUrl, legenda: body.mensagem }, session.user.workspaceId)
+      : await enviarTexto(cfg, { numero, mensagem: body.mensagem }, session.user.workspaceId)
     resultados.push(resultado)
     if (i < numerosValidos.length - 1) {
       await new Promise((r) => setTimeout(r, delay))

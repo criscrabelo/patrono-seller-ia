@@ -7,6 +7,7 @@ import {
   consultarStatusVideo,
   obterResultadoLegenda,
   montarSrt,
+  BloqueadoPorPoliticaDeCusto,
 } from '@/lib/falai'
 import { createClient } from '@supabase/supabase-js'
 
@@ -69,11 +70,14 @@ export async function POST(
   const srt = montarSrt(texto, duracao)
 
   try {
-    const { statusUrl, resultUrl } = await adicionarLegendaVideo({
-      videoUrl: conteudo.videoUrl,
-      srtContent: srt,
-      preset,
-    })
+    const { statusUrl, resultUrl } = await adicionarLegendaVideo(
+      {
+        videoUrl: conteudo.videoUrl,
+        srtContent: srt,
+        preset,
+      },
+      conteudo.workspaceId
+    )
 
     // Aguarda o processamento (~30-50s para vídeos curtos)
     let status = 'IN_PROGRESS'
@@ -103,6 +107,25 @@ export async function POST(
 
     return NextResponse.json({ ok: true, videoUrl: urlFinal })
   } catch (e) {
+    if (e instanceof BloqueadoPorPoliticaDeCusto) {
+      // SEM EQUIVALENTE GRATUITO. Nenhuma função local queima legenda em um
+      // vídeo JÁ EXISTENTE — `renderer-ffmpeg` só monta vídeo a partir de
+      // imagem. Em vez de inventar uma capacidade que não existe, o SRT
+      // gerado (que é local e gratuito) volta para quem chamou, e a
+      // pendência fica registrada na Fila de Automação.
+      return NextResponse.json(
+        {
+          ok: false,
+          bloqueadoPorCusto: true,
+          erro: e.message,
+          srt,
+          pendenciaDeAutomacao: 'fal.ai:adicionar-legenda',
+          mensagem:
+            'A legendagem paga está bloqueada pela política de custo zero e ainda não há equivalente local. O arquivo SRT foi gerado sem custo e pode ser usado no editor.',
+        },
+        { status: 402 }
+      )
+    }
     const msg = e instanceof Error ? e.message : 'Falha ao adicionar legendas'
     return NextResponse.json({ error: msg }, { status: 502 })
   }

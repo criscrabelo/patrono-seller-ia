@@ -5,15 +5,22 @@ import { guardarChamadaPaga } from './cost-safety-gate'
 // ambiente local), apenas registra o link no console e não falha — assim o
 // fluxo continua testável sem serviço de email.
 export async function enviarEmailReset(para: string, link: string): Promise<{ enviado: boolean }> {
-  // CUSTO ZERO POR PADRÃO (Rodada 14): Resend cobra acima do free tier.
-  // Sem alternativa gratuita no projeto, o envio fica PENDENTE por política —
-  // devolve `enviado: false` em vez de lançar, para não derrubar o fluxo que
-  // chamou (recuperação de senha continua funcionando pela tela).
+  // CUSTO ZERO POR PADRÃO: Resend cobra acima do free tier.
+  //
+  // `workspaceId: null` é HONESTO, não descuido: a recuperação de senha
+  // acontece ANTES do login — não há sessão nem workspace. Inventar um id
+  // criaria dado falso no AuditLog (que tem FK para Workspace) e faria o
+  // consumo de um negócio aparecer em outro.
+  //
+  // `custoEstimado` NÃO é passado. A operação está deliberadamente ausente
+  // de `CUSTO_ESTIMADO_BRL`, e ausência bloqueia. Publicar uma estimativa
+  // aqui seria enganoso: sugeriria que basta ligar as duas chaves para
+  // liberar, quando na verdade a chamada não tem workspace para debitar.
+  // Uma única fonte de verdade — a tabela — em vez de dois lugares.
   const guarda = await guardarChamadaPaga({
     provider: 'resend',
     operacao: 'enviar-email',
     workspaceId: null,
-    custoEstimado: null,
   })
   if (!guarda.permitido) {
     console.warn(`[email] envio bloqueado por política de custo: ${guarda.decisao.explicacao}`)

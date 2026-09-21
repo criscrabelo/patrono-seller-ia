@@ -70,16 +70,33 @@ export function ehProvedorPagoConhecido(provider: string): provider is ProvedorP
  * oficial, substitua o teto e registre a fonte no comentário da linha.
  */
 export const CUSTO_ESTIMADO_BRL: Record<string, number> = {
-  // Kling v3 pro image-to-video. Teto alto de propósito: vídeo por IA é a
-  // operação mais cara do projeto e a mais fácil de disparar em laço.
+  // ── fal.ai: TODA submissao que cria trabalho novo cobra ──
+  // Kling v3 pro image-to-video. Teto alto de proposito: e a operacao mais
+  // cara do projeto e a mais facil de disparar em laco.
   'fal.ai:gerar-video': 5.0,
-  // Geração de roteiro/legenda por token. Teto por chamada, não por token:
-  // o tamanho exato só se conhece depois da resposta — e depois é tarde.
+  // Composicao de clipes no fal.ai. Existe alternativa local gratuita
+  // (concat-video.concatVideos), entao o bloqueio aqui quase nunca custa nada.
+  'fal.ai:compor-video': 2.0,
+  // Legenda queimada via VEED no fal.ai.
+  'fal.ai:adicionar-legenda': 1.0,
+
+  // ── Anthropic: por token. Teto POR CHAMADA, nao por token ──
+  // O tamanho exato so se conhece depois da resposta, e depois e tarde.
   'anthropic:gerar-roteiro': 0.5,
   'anthropic:gerar-video-seller': 0.5,
   'anthropic:analisar-compliance': 0.2,
-  'resend:enviar-email': 0.05,
-  'z-api:enviar-whatsapp': 0.1,
+
+  // ── SEM ESTIMATIVA, DE PROPOSITO ──
+  // `resend:enviar-email` e `z-api:enviar-whatsapp` NAO aparecem aqui.
+  //
+  // As duas operacoes rodam sem contexto de workspace (recuperacao de senha,
+  // notificacao de sistema), e sem workspace nao ha como apurar o gasto do
+  // mes - o gate bloqueia de qualquer forma. Manter uma estimativa daria a
+  // falsa impressao de que basta ligar as duas chaves para libera-las.
+  //
+  // Elas so poderao ser autorizadas quando existir uma politica explicita de
+  // custo de PLATAFORMA (orcamento do sistema, nao de um negocio). Ate la,
+  // ficam deliberadamente bloqueadas e registradas na Automation Queue.
 }
 
 /**
@@ -222,71 +239,20 @@ export function avaliarCusto(consulta: ConsultaDeCusto): DecisaoDeCusto {
   }
 }
 
+
 // ── Ponto de entrada único das integrações pagas ────────────────────────
 
 import { registrarAuditoria } from './audit-log'
 import { escolherFallback, type Fallback } from './cost-fallback'
 
-export interface ResultadoGuarda {
-  permitido: boolean
-  decisao: DecisaoDeCusto
-  /** Alternativa gratuita escolhida quando a chamada foi bloqueada. */
-  fallback: Fallback | null
-}
-
 /**
- * Chamado ANTES de qualquer requisição que possa gerar cobrança.
- *
- * Quando nega, registra a tentativa em `AuditLog` com timestamp, workspace,
- * provedor, operação, motivo, custo estimado, fallback e decisão final —
- * NUNCA com chave de API, token ou credencial (nada disso sequer chega até
- * aqui: a função não recebe credencial como parâmetro).
- *
- * `gastoAcumulado` entra por parâmetro e é sempre de UM workspace. Não há
- * como somar consumo de negócios diferentes por engano.
+ * Ações de auditoria. Ficam AQUI (e não no módulo de reserva) porque são
+ * constantes puras: `cost-safety-reserva.ts` as importa, e assim o ciclo de
+ * import fica em uma direção só — quem precisa de Postgres depende de quem
+ * só decide, nunca o contrário.
  */
 export const ACAO_AUDIT_BLOQUEIO = 'custo.bloqueado_por_politica'
 export const ACAO_AUDIT_AUTORIZADO = 'custo.autorizado'
-
-/**
- * Gasto REAL do workspace no mês corrente.
- *
- * Fonte: o próprio `AuditLog`. Toda chamada AUTORIZADA passa a gravar
- * `custo.autorizado` com o custo reservado no metadata — sem isso não havia
- * como somar consumo, e o `gastoAcumulado ?? 0` era um teto de mentira.
- *
- * Nenhuma migration: `AuditLog.metadata` já é Json e há índice em
- * `[workspaceId, createdAt]`.
- *
- * FAIL-CLOSED: se a consulta falhar, devolve `null`. Quem chama trata `null`
- * como "não sei quanto já gastei" e BLOQUEIA — nunca assume zero.
- */
-export async function calcularGastoAcumulado(
-  workspaceId: string,
-  agora: Date = new Date()
-): Promise<number | null> {
-  const inicioDoMes = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1))
-  try {
-    const { prisma } = await import('./prisma')
-    const registros = await prisma.auditLog.findMany({
-      where: { workspaceId, action: ACAO_AUDIT_AUTORIZADO, createdAt: { gte: inicioDoMes } },
-      select: { metadata: true },
-    })
-    let total = 0
-    for (const r of registros) {
-      const meta = r.metadata as { custoReservado?: unknown } | null
-      const valor = Number(meta?.custoReservado)
-      // Registro corrompido não pode baratear o mês: some 0 e siga, mas o
-      // total nunca fica MENOR do que o realmente reservado por engano de
-      // leitura — valores ilegíveis são raros e conservadoramente ignorados.
-      if (Number.isFinite(valor) && valor > 0) total += valor
-    }
-    return total
-  } catch (e) {
-    console.error('[cost-safety-gate] não foi possível calcular o gasto acumulado — bloqueando por precaução:', e)
-    return null
-  }
-}
 
 export interface ResultadoGuarda {
   permitido: boolean
@@ -300,31 +266,33 @@ export interface ResultadoGuarda {
  *
  * Quando nega, registra em `AuditLog` com timestamp, workspace, provedor,
  * operação, motivo, custo estimado, fallback e decisão — NUNCA com chave de
- * API ou token (a função sequer os recebe).
+ * API ou token (a função sequer os recebe como parâmetro).
  *
- * Quando autoriza, registra `custo.autorizado` com o custo reservado. É esse
- * registro que alimenta `calcularGastoAcumulado()` na próxima chamada: sem
- * ele, o teto mensal não existiria de verdade.
+ * Quando autoriza, a RESERVA é gravada dentro da mesma transação que leu o
+ * saldo (ver `cost-safety-reserva.ts`). É por isso que duas chamadas
+ * simultâneas não conseguem ultrapassar o teto: a segunda só lê o gasto
+ * depois que a primeira já gravou o dela.
  */
 export async function guardarChamadaPaga(params: {
   provider: string
   operacao: string
   /**
-   * `null` quando quem chama não tem workspace em mãos. Nesse caso NÃO há
-   * como apurar gasto acumulado — e, com serviços pagos habilitados, isso
-   * BLOQUEIA. `AuditLog` tem FK para `Workspace`; inventar id criaria dado
-   * falso, e assumir gasto zero criaria teto de mentira.
+   * `null` quando quem chama não tem workspace em mãos. Com serviços pagos
+   * habilitados isso BLOQUEIA: sem workspace não há como apurar o gasto do
+   * mês, e assumir zero criaria um teto de mentira. `AuditLog` tem FK para
+   * `Workspace` — inventar um id criaria dado falso.
    */
   workspaceId: string | null
-  /** Sobrescreve a tabela central. Use só quando o custo real for conhecido. */
+  /** Sobrescreve a tabela central. Só quando o custo real for conhecido. */
   custoEstimado?: number | null
   env?: FonteDeEnv
+  agora?: Date
 }): Promise<ResultadoGuarda> {
   const politica = lerPoliticaDeCusto(params.env ?? process.env)
   const custoEstimado =
     params.custoEstimado !== undefined ? params.custoEstimado : estimarCusto(params.provider, params.operacao)
 
-  const negarSemApurar = (explicacao: string): DecisaoDeCusto => ({
+  const negar = (explicacao: string): DecisaoDeCusto => ({
     permitido: false,
     decisao: 'BLOCKED_BY_COST_POLICY',
     motivo: 'GASTO_ACUMULADO_INDISPONIVEL',
@@ -332,8 +300,8 @@ export async function guardarChamadaPaga(params: {
     saldoDisponivel: 0,
   })
 
-  // Atalho: com a política desligada não faz sentido consultar o banco — a
-  // resposta já é não, e evita I/O no caminho mais comum (custo zero).
+  // Caminho rápido: com a política desligada a resposta já é não, e não há
+  // por que abrir transação. É o caminho MAIS COMUM — custo zero por padrão.
   if (!politica.pagoHabilitado || politica.orcamentoMensal <= 0) {
     const decisao = avaliarCusto({
       provider: params.provider,
@@ -343,80 +311,84 @@ export async function guardarChamadaPaga(params: {
       gastoAcumulado: 0,
       politica,
     })
-    return registrarEDevolver(params, decisao, custoEstimado)
+    return registrarBloqueio(params, decisao, custoEstimado)
   }
 
-  // Daqui para baixo serviços pagos ESTÃO habilitados: apurar o consumo real
-  // é obrigatório, e não poder apurar significa bloquear.
+  // Daqui para baixo os serviços pagos ESTÃO habilitados.
   if (!params.workspaceId) {
-    return registrarEDevolver(
+    return registrarBloqueio(
       params,
-      negarSemApurar(
+      negar(
         'Serviços pagos habilitados, mas a chamada não informou workspace — sem workspace não há como apurar o gasto do mês, e assumir zero criaria um teto de mentira.'
       ),
       custoEstimado
     )
   }
 
-  const gastoAcumulado = await calcularGastoAcumulado(params.workspaceId)
-  if (gastoAcumulado === null) {
-    return registrarEDevolver(
-      params,
-      negarSemApurar('Não foi possível apurar o gasto acumulado do mês — bloqueado por precaução (fail-closed).'),
-      custoEstimado
-    )
+  const fallback = escolherFallback(params.provider, params.operacao)
+
+  try {
+    const { reservarOrcamento } = await import('./cost-safety-reserva')
+    const r = await reservarOrcamento({
+      provider: params.provider,
+      operacao: params.operacao,
+      workspaceId: params.workspaceId,
+      custoEstimado,
+      politica,
+      agora: params.agora,
+      fallbackTipo: fallback.tipo,
+      fallbackAlternativa: fallback.alternativa,
+      pendenciaDeAutomacao: fallback.pendenciaDeAutomacao,
+    })
+    return { permitido: r.permitido, decisao: r.decisao, fallback: r.permitido ? null : fallback }
+  } catch (e) {
+    // Cobre `GastoAcumuladoIndisponivel` (registro de reserva ilegível) e
+    // qualquer falha da transação. Não saber quanto já se gastou BLOQUEIA.
+    const detalhe = e instanceof Error ? e.message : String(e)
+    console.error('[cost-safety-gate] reserva atômica falhou — bloqueando por precaução:', detalhe)
+    return registrarBloqueio(params, negar('Não foi possível apurar/reservar o orçamento do mês com segurança: ' + detalhe), custoEstimado)
   }
-
-  const decisao = avaliarCusto({
-    provider: params.provider,
-    operacao: params.operacao,
-    workspaceId: params.workspaceId,
-    custoEstimado,
-    gastoAcumulado,
-    politica,
-  })
-
-  return registrarEDevolver(params, decisao, custoEstimado)
 }
 
-async function registrarEDevolver(
+/**
+ * Registra um BLOQUEIO fora de transação. Usado no caminho rápido (política
+ * desligada) e quando a reserva atômica não pôde sequer ser tentada.
+ * Nunca registra AUTORIZAÇÃO: autorizar só acontece dentro da transação.
+ */
+async function registrarBloqueio(
   params: { provider: string; operacao: string; workspaceId: string | null },
   decisao: DecisaoDeCusto,
   custoEstimado: number | null
 ): Promise<ResultadoGuarda> {
-  const fallback = decisao.permitido ? null : escolherFallback(params.provider, params.operacao)
+  const fallback = escolherFallback(params.provider, params.operacao)
 
-  const metadata: Record<string, unknown> = {
-    provider: params.provider,
-    operacao: params.operacao,
-    motivo: decisao.motivo,
-    explicacao: decisao.explicacao,
-    custoEstimado,
-    saldoDisponivel: decisao.saldoDisponivel,
-    decisao: decisao.decisao,
-  }
-  if (decisao.permitido) {
-    // É ESTE campo que `calcularGastoAcumulado()` soma no mês.
-    metadata.custoReservado = custoEstimado
-  } else if (fallback) {
-    metadata.fallbackTipo = fallback.tipo
-    metadata.fallbackAlternativa = fallback.alternativa
-    metadata.pendenciaDeAutomacao = fallback.pendenciaDeAutomacao
-  }
-
-  if (params.workspaceId) {
-    await registrarAuditoria({
-      workspaceId: params.workspaceId,
-      action: decisao.permitido ? ACAO_AUDIT_AUTORIZADO : ACAO_AUDIT_BLOQUEIO,
-      entityType: 'CostSafetyGate',
-      entityId: `${params.provider}:${params.operacao}`,
-      metadata,
-    })
-  } else {
+  if (!params.workspaceId) {
+    // Sem workspace não dá para gravar em `AuditLog` (FK). Fica no log do
+    // processo, que é onde a operação consegue ver.
     console.warn(
       `[cost-safety-gate] ${decisao.decisao} provider=${params.provider} operacao=${params.operacao} motivo=${decisao.motivo} — ${decisao.explicacao}`
     )
+    return { permitido: false, decisao, fallback }
   }
 
-  return { permitido: decisao.permitido, decisao, fallback }
+  await registrarAuditoria({
+    workspaceId: params.workspaceId,
+    action: ACAO_AUDIT_BLOQUEIO,
+    entityType: 'CostSafetyGate',
+    entityId: `${params.provider}:${params.operacao}`,
+    metadata: {
+      provider: params.provider,
+      operacao: params.operacao,
+      motivo: decisao.motivo,
+      explicacao: decisao.explicacao,
+      custoEstimado,
+      saldoDisponivel: decisao.saldoDisponivel,
+      decisao: decisao.decisao,
+      fallbackTipo: fallback.tipo,
+      fallbackAlternativa: fallback.alternativa,
+      pendenciaDeAutomacao: fallback.pendenciaDeAutomacao,
+    },
+  })
+
+  return { permitido: false, decisao, fallback }
 }

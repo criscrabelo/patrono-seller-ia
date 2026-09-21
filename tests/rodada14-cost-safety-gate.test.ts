@@ -216,10 +216,19 @@ describe('Fallback gratuito', () => {
   })
 
   test('Automation Queue lista as dividas conhecidas', () => {
-    const pendencias = listarPendenciasDeAutomacao()
-    assert.equal(pendencias.length, 3)
-    const chaves = pendencias.map((p) => p.chave).sort()
-    assert.deepEqual(chaves, ['anthropic:gerar-narracao-livre', 'resend:enviar-email', 'z-api:enviar-whatsapp'])
+    // Lista FECHADA de proposito: toda operacao paga sem alternativa gratuita
+    // tem de aparecer aqui. Quando uma nova entra, este teste falha e obriga a
+    // decisao consciente - e o que impede uma divida de automacao nascer em
+    // silencio. Atualizada na revisao final do P0.1, que fechou os caminhos
+    // pagos que faltavam no fal.ai e separou as operacoes da Anthropic.
+    const chaves = listarPendenciasDeAutomacao().map((p) => p.chave).sort()
+    assert.deepEqual(chaves, [
+      'anthropic:analisar-compliance',
+      'anthropic:gerar-narracao-livre',
+      'fal.ai:adicionar-legenda',
+      'resend:enviar-email',
+      'z-api:enviar-whatsapp',
+    ])
   })
 })
 

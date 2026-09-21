@@ -43,12 +43,40 @@ const ALTERNATIVAS: Record<string, Fallback> = {
       'Vídeo 9:16 com narração renderizado localmente por FFmpeg, custo R$ 0,00 — caminho já validado nesta branch com voz real.',
     pendenciaDeAutomacao: false,
   },
+  'fal.ai:compor-video': {
+    tipo: 'LOCAL_GRATUITO',
+    alternativa: 'concat-video.concatVideos',
+    explicacao:
+      'Concatenação dos clipes feita localmente com ffmpeg-static (concat demuxer, -c:v copy), custo R$ 0,00. A capacidade existe de fato em lib/concat-video.ts e é executada automaticamente pela rota de status de vídeo.',
+    pendenciaDeAutomacao: false,
+  },
+  'fal.ai:adicionar-legenda': {
+    tipo: 'SEM_ALTERNATIVA',
+    alternativa: null,
+    explicacao:
+      'Nenhuma função local queima legenda em vídeo JÁ EXISTENTE — renderer-ffmpeg só monta vídeo a partir de imagem. O SRT continua sendo gerado localmente e sem custo (falai.montarSrt), mas a queima entra na fila de automação em vez de virar trabalho manual.',
+    pendenciaDeAutomacao: true,
+  },
   'anthropic:gerar-roteiro': {
     tipo: 'DETERMINISTICO',
     alternativa: 'digital-twin-tiktok-preset.gerarPresetTikTokDigitalTwinV1',
     explicacao:
       'Hook, caption, CTA, hashtags e disclosures saem de função pura sobre os dados do produto, sem IA paga.',
     pendenciaDeAutomacao: false,
+  },
+  'anthropic:gerar-video-seller': {
+    tipo: 'DETERMINISTICO',
+    alternativa: 'conteudo-gratuito.gerarConteudoGratuito',
+    explicacao:
+      'Pacote de conteúdo (roteiro, legenda, hashtags, CTA, texto de tela) montado por função pura sobre os dados do produto, sem IA paga.',
+    pendenciaDeAutomacao: false,
+  },
+  'anthropic:analisar-compliance': {
+    tipo: 'SEM_ALTERNATIVA',
+    alternativa: null,
+    explicacao:
+      'Análise de compliance não tem equivalente determinístico confiável no projeto. Inventar um daria falsa segurança jurídica, o que é pior que não ter — por isso fica pendente na fila de automação.',
+    pendenciaDeAutomacao: true,
   },
   'anthropic:gerar-narracao-livre': {
     tipo: 'SEM_ALTERNATIVA',
@@ -57,6 +85,10 @@ const ALTERNATIVAS: Record<string, Fallback> = {
       'Narração livre não tem equivalente gratuito automático no projeto. Hoje dependeria de texto escrito à mão — por isso entra na fila de automação, não na rotina da proprietária.',
     pendenciaDeAutomacao: true,
   },
+  // Resend e Z-API ficam DELIBERADAMENTE sem estimativa em
+  // `CUSTO_ESTIMADO_BRL`: sem estimativa, `avaliarCusto` bloqueia mesmo com
+  // as duas chaves ligadas. É o correto enquanto os chamadores não tiverem
+  // workspace real — sugerir que podem ser liberados seria enganoso.
   'resend:enviar-email': {
     tipo: 'SEM_ALTERNATIVA',
     alternativa: null,

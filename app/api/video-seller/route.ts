@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
     entrada.estilo = estiloMap[comando] ?? entrada.estilo
   }
 
-  const output = await gerarVideoSeller(entrada)
+  // O workspace da sessão é o que o gate usa para apurar o orçamento do mês.
+  const output = await gerarVideoSeller(entrada, session.user.workspaceId)
   return NextResponse.json(output, { status: 201 })
 }

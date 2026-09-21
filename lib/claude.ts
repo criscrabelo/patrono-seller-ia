@@ -28,14 +28,33 @@ export class BloqueadoPorPoliticaDeCusto extends Error {
   }
 }
 
-async function exigirPermissaoDeCusto(operacao: string, workspaceId: string | null = null): Promise<void> {
+/**
+ * Gate de custo de TODAS as chamadas pagas deste arquivo.
+ *
+ * Correções da revisão final do P0.1:
+ *
+ * 1. NÃO passa mais `custoEstimado: null`. Passar `null` explicitamente
+ *    anulava a tabela central `CUSTO_ESTIMADO_BRL`: sem estimativa,
+ *    `avaliarCusto` bloqueia SEMPRE — nem com `PAID_AI_ENABLED=true` e
+ *    orçamento positivo a operação era liberada. Omitindo o campo, o gate
+ *    usa o teto conservador da tabela, que é o comportamento pretendido.
+ *    O custo por token só se conhece depois da resposta; o teto da tabela é
+ *    deliberadamente maior que a média para errar para o lado de gastar
+ *    menos.
+ *
+ * 2. `workspaceId` é OBRIGATÓRIO na assinatura (pode ser `null`, mas quem
+ *    chama tem de decidir conscientemente). Com serviços pagos habilitados,
+ *    `null` bloqueia — sem workspace não há como apurar o gasto do mês.
+ *
+ * 3. Cada função usa a SUA operação. Antes as três usavam 'gerar-roteiro',
+ *    o que misturava custos e fallbacks diferentes no mesmo registro de
+ *    auditoria e tornava o consumo por operação impossível de ler.
+ */
+async function exigirPermissaoDeCusto(operacao: string, workspaceId: string | null): Promise<void> {
   const guarda = await guardarChamadaPaga({
     provider: 'anthropic',
     operacao,
     workspaceId,
-    // Custo por token depende do tamanho do prompt/resposta — desconhecido
-    // no momento da decisão, e desconhecido nunca é tratado como zero.
-    custoEstimado: null,
   })
   if (!guarda.permitido) {
     throw new BloqueadoPorPoliticaDeCusto(
@@ -72,6 +91,7 @@ export interface ConfiguracaoGeracao {
 export async function gerarConteudo(
   produto: ProdutoParaGeracao,
   config: ConfiguracaoGeracao,
+  workspaceId: string | null = null,
 ): Promise<ConteudoGerado> {
   const afiliado = produto.tipoVenda === 'Afiliado'
   const beneficios = produto.beneficios.filter(Boolean).slice(0, 3).join(' | ') || 'não informado'
@@ -99,7 +119,7 @@ Retorne APENAS este JSON (valores curtos e diretos):
   "alertasCompliance": [{"tipo":"publicidade","mensagem":"...","severidade":"verde","acaoRecomendada":"..."}]
 }`
 
-  await exigirPermissaoDeCusto('gerar-roteiro')
+  await exigirPermissaoDeCusto('gerar-roteiro', workspaceId)
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 900,
@@ -171,7 +191,8 @@ export interface EntradaVideoSeller {
 }
 
 export async function gerarVideoSeller(
-  entrada: EntradaVideoSeller
+  entrada: EntradaVideoSeller,
+  workspaceId: string | null = null
 ): Promise<VideoSellerOutput> {
   const userPrompt = `Crie roteiro e prompt de vídeo comercial para:
 
@@ -223,7 +244,7 @@ Retorne JSON com:
   "tituloSugerido": "string"
 }`
 
-  await exigirPermissaoDeCusto('gerar-roteiro')
+  await exigirPermissaoDeCusto('gerar-video-seller', workspaceId)
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
@@ -251,6 +272,7 @@ export async function analisarCompliance(params: {
   legenda: string
   tipoVenda: string
   origemConteudo: string
+  workspaceId?: string | null
 }): Promise<AlertaCompliance[]> {
   const userPrompt = `Analise este conteúdo para riscos legais e de plataforma no contexto brasileiro:
 
@@ -271,7 +293,7 @@ Retorne JSON:
   ]
 }`
 
-  await exigirPermissaoDeCusto('gerar-roteiro')
+  await exigirPermissaoDeCusto('analisar-compliance', params.workspaceId ?? null)
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 1024,

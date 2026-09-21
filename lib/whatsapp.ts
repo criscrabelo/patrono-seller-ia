@@ -42,12 +42,18 @@ function zapiHeaders(cfg: ZApiConfig): HeadersInit {
  * projeto, o envio fica PENDENTE por política — devolve resultado negativo
  * em vez de lançar, para não derrubar o fluxo que chamou.
  */
-async function envioPermitidoPelaPolitica(operacao: string): Promise<{ permitido: boolean; motivo: string }> {
+async function envioPermitidoPelaPolitica(
+  operacao: string,
+  workspaceId: string | null
+): Promise<{ permitido: boolean; motivo: string }> {
+  // `custoEstimado` NÃO é passado: a operação está deliberadamente ausente de
+  // `CUSTO_ESTIMADO_BRL`, e ausência bloqueia. Publicar uma estimativa aqui
+  // sugeriria que basta ligar as duas chaves para liberar — enganoso enquanto
+  // os chamadores não propagarem workspace real.
   const guarda = await guardarChamadaPaga({
     provider: 'z-api',
     operacao,
-    workspaceId: null,
-    custoEstimado: null,
+    workspaceId,
   })
   if (guarda.permitido) return { permitido: true, motivo: '' }
   const motivo = `Bloqueado por política de custo: ${guarda.decisao.explicacao}`
@@ -88,11 +94,15 @@ export async function verificarConexao(cfg: ZApiConfig): Promise<{ conectado: bo
 }
 
 /** Envia mensagem de texto para um número */
-export async function enviarTexto(cfg: ZApiConfig, params: EnvioTexto): Promise<ResultadoEnvio> {
+export async function enviarTexto(
+  cfg: ZApiConfig,
+  params: EnvioTexto,
+  workspaceId: string | null = null
+): Promise<ResultadoEnvio> {
   const numero = normalizarNumero(params.numero)
   if (!numero) return { numero: params.numero, ok: false, erro: 'Número inválido' }
   try {
-    const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp')
+    const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp', workspaceId)
     if (!permissao.permitido) return { numero: params.numero, ok: false, erro: permissao.motivo }
     const res = await fetch(`${zapiBase(cfg)}/send-text`, {
       method: 'POST',
@@ -110,11 +120,15 @@ export async function enviarTexto(cfg: ZApiConfig, params: EnvioTexto): Promise<
 }
 
 /** Envia imagem com legenda para um número */
-export async function enviarImagem(cfg: ZApiConfig, params: EnvioImagem): Promise<ResultadoEnvio> {
+export async function enviarImagem(
+  cfg: ZApiConfig,
+  params: EnvioImagem,
+  workspaceId: string | null = null
+): Promise<ResultadoEnvio> {
   const numero = normalizarNumero(params.numero)
   if (!numero) return { numero: params.numero, ok: false, erro: 'Número inválido' }
   try {
-    const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp')
+    const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp', workspaceId)
     if (!permissao.permitido) return { numero: params.numero, ok: false, erro: permissao.motivo }
     const res = await fetch(`${zapiBase(cfg)}/send-image`, {
       method: 'POST',
@@ -142,14 +156,15 @@ export async function enviarEmMassa(
   mensagem: string,
   imagemUrl?: string,
   onProgresso?: (atual: number, total: number, resultado: ResultadoEnvio) => void,
-  delayMs = 3000
+  delayMs = 3000,
+  workspaceId: string | null = null
 ): Promise<ResultadoEnvio[]> {
   const resultados: ResultadoEnvio[] = []
   for (let i = 0; i < numeros.length; i++) {
     const numero = numeros[i]
     const resultado = imagemUrl
-      ? await enviarImagem(cfg, { numero, imageUrl: imagemUrl, legenda: mensagem })
-      : await enviarTexto(cfg, { numero, mensagem })
+      ? await enviarImagem(cfg, { numero, imageUrl: imagemUrl, legenda: mensagem }, workspaceId)
+      : await enviarTexto(cfg, { numero, mensagem }, workspaceId)
     resultados.push(resultado)
     onProgresso?.(i + 1, numeros.length, resultado)
     // Delay entre envios para não ser banido pelo WhatsApp

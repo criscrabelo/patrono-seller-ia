@@ -8,7 +8,9 @@ import {
   comporVideos,
   consultarStatusCompose,
   obterResultadoCompose,
+  BloqueadoPorPoliticaDeCusto,
 } from '@/lib/falai'
+import { concatVideos } from '@/lib/concat-video'
 import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -38,8 +40,11 @@ async function baixarUploadParaSupabase(videoUrlFal: string, userId: string): Pr
   if (!videoResp.ok) {
     throw new Error(`Não consegui baixar o vídeo do fal.ai (HTTP ${videoResp.status})`)
   }
-  const buffer = Buffer.from(await videoResp.arrayBuffer())
-  const path = `${userId}/${Date.now()}-fal.mp4`
+  return subirBufferParaSupabase(Buffer.from(await videoResp.arrayBuffer()), userId, 'fal')
+}
+
+async function subirBufferParaSupabase(buffer: Buffer, userId: string, origem: string): Promise<string> {
+  const path = `${userId}/${Date.now()}-${origem}.mp4`
   const { data: up, error: upErr } = await supabaseAdmin.storage
     .from('videos')
     .upload(path, buffer, { contentType: 'video/mp4', upsert: false })
@@ -127,16 +132,38 @@ export async function GET(
         return NextResponse.json({ status: 'pronto', videoUrl: urlFinal })
       }
 
-      // Múltiplos clipes — submete composição
+      // Múltiplos clipes — composição.
       const urlsClipes = estado.clipes.map((c) => c.videoUrl).filter((u): u is string => !!u)
-      const composeJob = await comporVideos(urlsClipes)
-      estado.fase = 'compondo'
-      estado.compose = composeJob
-      await prisma.conteudo.update({
-        where: { id: conteudo.id },
-        data: { videoRequestId: JSON.stringify(estado) },
-      })
-      return NextResponse.json({ status: 'gerando', fase: 'compondo' })
+      try {
+        const composeJob = await comporVideos(urlsClipes, conteudo.workspaceId)
+        estado.fase = 'compondo'
+        estado.compose = composeJob
+        await prisma.conteudo.update({
+          where: { id: conteudo.id },
+          data: { videoRequestId: JSON.stringify(estado) },
+        })
+        return NextResponse.json({ status: 'gerando', fase: 'compondo' })
+      } catch (e) {
+        if (!(e instanceof BloqueadoPorPoliticaDeCusto)) throw e
+        // FALLBACK EXECUTADO, não apenas mapeado: concatenar clipes é uma
+        // capacidade que este repositório TEM de verdade (ffmpeg-static, em
+        // `lib/concat-video.ts`). Com a composição paga bloqueada, o fluxo
+        // termina sozinho por R$ 0,00 — a proprietária recebe o vídeo, não
+        // um erro. Os clipes já foram gerados e pagos; parar aqui seria
+        // desperdiçar o que já custou.
+        const buffer = await concatVideos(urlsClipes)
+        const urlFinal = await subirBufferParaSupabase(buffer, session.user.id, 'local')
+        await prisma.conteudo.update({
+          where: { id: conteudo.id },
+          data: { videoUrl: urlFinal, videoRequestId: null, videoErro: null },
+        })
+        return NextResponse.json({
+          status: 'pronto',
+          videoUrl: urlFinal,
+          composicao: 'ffmpeg-local',
+          aviso: 'Composição paga bloqueada pela política de custo — os clipes foram unidos localmente com FFmpeg, sem custo.',
+        })
+      }
     }
 
     // ─── FASE 2: compondo ────────────────────────────────────────────

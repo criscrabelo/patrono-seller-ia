@@ -109,6 +109,40 @@ export class BloqueadoPorPoliticaDeCusto extends Error {
   }
 }
 
+/**
+ * Gate de custo das SUBMISSOES do fal.ai.
+ *
+ * CLASSIFICACAO DAS CHAMADAS EXTERNAS DESTE ARQUIVO (revisao final do P0.1):
+ *
+ *   SUBMISSAO (POST, gera cobranca) -> passa por aqui, obrigatoriamente:
+ *     submeterGeracaoVideo   -> fal.ai:gerar-video
+ *     comporVideos           -> fal.ai:compor-video
+ *     adicionarLegendaVideo  -> fal.ai:adicionar-legenda
+ *
+ *   POLLING (GET de status) e DOWNLOAD/RESULTADO (GET do artefato) NAO
+ *   passam pelo gate, e isso e deliberado: consultar ou baixar o resultado
+ *   de um trabalho JA contratado nao gera custo novo. Se o gate estivesse em
+ *   `falFetch()`, desligar a politica depois de uma submissao paga
+ *   bloquearia o polling e o job ficaria orfao — teriamos pago e nao buscado
+ *   o resultado. Por isso o gate fica na submissao, nunca no transporte.
+ *     consultarStatusVideo / consultarStatusCompose  -> POLLING
+ *     obterResultadoVideo / obterResultadoCompose /
+ *     obterResultadoLegenda                          -> RESULTADO
+ *
+ * Cada operacao tem chave PROPRIA: precos, fallbacks e a decisao de
+ * autorizar sao diferentes entre gerar, compor e legendar.
+ */
+async function exigirAutorizacaoFal(operacao: string, workspaceId: string | null): Promise<void> {
+  const guarda = await guardarChamadaPaga({ provider: 'fal.ai', operacao, workspaceId })
+  if (guarda.permitido) return
+  throw new BloqueadoPorPoliticaDeCusto(
+    'fal.ai',
+    operacao,
+    guarda.fallback?.alternativa ?? null,
+    `${guarda.decisao.explicacao} Alternativa gratuita: ${guarda.fallback?.alternativa ?? 'nenhuma'}.`
+  )
+}
+
 async function falFetch(url: string, init?: RequestInit) {
   const res = await fetch(url, { ...init, headers: { ...headers(), ...(init?.headers ?? {}) } })
   // Tenta ler como JSON; se falhar, captura o texto para diagnóstico.
@@ -177,27 +211,8 @@ export async function submeterGeracaoVideo(
   motor: MotorVideo = 'kling',
   workspaceId: string | null = null
 ): Promise<SubmeterResultado> {
-  // CUSTO ZERO POR PADRÃO: o gate fica na SUBMISSÃO, que é o que cobra.
-  //
-  // Correção da revisão do P0.1: antes ele estava em `falFetch()`, que também
-  // cobre `consultarStatusVideo()` e `obterResultadoVideo()`. Se a política
-  // fosse desligada DEPOIS de um vídeo já submetido e pago, o polling seria
-  // bloqueado e o job ficaria órfão — teríamos pago e não buscado o
-  // resultado. Consultar status de trabalho já contratado não gera custo
-  // novo e não pode ser barrado.
-  const guarda = await guardarChamadaPaga({
-    provider: 'fal.ai',
-    operacao: 'gerar-video',
-    workspaceId,
-  })
-  if (!guarda.permitido) {
-    throw new BloqueadoPorPoliticaDeCusto(
-      'fal.ai',
-      'gerar-video',
-      guarda.fallback?.alternativa ?? null,
-      `${guarda.decisao.explicacao} Alternativa gratuita: ${guarda.fallback?.alternativa ?? 'nenhuma'}.`
-    )
-  }
+  // CUSTO ZERO POR PADRAO: gate na SUBMISSAO, que e o que cobra.
+  await exigirAutorizacaoFal('gerar-video', workspaceId)
 
   const modelo = MOTORES_VIDEO[motor] ?? MOTORES_VIDEO.kling
   const body = modelo.montarBody(params)
@@ -218,10 +233,14 @@ export async function submeterGeracaoVideo(
 export async function submeterMultiplosClipes(
   params: SubmeterVideoParams,
   quantidade: number,
-  motor: MotorVideo = 'kling'
+  motor: MotorVideo = 'kling',
+  workspaceId: string | null = null
 ): Promise<SubmeterResultado[]> {
+  // O workspace PRECISA chegar ate cada submissao: sao N cobrancas, e cada
+  // uma tem de consumir o orcamento do negocio certo. Sem propagar, N-1
+  // clipes seriam avaliados sem workspace.
   return Promise.all(
-    Array.from({ length: quantidade }, () => submeterGeracaoVideo(params, motor))
+    Array.from({ length: quantidade }, () => submeterGeracaoVideo(params, motor, workspaceId))
   )
 }
 
@@ -247,8 +266,14 @@ export async function obterResultadoVideo(resultUrl: string): Promise<VideoPront
 const COMPOSE_PATH = 'fal-ai/ffmpeg-api/compose'
 
 export async function comporVideos(
-  videosUrls: string[]
+  videosUrls: string[],
+  workspaceId: string | null = null
 ): Promise<SubmeterResultado> {
+  // SUBMISSAO PAGA. Ficava sem gate ate a revisao final do P0.1 — era um
+  // caminho de gasto aberto. O fallback gratuito existe de verdade:
+  // `concat-video.concatVideos`, que concatena localmente com ffmpeg-static.
+  await exigirAutorizacaoFal('compor-video', workspaceId)
+
   // Monta uma track por vídeo, cada um começando logo após o anterior.
   // Assumimos que cada clipe Kling tem ~15s; pra ser preciso poderíamos
   // ler a duração real, mas o ffmpeg corta no mínimo entre duração
@@ -307,8 +332,16 @@ export interface AdicionarLegendaParams {
 }
 
 export async function adicionarLegendaVideo(
-  params: AdicionarLegendaParams
+  params: AdicionarLegendaParams,
+  workspaceId: string | null = null
 ): Promise<SubmeterResultado> {
+  // SUBMISSAO PAGA. Tambem ficava sem gate ate a revisao final do P0.1.
+  // NAO ha equivalente gratuito hoje: nenhuma funcao local queima legenda
+  // em video JA EXISTENTE (`renderer-ffmpeg` so monta video a partir de
+  // imagem). Bloqueado, isto vira PENDENCIA DE AUTOMACAO — nao inventamos
+  // uma capacidade que o codigo nao tem.
+  await exigirAutorizacaoFal('adicionar-legenda', workspaceId)
+
   const body = {
     video_url: params.videoUrl,
     preset: params.preset ?? 'glass',
