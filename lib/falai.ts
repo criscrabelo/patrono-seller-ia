@@ -109,24 +109,7 @@ export class BloqueadoPorPoliticaDeCusto extends Error {
   }
 }
 
-async function falFetch(url: string, init?: RequestInit, workspaceId: string | null = null) {
-  const guarda = await guardarChamadaPaga({
-    provider: 'fal.ai',
-    operacao: 'gerar-video',
-    workspaceId,
-    // Custo por vídeo não é publicado de forma estável pelo provedor —
-    // desconhecido é tratado como "não cabe no orçamento", nunca como zero.
-    custoEstimado: null,
-  })
-  if (!guarda.permitido) {
-    throw new BloqueadoPorPoliticaDeCusto(
-      'fal.ai',
-      'gerar-video',
-      guarda.fallback?.alternativa ?? null,
-      `${guarda.decisao.explicacao} Alternativa gratuita: ${guarda.fallback?.alternativa ?? 'nenhuma'}.`
-    )
-  }
-
+async function falFetch(url: string, init?: RequestInit) {
   const res = await fetch(url, { ...init, headers: { ...headers(), ...(init?.headers ?? {}) } })
   // Tenta ler como JSON; se falhar, captura o texto para diagnóstico.
   const textBody = await res.text()
@@ -191,8 +174,31 @@ async function falFetch(url: string, init?: RequestInit, workspaceId: string | n
  * modelo, então é mais seguro usar as URLs que ele devolve). */
 export async function submeterGeracaoVideo(
   params: SubmeterVideoParams,
-  motor: MotorVideo = 'kling'
+  motor: MotorVideo = 'kling',
+  workspaceId: string | null = null
 ): Promise<SubmeterResultado> {
+  // CUSTO ZERO POR PADRÃO: o gate fica na SUBMISSÃO, que é o que cobra.
+  //
+  // Correção da revisão do P0.1: antes ele estava em `falFetch()`, que também
+  // cobre `consultarStatusVideo()` e `obterResultadoVideo()`. Se a política
+  // fosse desligada DEPOIS de um vídeo já submetido e pago, o polling seria
+  // bloqueado e o job ficaria órfão — teríamos pago e não buscado o
+  // resultado. Consultar status de trabalho já contratado não gera custo
+  // novo e não pode ser barrado.
+  const guarda = await guardarChamadaPaga({
+    provider: 'fal.ai',
+    operacao: 'gerar-video',
+    workspaceId,
+  })
+  if (!guarda.permitido) {
+    throw new BloqueadoPorPoliticaDeCusto(
+      'fal.ai',
+      'gerar-video',
+      guarda.fallback?.alternativa ?? null,
+      `${guarda.decisao.explicacao} Alternativa gratuita: ${guarda.fallback?.alternativa ?? 'nenhuma'}.`
+    )
+  }
+
   const modelo = MOTORES_VIDEO[motor] ?? MOTORES_VIDEO.kling
   const body = modelo.montarBody(params)
   const data = await falFetch(`${FAL_BASE}/${modelo.path}`, {

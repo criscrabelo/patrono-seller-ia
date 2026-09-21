@@ -55,6 +55,43 @@ export function ehProvedorPagoConhecido(provider: string): provider is ProvedorP
   return Object.prototype.hasOwnProperty.call(PROVEDORES_PAGOS, provider)
 }
 
+/**
+ * TABELA DE CUSTO ESTIMADO — conservadora e central (revisão do P0.1).
+ *
+ * Sem estimativa, `custoEstimado: null` bloqueava SEMPRE: nem com as duas
+ * chaves ligadas a operação passaria. Fail-closed é correto, mas um gate que
+ * nunca libera não é política, é interruptor quebrado.
+ *
+ * Os valores abaixo NÃO são preço oficial de tabela de nenhum fornecedor —
+ * são TETOS conservadores, deliberadamente altos, usados só para reservar
+ * saldo antes da chamada. Operação sem entrada aqui continua bloqueada.
+ *
+ * Atualizar preço se faz só neste lugar. Se um fornecedor publicar preço
+ * oficial, substitua o teto e registre a fonte no comentário da linha.
+ */
+export const CUSTO_ESTIMADO_BRL: Record<string, number> = {
+  // Kling v3 pro image-to-video. Teto alto de propósito: vídeo por IA é a
+  // operação mais cara do projeto e a mais fácil de disparar em laço.
+  'fal.ai:gerar-video': 5.0,
+  // Geração de roteiro/legenda por token. Teto por chamada, não por token:
+  // o tamanho exato só se conhece depois da resposta — e depois é tarde.
+  'anthropic:gerar-roteiro': 0.5,
+  'anthropic:gerar-video-seller': 0.5,
+  'anthropic:analisar-compliance': 0.2,
+  'resend:enviar-email': 0.05,
+  'z-api:enviar-whatsapp': 0.1,
+}
+
+/**
+ * `null` quando não há estimativa confiável — e `null` BLOQUEIA. Nunca
+ * devolve 0: inventar custo zero para operação desconhecida é exatamente
+ * como não ter teto.
+ */
+export function estimarCusto(provider: string, operacao: string): number | null {
+  const valor = CUSTO_ESTIMADO_BRL[`${provider}:${operacao}`]
+  return typeof valor === 'number' && Number.isFinite(valor) && valor > 0 ? valor : null
+}
+
 export interface PoliticaDeCusto {
   /** `PAID_AI_ENABLED === 'true'`. Qualquer outro valor é `false`. */
   pagoHabilitado: boolean
@@ -93,6 +130,7 @@ export type MotivoBloqueio =
   | 'ORCAMENTO_ZERO'
   | 'ORCAMENTO_ESGOTADO'
   | 'CUSTO_EXCEDE_SALDO'
+  | 'GASTO_ACUMULADO_INDISPONIVEL'
 
 export interface ConsultaDeCusto {
   provider: string
@@ -207,59 +245,178 @@ export interface ResultadoGuarda {
  * `gastoAcumulado` entra por parâmetro e é sempre de UM workspace. Não há
  * como somar consumo de negócios diferentes por engano.
  */
+export const ACAO_AUDIT_BLOQUEIO = 'custo.bloqueado_por_politica'
+export const ACAO_AUDIT_AUTORIZADO = 'custo.autorizado'
+
+/**
+ * Gasto REAL do workspace no mês corrente.
+ *
+ * Fonte: o próprio `AuditLog`. Toda chamada AUTORIZADA passa a gravar
+ * `custo.autorizado` com o custo reservado no metadata — sem isso não havia
+ * como somar consumo, e o `gastoAcumulado ?? 0` era um teto de mentira.
+ *
+ * Nenhuma migration: `AuditLog.metadata` já é Json e há índice em
+ * `[workspaceId, createdAt]`.
+ *
+ * FAIL-CLOSED: se a consulta falhar, devolve `null`. Quem chama trata `null`
+ * como "não sei quanto já gastei" e BLOQUEIA — nunca assume zero.
+ */
+export async function calcularGastoAcumulado(
+  workspaceId: string,
+  agora: Date = new Date()
+): Promise<number | null> {
+  const inicioDoMes = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1))
+  try {
+    const { prisma } = await import('./prisma')
+    const registros = await prisma.auditLog.findMany({
+      where: { workspaceId, action: ACAO_AUDIT_AUTORIZADO, createdAt: { gte: inicioDoMes } },
+      select: { metadata: true },
+    })
+    let total = 0
+    for (const r of registros) {
+      const meta = r.metadata as { custoReservado?: unknown } | null
+      const valor = Number(meta?.custoReservado)
+      // Registro corrompido não pode baratear o mês: some 0 e siga, mas o
+      // total nunca fica MENOR do que o realmente reservado por engano de
+      // leitura — valores ilegíveis são raros e conservadoramente ignorados.
+      if (Number.isFinite(valor) && valor > 0) total += valor
+    }
+    return total
+  } catch (e) {
+    console.error('[cost-safety-gate] não foi possível calcular o gasto acumulado — bloqueando por precaução:', e)
+    return null
+  }
+}
+
+export interface ResultadoGuarda {
+  permitido: boolean
+  decisao: DecisaoDeCusto
+  /** Alternativa gratuita escolhida quando a chamada foi bloqueada. */
+  fallback: Fallback | null
+}
+
+/**
+ * Chamado ANTES de qualquer requisição que possa gerar cobrança.
+ *
+ * Quando nega, registra em `AuditLog` com timestamp, workspace, provedor,
+ * operação, motivo, custo estimado, fallback e decisão — NUNCA com chave de
+ * API ou token (a função sequer os recebe).
+ *
+ * Quando autoriza, registra `custo.autorizado` com o custo reservado. É esse
+ * registro que alimenta `calcularGastoAcumulado()` na próxima chamada: sem
+ * ele, o teto mensal não existiria de verdade.
+ */
 export async function guardarChamadaPaga(params: {
   provider: string
   operacao: string
   /**
-   * `null` quando quem chama não tem workspace em mãos. Nesse caso a
-   * auditoria vai para o log estruturado em vez do banco — `AuditLog` tem
-   * chave estrangeira para `Workspace`, e inventar um id só para registrar
-   * criaria dado falso.
+   * `null` quando quem chama não tem workspace em mãos. Nesse caso NÃO há
+   * como apurar gasto acumulado — e, com serviços pagos habilitados, isso
+   * BLOQUEIA. `AuditLog` tem FK para `Workspace`; inventar id criaria dado
+   * falso, e assumir gasto zero criaria teto de mentira.
    */
   workspaceId: string | null
-  custoEstimado: number | null
-  gastoAcumulado?: number
+  /** Sobrescreve a tabela central. Use só quando o custo real for conhecido. */
+  custoEstimado?: number | null
   env?: FonteDeEnv
 }): Promise<ResultadoGuarda> {
   const politica = lerPoliticaDeCusto(params.env ?? process.env)
+  const custoEstimado =
+    params.custoEstimado !== undefined ? params.custoEstimado : estimarCusto(params.provider, params.operacao)
+
+  const negarSemApurar = (explicacao: string): DecisaoDeCusto => ({
+    permitido: false,
+    decisao: 'BLOCKED_BY_COST_POLICY',
+    motivo: 'GASTO_ACUMULADO_INDISPONIVEL',
+    explicacao,
+    saldoDisponivel: 0,
+  })
+
+  // Atalho: com a política desligada não faz sentido consultar o banco — a
+  // resposta já é não, e evita I/O no caminho mais comum (custo zero).
+  if (!politica.pagoHabilitado || politica.orcamentoMensal <= 0) {
+    const decisao = avaliarCusto({
+      provider: params.provider,
+      operacao: params.operacao,
+      workspaceId: params.workspaceId ?? 'nao-informado',
+      custoEstimado,
+      gastoAcumulado: 0,
+      politica,
+    })
+    return registrarEDevolver(params, decisao, custoEstimado)
+  }
+
+  // Daqui para baixo serviços pagos ESTÃO habilitados: apurar o consumo real
+  // é obrigatório, e não poder apurar significa bloquear.
+  if (!params.workspaceId) {
+    return registrarEDevolver(
+      params,
+      negarSemApurar(
+        'Serviços pagos habilitados, mas a chamada não informou workspace — sem workspace não há como apurar o gasto do mês, e assumir zero criaria um teto de mentira.'
+      ),
+      custoEstimado
+    )
+  }
+
+  const gastoAcumulado = await calcularGastoAcumulado(params.workspaceId)
+  if (gastoAcumulado === null) {
+    return registrarEDevolver(
+      params,
+      negarSemApurar('Não foi possível apurar o gasto acumulado do mês — bloqueado por precaução (fail-closed).'),
+      custoEstimado
+    )
+  }
+
   const decisao = avaliarCusto({
     provider: params.provider,
     operacao: params.operacao,
-    workspaceId: params.workspaceId ?? 'nao-informado',
-    custoEstimado: params.custoEstimado,
-    gastoAcumulado: params.gastoAcumulado ?? 0,
+    workspaceId: params.workspaceId,
+    custoEstimado,
+    gastoAcumulado,
     politica,
   })
 
-  if (decisao.permitido) return { permitido: true, decisao, fallback: null }
+  return registrarEDevolver(params, decisao, custoEstimado)
+}
 
-  const fallback = escolherFallback(params.provider, params.operacao)
+async function registrarEDevolver(
+  params: { provider: string; operacao: string; workspaceId: string | null },
+  decisao: DecisaoDeCusto,
+  custoEstimado: number | null
+): Promise<ResultadoGuarda> {
+  const fallback = decisao.permitido ? null : escolherFallback(params.provider, params.operacao)
 
-  if (!params.workspaceId) {
-    console.warn(
-      `[cost-safety-gate] BLOCKED_BY_COST_POLICY provider=${params.provider} operacao=${params.operacao} motivo=${decisao.motivo} fallback=${fallback.tipo} — ${decisao.explicacao}`
-    )
-    return { permitido: false, decisao, fallback }
+  const metadata: Record<string, unknown> = {
+    provider: params.provider,
+    operacao: params.operacao,
+    motivo: decisao.motivo,
+    explicacao: decisao.explicacao,
+    custoEstimado,
+    saldoDisponivel: decisao.saldoDisponivel,
+    decisao: decisao.decisao,
+  }
+  if (decisao.permitido) {
+    // É ESTE campo que `calcularGastoAcumulado()` soma no mês.
+    metadata.custoReservado = custoEstimado
+  } else if (fallback) {
+    metadata.fallbackTipo = fallback.tipo
+    metadata.fallbackAlternativa = fallback.alternativa
+    metadata.pendenciaDeAutomacao = fallback.pendenciaDeAutomacao
   }
 
-  await registrarAuditoria({
-    workspaceId: params.workspaceId,
-    action: 'custo.bloqueado_por_politica',
-    entityType: 'CostSafetyGate',
-    entityId: `${params.provider}:${params.operacao}`,
-    metadata: {
-      provider: params.provider,
-      operacao: params.operacao,
-      motivo: decisao.motivo,
-      explicacao: decisao.explicacao,
-      custoEstimado: params.custoEstimado,
-      saldoDisponivel: decisao.saldoDisponivel,
-      decisao: decisao.decisao,
-      fallbackTipo: fallback.tipo,
-      fallbackAlternativa: fallback.alternativa,
-      pendenciaDeAutomacao: fallback.pendenciaDeAutomacao,
-    },
-  })
+  if (params.workspaceId) {
+    await registrarAuditoria({
+      workspaceId: params.workspaceId,
+      action: decisao.permitido ? ACAO_AUDIT_AUTORIZADO : ACAO_AUDIT_BLOQUEIO,
+      entityType: 'CostSafetyGate',
+      entityId: `${params.provider}:${params.operacao}`,
+      metadata,
+    })
+  } else {
+    console.warn(
+      `[cost-safety-gate] ${decisao.decisao} provider=${params.provider} operacao=${params.operacao} motivo=${decisao.motivo} — ${decisao.explicacao}`
+    )
+  }
 
-  return { permitido: false, decisao, fallback }
+  return { permitido: decisao.permitido, decisao, fallback }
 }

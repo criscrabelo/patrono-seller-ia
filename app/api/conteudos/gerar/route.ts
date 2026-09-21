@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { gerarConteudo } from '@/lib/claude'
+import { gerarConteudo, BloqueadoPorPoliticaDeCusto } from '@/lib/claude'
+import { gerarConteudoGratuito } from '@/lib/conteudo-gratuito'
 import { z } from 'zod'
 
 const gerarSchema = z.object({
@@ -52,7 +53,32 @@ export async function POST(req: NextRequest) {
   const configGeracao = { redeSocial, duracao, estilo, objetivo }
 
   try {
-    const gerado = await gerarConteudo(produtoData, configGeracao)
+    // FALLBACK GRATUITO EXECUTADO DE VERDADE (revisão do P0.1).
+    //
+    // Antes, o gate apenas devolvia o NOME da alternativa e a rota quebrava —
+    // o que empurraria a proprietária a escrever conteúdo à mão, exatamente a
+    // rotina manual que a regra proíbe. Agora, bloqueio de custo cai no
+    // preset determinístico e a geração continua funcionando por R$ 0,00.
+    let gerado
+    let geradoSemIaPaga = false
+    let limitacoesDoGratuito: string[] = []
+    try {
+      gerado = await gerarConteudo(produtoData, configGeracao)
+    } catch (e) {
+      if (!(e instanceof BloqueadoPorPoliticaDeCusto)) throw e
+      const gratuito = gerarConteudoGratuito({
+        nome: produto.nome,
+        categoria: produto.categoria,
+        preco: produto.preco,
+        beneficios: produto.beneficios,
+        pontosNegativos: produto.pontosNegativos,
+        atualizadoEm: produto.updatedAt,
+      })
+      gerado = gratuito.conteudo
+      limitacoesDoGratuito = gratuito.limitacoes
+      geradoSemIaPaga = true
+      console.warn(`[conteudos/gerar] IA paga bloqueada por política de custo — usando preset determinístico gratuito.`)
+    }
 
     const dadosBase = {
       userId: session.user.id,
@@ -95,7 +121,15 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { ...conteudo, legendaFacebook: gerado.legendaFacebook, tentativasCompliance: 1 },
+      {
+        ...conteudo,
+        legendaFacebook: gerado.legendaFacebook,
+        tentativasCompliance: 1,
+        // A tela precisa saber que este conteúdo veio do caminho gratuito —
+        // as limitações são reais e escondê-las seria enganoso.
+        geradoSemIaPaga,
+        limitacoesDoGratuito,
+      },
       { status: 201 }
     )
   } catch (e) {

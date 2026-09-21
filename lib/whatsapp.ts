@@ -65,6 +65,19 @@ export function normalizarNumero(raw: string): string | null {
 }
 
 /** Verifica se a instância está conectada */
+/**
+ * FORA DO CostSafetyGate, de propósito (revisão do P0.1).
+ *
+ * `/status` é leitura de diagnóstico: diz se a instância está conectada. A
+ * Z-API cobra por INSTÂNCIA contratada (assinatura), não por consulta de
+ * status — esta chamada não gera custo incremental nem consome cota de
+ * mensagens.
+ *
+ * Bloqueá-la seria pior do que inútil: a tela deixaria de mostrar "WhatsApp
+ * desconectado" mesmo para quem tem plano ativo, escondendo um problema real
+ * sem economizar nada. Os ENVIOS (`send-text`, `send-image`), que de fato
+ * consomem, continuam atrás do gate.
+ */
 export async function verificarConexao(cfg: ZApiConfig): Promise<{ conectado: boolean; numero?: string }> {
   const res = await fetch(`${zapiBase(cfg)}/status`, { headers: zapiHeaders(cfg) })
   if (!res.ok) return { conectado: false }

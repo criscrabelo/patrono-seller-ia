@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { submeterGeracaoVideo, MOTORES_VIDEO, type MotorVideo } from '@/lib/falai'
+import { submeterGeracaoVideo, MOTORES_VIDEO, BloqueadoPorPoliticaDeCusto, type MotorVideo } from '@/lib/falai'
+import { RendererFFmpeg } from '@/lib/renderer-ffmpeg'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -73,15 +74,49 @@ export async function POST(
   try {
     // Submete todos os clipes em paralelo, cada um usando uma imagem diferente
     // (cicla pelas imagens disponíveis se houver menos imagens que clipes).
-    const submissoes = await Promise.all(
-      Array.from({ length: numClipes }, (_, i) =>
-        submeterGeracaoVideo({
-          imageUrl: imagens[i % imagens.length],
-          prompt,
-          duracaoSegundos: duracaoClipe,
-        }, motor)
+    let submissoes
+    try {
+      submissoes = await Promise.all(
+        Array.from({ length: numClipes }, (_, i) =>
+          submeterGeracaoVideo({
+            imageUrl: imagens[i % imagens.length],
+            prompt,
+            duracaoSegundos: duracaoClipe,
+          }, motor, session.user.workspaceId)
+        )
       )
-    )
+    } catch (e) {
+      if (!(e instanceof BloqueadoPorPoliticaDeCusto)) throw e
+
+      // FALLBACK GRATUITO EXECUTADO DE VERDADE (revisão do P0.1): IA de vídeo
+      // bloqueada por política de custo cai no FFmpeg local, que produz um
+      // vídeo 9:16 real a partir da mesma imagem autorizada, por R$ 0,00.
+      // Não é o mesmo resultado — não há movimento gerado por IA —, e por
+      // isso a resposta diz explicitamente qual caminho foi usado.
+      console.warn('[gerar-video] IA de vídeo bloqueada por política de custo — renderizando localmente com FFmpeg.')
+      const renderer = new RendererFFmpeg()
+      const local = await renderer.renderTikTokVideo({
+        imagemUrl: imagens[0],
+        hook: conteudo.textoTela ?? conteudo.produto.nome,
+        legendaVisual: conteudo.legendaTiktok ?? '',
+        cta: conteudo.chamadaAcao ?? '',
+        duracaoSegundos: Math.min(duracaoSolicitada, 15),
+      })
+
+      await prisma.conteudo.update({
+        where: { id: conteudo.id },
+        data: { videoUrl: local.url },
+      })
+
+      return NextResponse.json({
+        geradoSemIaPaga: true,
+        motor: 'ffmpeg-local',
+        videoUrl: local.url,
+        duracaoSegundos: local.durationSeconds,
+        aviso:
+          'IA de vídeo bloqueada por política de custo zero. Vídeo renderizado localmente com FFmpeg (9:16, sem movimento gerado por IA), sem nenhum custo.',
+      })
+    }
 
     const estado = {
       fase: 'gerando_clipes' as const,
