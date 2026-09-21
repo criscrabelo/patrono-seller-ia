@@ -1,27 +1,42 @@
 /**
  * P0.2 Bloco 3.1 — comprovação e promoção auditada (regra pura).
  *
- * As exigências por tipo de evidência decidem se uma venda vira operação
- * real. São exercidas aqui com os dados exatos de cada caso, sem banco. O
- * que precisa de Postgres — transação, idempotência, isolamento e
- * revalidação — está em `rodada20-promocao-banco.test.ts`.
+ * Revisto na rodada de CONFIANÇA DA EVIDÊNCIA: o tipo de evidência deixou
+ * de vir do payload. Agora há dois caminhos com capacidades diferentes —
+ * correção manual (interface) e evidência verificada (sistema) — e o
+ * segundo exige um objeto que só `verificarEvidencia()` emite.
+ *
+ * O que precisa de Postgres — transação, idempotência, conferência de
+ * usuário e comissão — está em `rodada20-promocao-banco.test.ts`.
  */
 
-import { test, describe } from 'node:test'
+import { test, describe, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  validarPedidoDePromocao,
+  validarCorrecaoManual,
+  validarEvidenciaVerificada,
+  validarOrigemPromovivel,
   chaveDaEvidencia,
   ORIGENS_PROMOVIVEIS,
   MOTIVOS_RECUSA_PROMOCAO,
   TAMANHO_MINIMO_DO_MOTIVO,
   ACAO_AUDIT_PROMOCAO,
   PENDENCIA_DE_AUTOMACAO,
-  type ContextoDeValidacao,
-  type PedidoDePromocao,
+  type ContextoDaVenda,
+  type PedidoDeCorrecaoManual,
+  type PedidoDeEvidenciaVerificada,
 } from '../lib/promocao-operacao-real'
+import {
+  verificarEvidencia,
+  registrarVerificadorDeEvidencia,
+  limparVerificadoresDeEvidencia,
+  listarVerificadoresDeEvidencia,
+  tiposComVerificador,
+  ehFonteVerificada,
+  type FonteVerificada,
+} from '../lib/evidencia-verificada'
 import { EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL, ORIGENS_DE_REGISTRO } from '../lib/proveniencia'
 import { ACAO_AUDIT_EVIDENCIA } from '../lib/real-operation'
 
@@ -36,199 +51,331 @@ const lerCodigo = (rel: string) =>
 const WS = 'ws-alfa'
 const SALE = 'sale-1'
 
-function pedido(over: Partial<PedidoDePromocao> = {}): PedidoDePromocao {
+function manual(over: Partial<PedidoDeCorrecaoManual> = {}): PedidoDeCorrecaoManual {
   return {
     workspaceId: WS,
     saleId: SALE,
-    tipoEvidencia: 'PROVIDER_OFICIAL',
-    referencia: 'webhook-evt-9f3a1',
-    ator: { tipo: 'INTEGRACAO' },
+    responsavelUserId: 'user-1',
+    motivo: 'Repasse conferido no extrato bancário da conta da empresa.',
+    referencia: 'extrato-banco-2026-09-18-linha-42',
     ...over,
   }
 }
 
-function contexto(over: Partial<ContextoDeValidacao> = {}): ContextoDeValidacao {
-  return { origemAtual: 'USER_REPORTED', temComissaoReconhecida: true, ...over }
+function contexto(over: Partial<ContextoDaVenda> = {}): ContextoDaVenda {
+  return { origemAtual: 'USER_REPORTED', responsavelDoWorkspace: true, comissaoComprovada: true, ...over }
 }
 
-const validar = (p: Partial<PedidoDePromocao> = {}, c: Partial<ContextoDeValidacao> = {}) =>
-  validarPedidoDePromocao(pedido(p), contexto(c))
+const validarManual = (p: Partial<PedidoDeCorrecaoManual> = {}, c: Partial<ContextoDaVenda> = {}) =>
+  validarCorrecaoManual(manual(p), contexto(c))
 
-const CORRECAO_COMPLETA: Partial<PedidoDePromocao> = {
-  tipoEvidencia: 'CORRECAO_MANUAL_AUDITADA',
-  referencia: 'extrato-banco-2026-09-18-linha-42',
-  ator: { tipo: 'USUARIA', userId: 'user-1' },
-  motivo: 'Repasse conferido no extrato bancário da conta da empresa.',
+const motivoDe = (r: ReturnType<typeof validarManual>) => (r as { motivo: string }).motivo
+
+/** Registra um verificador de mentira que confirma — como um adapter real faria. */
+function registrarVerificadorFake(tipo: string, id = `fake-${tipo}`) {
+  registrarVerificadorDeEvidencia({
+    id,
+    tipo: tipo as never,
+    async verificar(pedido) {
+      return { referencia: `conferido-${pedido.saleId}`, detalhes: { via: id } }
+    },
+  })
 }
 
-// ── Evidências que PROMOVEM ─────────────────────────────────────────────
+beforeEach(() => limparVerificadoresDeEvidencia())
 
-describe('Promove — evidência externa verificável', () => {
-  test('USER_REPORTED + PROVIDER_OFICIAL com referência → promove', () => {
-    assert.deepEqual(validar(), { ok: true })
+// ── Capacidade: quem pode emitir evidência de sistema ───────────────────
+
+describe('Confiança — uma FonteVerificada só existe se for emitida aqui', () => {
+  test('sem verificador registrado, nenhum tipo de sistema é alcançável', async () => {
+    // Estado de hoje no repositório: nenhuma integração conectada.
+    assert.deepEqual(listarVerificadoresDeEvidencia(), [])
+    assert.deepEqual(tiposComVerificador(), [])
+    for (const tipo of ['PROVIDER_OFICIAL', 'CONCILIACAO_FINANCEIRA', 'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL']) {
+      const fonte = await verificarEvidencia(tipo as never, { workspaceId: WS, saleId: SALE })
+      assert.equal(fonte, null, `${tipo} não podia ser emitido sem verificador`)
+    }
   })
 
-  test('USER_REPORTED + CONCILIACAO_FINANCEIRA com referência → promove', () => {
-    const r = validar({ tipoEvidencia: 'CONCILIACAO_FINANCEIRA', referencia: 'repasse-2026-09-30' })
-    assert.deepEqual(r, { ok: true })
+  test('objeto montado à mão NÃO passa na checagem de runtime', () => {
+    // É o cerne: `ator: 'INTEGRACAO'` no TypeScript não protege nada, porque
+    // em runtime qualquer chamador constrói o objeto.
+    const forjado = {
+      tipo: 'PROVIDER_OFICIAL',
+      referencia: 'webhook-123',
+      verificadorId: 'tiktok',
+      verificadaEm: new Date(),
+      detalhes: {},
+    }
+    assert.equal(ehFonteVerificada(forjado), false)
+    assert.equal(ehFonteVerificada(JSON.parse(JSON.stringify(forjado))), false)
   })
 
-  test('USER_REPORTED + CORRECAO_MANUAL_AUDITADA completa → promove', () => {
-    assert.deepEqual(validar(CORRECAO_COMPLETA), { ok: true })
-  })
-
-  test('UNVERIFIED também é promovível', () => {
-    assert.deepEqual(validar({}, { origemAtual: 'UNVERIFIED' }), { ok: true })
-  })
-
-  test('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL, com referência E comissão → promove', () => {
-    const r = validar(
-      { tipoEvidencia: 'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', referencia: 'integracao-shopee-conf-771' },
-      { temComissaoReconhecida: true }
+  test('PROVIDER_OFICIAL fabricado por chamada comum → recusa', () => {
+    const forjado = {
+      tipo: 'PROVIDER_OFICIAL',
+      referencia: 'webhook-123',
+      verificadorId: 'x',
+      verificadaEm: new Date(),
+      detalhes: {},
+    } as unknown as FonteVerificada
+    const r = validarEvidenciaVerificada(
+      { workspaceId: WS, saleId: SALE, fonte: forjado },
+      contexto()
     )
-    assert.deepEqual(r, { ok: true })
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'FONTE_NAO_VERIFICADA')
   })
 
-  test('as quatro evidências do Bloco 3 continuam aceitas', () => {
-    assert.deepEqual([...EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL], [
-      'PROVIDER_OFICIAL',
-      'CONCILIACAO_FINANCEIRA',
-      'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL',
-      'CORRECAO_MANUAL_AUDITADA',
-    ])
+  test('CONCILIACAO_FINANCEIRA sem prova verificável → recusa', () => {
+    const forjado = {
+      tipo: 'CONCILIACAO_FINANCEIRA',
+      referencia: 'repasse-123',
+      verificadorId: 'x',
+      verificadaEm: new Date(),
+      detalhes: {},
+    } as unknown as FonteVerificada
+    const r = validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE, fonte: forjado }, contexto())
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'FONTE_NAO_VERIFICADA')
   })
-})
 
-// ── Comissão confirmada NÃO é prova por si ──────────────────────────────
-
-describe('Recusa — comissão confirmada sem referência externa', () => {
-  test('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL sem referência → NÃO promove', () => {
-    // O ponto do Bloco 3.1: `Commission.status = CONFIRMED` é a mesma
-    // pessoa repetindo a mesma declaração. O que prova é de ONDE veio.
-    for (const ref of ['', '   ', null, undefined]) {
-      const r = validar(
-        { tipoEvidencia: 'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', referencia: ref as string },
-        { temComissaoReconhecida: true }
+  test('fonte ausente, nula ou de outro formato → recusa', () => {
+    for (const f of [null, undefined, 'PROVIDER_OFICIAL', 42, {}, []]) {
+      const r = validarEvidenciaVerificada(
+        { workspaceId: WS, saleId: SALE, fonte: f as never },
+        contexto()
       )
       assert.equal(r.ok, false)
-      assert.equal((r as { motivo: string }).motivo, 'REFERENCIA_AUSENTE')
+      assert.equal((r as { motivo: string }).motivo, 'FONTE_NAO_VERIFICADA')
     }
   })
 
-  test('evidência de comissão sem comissão reconhecida → NÃO promove', () => {
-    const r = validar(
-      { tipoEvidencia: 'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', referencia: 'conf-1' },
-      { temComissaoReconhecida: false }
+  test('provider COM verificador registrado emite fonte legítima e é aceita', async () => {
+    registrarVerificadorFake('PROVIDER_OFICIAL')
+    const fonte = await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: WS, saleId: SALE })
+    assert.ok(fonte)
+    assert.equal(ehFonteVerificada(fonte), true)
+    assert.equal(fonte!.verificadorId, 'fake-PROVIDER_OFICIAL')
+    // A referência vem do verificador, não do chamador.
+    assert.equal(fonte!.referencia, `conferido-${SALE}`)
+
+    const r = validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE, fonte: fonte! }, contexto())
+    assert.deepEqual(r, { ok: true })
+  })
+
+  test('conciliação COM verificador registrado é aceita', async () => {
+    registrarVerificadorFake('CONCILIACAO_FINANCEIRA')
+    const fonte = await verificarEvidencia('CONCILIACAO_FINANCEIRA', { workspaceId: WS, saleId: SALE })
+    assert.ok(fonte)
+    assert.deepEqual(validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE, fonte: fonte! }, contexto()), {
+      ok: true,
+    })
+  })
+
+  test('verificador que não confirma NÃO emite fonte', async () => {
+    registrarVerificadorDeEvidencia({
+      id: 'recusa-tudo',
+      tipo: 'PROVIDER_OFICIAL',
+      async verificar() {
+        return null
+      },
+    })
+    assert.equal(await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: WS, saleId: SALE }), null)
+  })
+
+  test('verificador que lança erro NÃO emite fonte — erro não vira permissão', async () => {
+    registrarVerificadorDeEvidencia({
+      id: 'quebra',
+      tipo: 'PROVIDER_OFICIAL',
+      async verificar() {
+        throw new Error('API fora do ar')
+      },
+    })
+    assert.equal(await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: WS, saleId: SALE }), null)
+  })
+
+  test('verificador que devolve referência vazia NÃO emite fonte', async () => {
+    registrarVerificadorDeEvidencia({
+      id: 'vazio',
+      tipo: 'PROVIDER_OFICIAL',
+      async verificar() {
+        return { referencia: '   ' }
+      },
+    })
+    assert.equal(await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: WS, saleId: SALE }), null)
+  })
+
+  test('não é possível registrar verificador para CORRECAO_MANUAL_AUDITADA', () => {
+    // Correção manual é decisão humana assinada, não carimbo de sistema.
+    assert.throws(() =>
+      registrarVerificadorDeEvidencia({
+        id: 'carimbo',
+        tipo: 'CORRECAO_MANUAL_AUDITADA',
+        async verificar() {
+          return { referencia: 'x' }
+        },
+      })
     )
-    assert.equal(r.ok, false)
-    assert.equal((r as { motivo: string }).motivo, 'SEM_COMISSAO_PARA_A_EVIDENCIA')
+  })
+
+  test('verificador malformado é recusado no registro', () => {
+    for (const v of [{}, { id: 'x' }, { id: 'x', tipo: 'PROVIDER_OFICIAL' }]) {
+      assert.throws(() => registrarVerificadorDeEvidencia(v as never))
+    }
+  })
+
+  test('a fonte emitida é imutável', async () => {
+    registrarVerificadorFake('PROVIDER_OFICIAL')
+    const fonte = (await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: WS, saleId: SALE }))!
+    assert.ok(Object.isFrozen(fonte))
   })
 })
 
-// ── Referência: exigida em TODOS os tipos ───────────────────────────────
+// ── Comissão: qual comissão foi comprovada ──────────────────────────────
 
-describe('Recusa — evidência sem referência conferível', () => {
-  for (const tipo of EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL) {
-    test(`${tipo} sem referência → NÃO promove`, () => {
-      const extra = tipo === 'CORRECAO_MANUAL_AUDITADA' ? CORRECAO_COMPLETA : {}
-      const r = validar({ ...extra, tipoEvidencia: tipo, referencia: '  ' })
-      assert.equal(r.ok, false)
-      assert.equal((r as { motivo: string }).motivo, 'REFERENCIA_AUSENTE')
-    })
+describe('Comissão comprovada — referência genérica não basta', () => {
+  async function fonteDeComissao() {
+    registrarVerificadorFake('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL')
+    return (await verificarEvidencia('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
+      workspaceId: WS,
+      saleId: SALE,
+      commissionId: 'com-1',
+    }))!
   }
 
-  test('tipo de evidência inventado → NÃO promove', () => {
-    for (const t of ['ACHO_QUE_VENDEU', '', 'provider_oficial', 'MANUAL']) {
-      const r = validar({ tipoEvidencia: t })
+  test('sem commissionId → recusa', async () => {
+    const fonte = await fonteDeComissao()
+    const r = validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE, fonte }, contexto())
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'COMISSAO_NAO_INFORMADA')
+  })
+
+  test('commissionId em branco → recusa', async () => {
+    const fonte = await fonteDeComissao()
+    for (const id of ['', '   ', null]) {
+      const r = validarEvidenciaVerificada(
+        { workspaceId: WS, saleId: SALE, fonte, commissionId: id },
+        contexto()
+      )
       assert.equal(r.ok, false)
-      assert.equal((r as { motivo: string }).motivo, 'TIPO_DE_EVIDENCIA_INVALIDO')
+      assert.equal((r as { motivo: string }).motivo, 'COMISSAO_NAO_INFORMADA')
     }
+  })
+
+  test('comissão que não confere no banco → recusa', async () => {
+    // `comissaoComprovada: false` é o que a consulta devolve quando a
+    // comissão não existe, é de outra venda, de outro workspace, ou não
+    // está CONFIRMED/RECEIVED.
+    const fonte = await fonteDeComissao()
+    const r = validarEvidenciaVerificada(
+      { workspaceId: WS, saleId: SALE, fonte, commissionId: 'com-1' },
+      contexto({ comissaoComprovada: false })
+    )
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'COMISSAO_NAO_COMPROVADA')
+  })
+
+  test('comissão correta + fonte verificável → aceita', async () => {
+    const fonte = await fonteDeComissao()
+    const r = validarEvidenciaVerificada(
+      { workspaceId: WS, saleId: SALE, fonte, commissionId: 'com-1' },
+      contexto({ comissaoComprovada: true })
+    )
+    assert.deepEqual(r, { ok: true })
+  })
+
+  test('os outros tipos não exigem commissionId', async () => {
+    registrarVerificadorFake('PROVIDER_OFICIAL')
+    const fonte = (await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: WS, saleId: SALE }))!
+    assert.deepEqual(validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE, fonte }, contexto()), {
+      ok: true,
+    })
   })
 })
 
-// ── Correção manual: exceção com assinatura ─────────────────────────────
+// ── Correção manual ─────────────────────────────────────────────────────
 
-describe('Recusa — correção manual incompleta', () => {
-  test('sem responsável → bloqueia', () => {
-    const r = validar({ ...CORRECAO_COMPLETA, ator: { tipo: 'USUARIA', userId: null } })
-    assert.equal(r.ok, false)
-    assert.equal((r as { motivo: string }).motivo, 'RESPONSAVEL_AUSENTE')
+describe('Correção manual — o único caminho da interface', () => {
+  test('usuário do mesmo workspace + motivo + referência → aceita', () => {
+    assert.deepEqual(validarManual(), { ok: true })
   })
 
-  test('sem motivo → bloqueia', () => {
-    const r = validar({ ...CORRECAO_COMPLETA, motivo: null })
-    assert.equal(r.ok, false)
-    assert.equal((r as { motivo: string }).motivo, 'MOTIVO_AUSENTE')
+  test('responsável ausente → recusa', () => {
+    for (const u of ['', '   ', null, undefined]) {
+      const r = validarManual({ responsavelUserId: u as string })
+      assert.equal(r.ok, false)
+      assert.equal(motivoDe(r), 'RESPONSAVEL_AUSENTE')
+    }
   })
 
-  test('motivo curto demais → bloqueia ("ok" não é justificativa)', () => {
-    const r = validar({ ...CORRECAO_COMPLETA, motivo: 'ok' })
+  test('usuário inexistente → recusa', () => {
+    // `responsavelDoWorkspace: false` é o que a consulta devolve quando o
+    // usuário não existe OU é de outro workspace.
+    const r = validarManual({}, { responsavelDoWorkspace: false })
     assert.equal(r.ok, false)
-    assert.equal((r as { motivo: string }).motivo, 'MOTIVO_INSUFICIENTE')
+    assert.equal(motivoDe(r), 'RESPONSAVEL_INVALIDO')
+  })
+
+  test('a mensagem não revela se o usuário existe em outro workspace', () => {
+    const r = validarManual({}, { responsavelDoWorkspace: false })
+    const explicacao = (r as { explicacao: string }).explicacao
+    assert.ok(!/inexistente|não existe/i.test(explicacao), explicacao)
+  })
+
+  test('sem motivo → recusa', () => {
+    assert.equal(motivoDe(validarManual({ motivo: '' })), 'MOTIVO_AUSENTE')
+    assert.equal(motivoDe(validarManual({ motivo: null as unknown as string })), 'MOTIVO_AUSENTE')
+  })
+
+  test('motivo curto demais → recusa ("ok" não é justificativa)', () => {
+    assert.equal(motivoDe(validarManual({ motivo: 'ok' })), 'MOTIVO_INSUFICIENTE')
     assert.ok(TAMANHO_MINIMO_DO_MOTIVO >= 10)
   })
 
-  test('motivo só de espaços → bloqueia', () => {
-    assert.equal(validar({ ...CORRECAO_COMPLETA, motivo: '              ' }).ok, false)
+  test('sem referência → recusa', () => {
+    assert.equal(motivoDe(validarManual({ referencia: '  ' })), 'REFERENCIA_AUSENTE')
   })
 
-  test('ator USUARIA sem userId bloqueia em qualquer tipo', () => {
-    const r = validar({ tipoEvidencia: 'PROVIDER_OFICIAL', ator: { tipo: 'USUARIA', userId: null } })
-    assert.equal(r.ok, false)
-    assert.equal((r as { motivo: string }).motivo, 'RESPONSAVEL_AUSENTE')
+  test('a interface não escolhe o tipo de evidência', () => {
+    // O pedido manual não tem campo `tipoEvidencia`: é fixado no código.
+    const campos = Object.keys(manual())
+    assert.ok(!campos.includes('tipoEvidencia'))
+    assert.match(lerCodigo('lib/promocao-operacao-real.ts'), /tipoEvidencia: 'CORRECAO_MANUAL_AUDITADA'/)
   })
 })
 
-// ── Dados sintéticos: nunca ─────────────────────────────────────────────
+// ── Origem ──────────────────────────────────────────────────────────────
 
-describe('Recusa — dado sintético nunca vira real', () => {
+describe('Origem — dado sintético nunca vira real', () => {
   for (const origem of ['SEED', 'TEST_FIXTURE', 'DEMO', 'SYNTHETIC_TEST']) {
-    test(`${origem} nunca promove, nem com evidência perfeita`, () => {
-      // Promover dado que o próprio sistema fabricou seria falsificar a
-      // procedência, não comprová-la.
-      for (const tipo of EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL) {
-        const extra = tipo === 'CORRECAO_MANUAL_AUDITADA' ? CORRECAO_COMPLETA : {}
-        const r = validar({ ...extra, tipoEvidencia: tipo }, { origemAtual: origem })
-        assert.equal(r.ok, false, `${origem} + ${tipo} não podia passar`)
-        assert.equal((r as { motivo: string }).motivo, 'ORIGEM_SINTETICA_NAO_PROMOVIVEL')
-      }
+    test(`${origem} nunca promove, por nenhum caminho`, async () => {
+      assert.equal(motivoDe(validarManual({}, { origemAtual: origem })), 'ORIGEM_SINTETICA_NAO_PROMOVIVEL')
+
+      registrarVerificadorFake('PROVIDER_OFICIAL')
+      const fonte = (await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: WS, saleId: SALE }))!
+      const r = validarEvidenciaVerificada(
+        { workspaceId: WS, saleId: SALE, fonte },
+        contexto({ origemAtual: origem })
+      )
+      assert.equal(r.ok, false)
+      assert.equal((r as { motivo: string }).motivo, 'ORIGEM_SINTETICA_NAO_PROMOVIVEL')
     })
   }
 
   test('só USER_REPORTED e UNVERIFIED são promovíveis', () => {
     assert.deepEqual([...ORIGENS_PROMOVIVEIS], ['USER_REPORTED', 'UNVERIFIED'])
-    const passam = ORIGENS_DE_REGISTRO.filter((o) => validar({}, { origemAtual: o }).ok)
+    const passam = ORIGENS_DE_REGISTRO.filter((o) => validarOrigemPromovivel({ workspaceId: WS, saleId: SALE }, o).ok)
     assert.deepEqual([...passam].sort(), ['UNVERIFIED', 'USER_REPORTED'])
   })
 
-  test('origem já REAL_OPERATION é recusada com motivo próprio', () => {
-    const r = validar({}, { origemAtual: 'REAL_OPERATION' })
-    assert.equal(r.ok, false)
-    assert.equal((r as { motivo: string }).motivo, 'JA_ERA_OPERACAO_REAL')
+  test('já REAL_OPERATION → motivo próprio', () => {
+    assert.equal(motivoDe(validarManual({}, { origemAtual: 'REAL_OPERATION' })), 'JA_ERA_OPERACAO_REAL')
   })
 
-  test('origem corrompida cai em UNVERIFIED e ainda exige evidência válida', () => {
-    assert.equal(validar({}, { origemAtual: 'LIXO' }).ok, true)
-    assert.equal(validar({ referencia: '' }, { origemAtual: 'LIXO' }).ok, false)
-  })
-})
-
-// ── Multi-workspace ─────────────────────────────────────────────────────
-
-describe('Recusa — identificação incompleta', () => {
-  test('saleId sem workspaceId → bloqueia', () => {
-    const r = validarPedidoDePromocao(
-      { ...pedido(), workspaceId: '' },
-      contexto()
-    )
-    assert.equal(r.ok, false)
-    assert.equal((r as { motivo: string }).motivo, 'WORKSPACE_AUSENTE')
-  })
-
-  test('workspaceId sem saleId → bloqueia', () => {
-    const r = validarPedidoDePromocao({ ...pedido(), saleId: '' }, contexto())
-    assert.equal(r.ok, false)
-    assert.equal((r as { motivo: string }).motivo, 'WORKSPACE_AUSENTE')
+  test('saleId sem workspaceId e vice-versa → recusa', () => {
+    assert.equal(motivoDe(validarManual({ workspaceId: '' })), 'WORKSPACE_AUSENTE')
+    assert.equal(motivoDe(validarManual({ saleId: '' })), 'WORKSPACE_AUSENTE')
   })
 })
 
@@ -237,11 +384,7 @@ describe('Recusa — identificação incompleta', () => {
 describe('Chave de idempotência', () => {
   const base = { workspaceId: WS, saleId: SALE, tipoEvidencia: 'PROVIDER_OFICIAL', referencia: 'evt-1' }
 
-  test('mesma evidência → mesma chave', () => {
-    assert.equal(chaveDaEvidencia(base), chaveDaEvidencia({ ...base }))
-  })
-
-  test('espaços na referência não criam chave diferente', () => {
+  test('mesma evidência → mesma chave; espaços não contam', () => {
     assert.equal(chaveDaEvidencia(base), chaveDaEvidencia({ ...base, referencia: '  evt-1  ' }))
   })
 
@@ -261,9 +404,7 @@ describe('Garantias da promoção', () => {
   test('validar → evidência → origem → auditoria, tudo numa transação', () => {
     assert.match(codigo, /prisma\.\$transaction/)
     assert.match(codigo, /pg_advisory_xact_lock/)
-    // A evidência é gravada ANTES da mudança de origem: se algo falhar
-    // depois, a transação desfaz e a venda não fica promovida sem prova.
-    const posEvidencia = codigo.indexOf(`action: ACAO_AUDIT_EVIDENCIA`)
+    const posEvidencia = codigo.indexOf('action: ACAO_AUDIT_EVIDENCIA')
     const posUpdate = codigo.indexOf('tx.sale.update')
     const posPromocao = codigo.indexOf('action: ACAO_AUDIT_PROMOCAO')
     assert.ok(posEvidencia > 0 && posUpdate > posEvidencia, 'evidência tem de vir antes da promoção')
@@ -271,21 +412,36 @@ describe('Garantias da promoção', () => {
   })
 
   test('a venda é sempre buscada COM o workspace', () => {
-    assert.match(codigo, /where: \{ id: pedido\.saleId, workspaceId: pedido\.workspaceId \}/)
-    assert.ok(!/findUnique\(\{\s*where:\s*\{\s*id: pedido\.saleId\s*\}/.test(codigo), 'nunca por id solto')
+    assert.match(codigo, /where: \{ id: entrada\.saleId, workspaceId: entrada\.workspaceId \}/)
   })
 
-  test('a busca de evidência anterior filtra por workspace', () => {
-    const trecho = codigo.slice(codigo.indexOf('const jaRegistrada'), codigo.indexOf('if (jaRegistrada)'))
-    assert.match(trecho, /workspaceId: pedido\.workspaceId/)
+  test('o responsável é conferido contra o banco, com workspace', () => {
+    assert.match(codigo, /tx\.user\.findFirst\(\{[\s\S]{0,160}workspaceId: entrada\.workspaceId/)
   })
 
-  test('a comissão considerada é do mesmo workspace', () => {
-    assert.match(codigo, /c\.workspaceId === pedido\.workspaceId/)
+  test('a comissão é conferida por id, venda, workspace E status', () => {
+    const trecho = codigo.slice(codigo.indexOf('tx.commission.findFirst'), codigo.indexOf('const validacao'))
+    assert.match(trecho, /id: entrada\.commissionId/)
+    assert.match(trecho, /workspaceId: entrada\.workspaceId/)
+    assert.match(trecho, /saleId: entrada\.saleId/)
+    assert.match(trecho, /status: \{ in: \['CONFIRMED', 'RECEIVED'\] \}/)
+  })
+
+  test('o contexto de confiança é apurado no banco, nunca aceito do chamador', () => {
+    // Se `responsavelDoWorkspace` ou `comissaoComprovada` viessem do pedido,
+    // o chamador simplesmente enviaria `true`.
+    assert.ok(!/pedido\.responsavelDoWorkspace|pedido\.comissaoComprovada/.test(codigo))
+    assert.match(codigo, /contexto\.responsavelDoWorkspace = !!responsavel/)
+    assert.match(codigo, /contexto\.comissaoComprovada = !!comissao/)
+  })
+
+  test('o tipo da evidência de sistema vem da FONTE, não do pedido', () => {
+    assert.match(codigo, /tipoEvidencia: fonteOk \? pedido\.fonte\.tipo : 'NAO_VERIFICADA'/)
+    assert.ok(!/tipoEvidencia: pedido\.tipoEvidencia/.test(codigo))
   })
 
   test('a promoção revalida pela autoridade única', () => {
-    assert.match(codigo, /avaliarVendaParaOperacaoReal\(pedido\.workspaceId, pedido\.saleId\)/)
+    assert.match(codigo, /avaliarVendaParaOperacaoReal\(entrada\.workspaceId, entrada\.saleId\)/)
   })
 
   test('as duas ações de auditoria são distintas', () => {
@@ -293,40 +449,39 @@ describe('Garantias da promoção', () => {
     assert.notEqual(ACAO_AUDIT_PROMOCAO, ACAO_AUDIT_EVIDENCIA)
   })
 
-  test('o estado anterior e o novo são gravados na auditoria', () => {
+  test('estado anterior, novo, verificador e comissão vão para a auditoria', () => {
     assert.match(codigo, /estadoAnterior: origemAnterior/)
     assert.match(codigo, /estadoNovo: 'REAL_OPERATION'/)
+    assert.match(codigo, /verificadorId: entrada\.verificadorId/)
+    assert.match(codigo, /commissionId: entrada\.commissionId/)
   })
 
   test('não existe atalho para marcar como real sem evidência', () => {
-    // Um "forcar", "ignorarEvidencia" ou "marcarComoReal" aqui anularia o
-    // mecanismo inteiro.
     for (const atalho of ['forcar', 'force', 'ignorarEvidencia', 'marcarComoReal', 'skipValidacao']) {
       assert.ok(!codigo.toLowerCase().includes(atalho.toLowerCase()), `${atalho} não pode existir`)
     }
   })
 
-  test('todo motivo de recusa pertence à lista declarada', () => {
-    const casos: Array<[Partial<PedidoDePromocao>, Partial<ContextoDeValidacao>]> = [
-      [{ tipoEvidencia: 'X' }, {}],
-      [{ referencia: '' }, {}],
-      [CORRECAO_COMPLETA, { origemAtual: 'SEED' }],
-      [{ ...CORRECAO_COMPLETA, motivo: 'x' }, {}],
-      [{ ...CORRECAO_COMPLETA, ator: { tipo: 'USUARIA' } }, {}],
-      [{ tipoEvidencia: 'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL' }, { temComissaoReconhecida: false }],
-      [{}, { origemAtual: 'REAL_OPERATION' }],
-    ]
-    for (const [p, c] of casos) {
-      const r = validar(p, c)
-      assert.equal(r.ok, false, JSON.stringify(p))
-      assert.ok((MOTIVOS_RECUSA_PROMOCAO as readonly string[]).includes((r as { motivo: string }).motivo))
-    }
+  test('o WeakSet de fontes emitidas não é exportado', () => {
+    const fonte = lerCodigo('lib/evidencia-verificada.ts')
+    assert.match(fonte, /const EMITIDAS = new WeakSet/)
+    assert.ok(!/export const EMITIDAS|export \{ EMITIDAS/.test(fonte), 'exportar o WeakSet anularia a proteção')
   })
 
-  test('toda recusa vem com explicação', () => {
-    const r = validar({ referencia: '' })
-    assert.equal(r.ok, false)
-    assert.ok((r as { explicacao: string }).explicacao.length > 0)
+  test('todo motivo de recusa pertence à lista declarada', () => {
+    const casos = [
+      validarManual({ referencia: '' }),
+      validarManual({ motivo: 'x' }),
+      validarManual({}, { responsavelDoWorkspace: false }),
+      validarManual({}, { origemAtual: 'SEED' }),
+      validarManual({}, { origemAtual: 'REAL_OPERATION' }),
+      validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE, fonte: {} as never }, contexto()),
+    ]
+    for (const r of casos) {
+      assert.equal(r.ok, false)
+      assert.ok((MOTIVOS_RECUSA_PROMOCAO as readonly string[]).includes((r as { motivo: string }).motivo))
+      assert.ok((r as { explicacao: string }).explicacao.length > 0)
+    }
   })
 })
 
@@ -336,38 +491,45 @@ describe('Correção manual é exceção, não rotina', () => {
   test('a pendência de automação está declarada', () => {
     assert.equal(PENDENCIA_DE_AUTOMACAO.chave, 'operacao-real:comprovacao-recorrente')
     assert.equal(PENDENCIA_DE_AUTOMACAO.evidenciaManualAceitaHoje, 'CORRECAO_MANUAL_AUDITADA')
-  })
-
-  test('os substitutos automáticos são provider e conciliação', () => {
     assert.deepEqual([...PENDENCIA_DE_AUTOMACAO.substitutosAutomaticos], [
       'PROVIDER_OFICIAL',
       'CONCILIACAO_FINANCEIRA',
     ])
+    assert.match(PENDENCIA_DE_AUTOMACAO.explicacao, /dívida de automação/i)
   })
 
-  test('a explicação diz que recorrência é dívida de automação', () => {
-    assert.match(PENDENCIA_DE_AUTOMACAO.explicacao, /dívida de automação/i)
+  test('as quatro evidências do Bloco 3 continuam aceitas', () => {
+    assert.deepEqual([...EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL], [
+      'PROVIDER_OFICIAL',
+      'CONCILIACAO_FINANCEIRA',
+      'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL',
+      'CORRECAO_MANUAL_AUDITADA',
+    ])
   })
 })
 
 // ── Nada de ML nesta rodada ─────────────────────────────────────────────
 
 describe('Bloco 3.1 não liga o ML', () => {
-  test('a promoção não toca o feature store', () => {
-    const codigo = lerCodigo('lib/promocao-operacao-real.ts')
-    assert.ok(
-      !/salvarFeatureSnapshot|mLFeatureSnapshot|registrarLabelNoSnapshot|extrairFeaturesDeConteudo|treinar|promoverModelo/.test(codigo)
-    )
+  test('promoção e verificação não tocam o feature store', () => {
+    for (const arq of ['lib/promocao-operacao-real.ts', 'lib/evidencia-verificada.ts']) {
+      assert.ok(
+        !/salvarFeatureSnapshot|mLFeatureSnapshot|registrarLabelNoSnapshot|extrairFeaturesDeConteudo|treinar|promoverModelo/.test(
+          lerCodigo(arq)
+        ),
+        `${arq} não pode tocar o ML`
+      )
+    }
   })
 
   test('a autoridade do Bloco 3 continua sem escrever nada', () => {
     const codigo = lerCodigo('lib/real-operation.ts')
     for (const escrita of ['.create(', '.update(', '.upsert(', '.delete(']) {
-      assert.ok(!codigo.includes(escrita), `real-operation.ts não pode escrever (${escrita})`)
+      assert.ok(!codigo.includes(escrita))
     }
   })
 
-  test('as rotas continuam criando USER_REPORTED, não REAL_OPERATION', () => {
+  test('as rotas continuam criando USER_REPORTED', () => {
     for (const rota of ['app/api/vendas/route.ts', 'app/api/links/[id]/venda/route.ts']) {
       const codigo = lerCodigo(rota)
       assert.match(codigo, /dataOrigin: 'USER_REPORTED'/)

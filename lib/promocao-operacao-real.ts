@@ -7,9 +7,23 @@
  * `REAL_OPERATION` mais evidência, e nada no código produzia nenhum dos
  * dois. Não existia caminho legítimo para a primeira operação real.
  *
- * Este é o caminho. Ele NÃO afrouxa a regra do Bloco 3 — pelo contrário:
- * exige evidência externa verificável ANTES de mudar qualquer coisa, e
- * depois submete a venda à mesma autoridade de sempre.
+ * ── DOIS CAMINHOS, CAPACIDADES DIFERENTES (revisão de confiança) ─────────
+ * Antes havia uma função só, e o tipo de evidência vinha no payload. Uma
+ * futura rota poderia enviar `PROVIDER_OFICIAL` + `"webhook-123"` e
+ * fabricar prova. Agora os caminhos são estruturalmente distintos:
+ *
+ *   promoverPorCorrecaoManual()      ← o ÚNICO que a interface pode chamar.
+ *                                      Exige usuária autenticada do MESMO
+ *                                      workspace, motivo e referência.
+ *
+ *   promoverPorEvidenciaVerificada() ← exige uma `FonteVerificada`, que só
+ *                                      `verificarEvidencia()` emite, a
+ *                                      pedido de um verificador registrado
+ *                                      que consultou a fonte externa.
+ *
+ * Não há campo "tipo de evidência" aceito do chamador no segundo caminho: o
+ * tipo vem da fonte verificada. Um objeto montado à mão não passa na
+ * checagem de runtime (`WeakSet` em `evidencia-verificada.ts`).
  *
  * ── PROMOVER ≠ SER ELEGÍVEL ─────────────────────────────────────────────
  * Promover muda a ORIGEM do registro. Elegibilidade continua dependendo de
@@ -32,12 +46,8 @@
  */
 
 import { prisma } from './prisma'
-import {
-  EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL,
-  normalizarOrigemDeRegistro,
-  type EvidenciaDeOperacaoReal,
-  type OrigemDeRegistro,
-} from './proveniencia'
+import { normalizarOrigemDeRegistro, type OrigemDeRegistro } from './proveniencia'
+import { ehFonteVerificada, type FonteVerificada } from './evidencia-verificada'
 import {
   ACAO_AUDIT_EVIDENCIA,
   avaliarVendaParaOperacaoReal,
@@ -66,12 +76,18 @@ export const MOTIVOS_RECUSA_PROMOCAO = [
   'ORIGEM_SINTETICA_NAO_PROMOVIVEL',
   'ORIGEM_NAO_PROMOVIVEL',
   'JA_ERA_OPERACAO_REAL',
-  'TIPO_DE_EVIDENCIA_INVALIDO',
   'REFERENCIA_AUSENTE',
   'RESPONSAVEL_AUSENTE',
+  /** O usuário informado não existe OU não pertence ao workspace da venda. */
+  'RESPONSAVEL_INVALIDO',
   'MOTIVO_AUSENTE',
   'MOTIVO_INSUFICIENTE',
-  'SEM_COMISSAO_PARA_A_EVIDENCIA',
+  /** A "fonte verificada" não foi emitida por `verificarEvidencia()`. */
+  'FONTE_NAO_VERIFICADA',
+  /** Evidência sobre comissão sem `commissionId`. */
+  'COMISSAO_NAO_INFORMADA',
+  /** A comissão indicada não confere: não existe, é de outra venda/workspace, ou não está CONFIRMED/RECEIVED. */
+  'COMISSAO_NAO_COMPROVADA',
   'WORKSPACE_AUSENTE',
 ] as const
 
@@ -80,24 +96,25 @@ export type MotivoRecusaPromocao = (typeof MOTIVOS_RECUSA_PROMOCAO)[number]
 /** Tamanho mínimo de um motivo de correção manual: uma frase, não uma letra. */
 export const TAMANHO_MINIMO_DO_MOTIVO = 10
 
-export interface PedidoDePromocao {
+// ── Pedidos ─────────────────────────────────────────────────────────────
+
+export interface PedidoDeCorrecaoManual {
   workspaceId: string
   saleId: string
-  tipoEvidencia: string
-  /**
-   * Identificador externo conferível: id do evento de webhook, número do
-   * repasse/extrato, id da integração que confirmou. É o que permite alguém
-   * auditar depois — evidência sem referência é afirmação, não prova.
-   */
+  /** Usuária autenticada que assina a correção. Conferida contra o banco. */
+  responsavelUserId: string
+  motivo: string
+  /** Onde a comprovação foi conferida (extrato, print de painel, protocolo). */
   referencia: string
-  /** Quem/o quê está comprovando. */
-  ator: {
-    tipo: 'USUARIA' | 'INTEGRACAO' | 'SISTEMA'
-    /** Obrigatório quando `tipo === 'USUARIA'` e na correção manual. */
-    userId?: string | null
-  }
-  /** Obrigatório em `CORRECAO_MANUAL_AUDITADA`. */
-  motivo?: string | null
+}
+
+export interface PedidoDeEvidenciaVerificada {
+  workspaceId: string
+  saleId: string
+  /** Emitida por `verificarEvidencia()`. Checada em runtime, não por tipo. */
+  fonte: FonteVerificada
+  /** Obrigatório quando a fonte é `COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL`. */
+  commissionId?: string | null
 }
 
 export interface ResultadoDaPromocao {
@@ -110,7 +127,7 @@ export interface ResultadoDaPromocao {
   workspaceId: string
   origemAnterior: OrigemDeRegistro | null
   origemNova: OrigemDeRegistro | null
-  evidencia: { tipo: string; referencia: string } | null
+  evidencia: { tipo: string; referencia: string; commissionId?: string | null } | null
   /** Veredito da autoridade única APÓS a promoção. `null` se nada mudou. */
   veredito: VereditoDeOperacaoReal | null
 }
@@ -135,41 +152,43 @@ export function chaveDaEvidencia(p: {
   return [p.workspaceId, p.saleId, p.tipoEvidencia, p.referencia.trim()].join('|')
 }
 
-export interface ContextoDeValidacao {
+// ── Validação pura ──────────────────────────────────────────────────────
+
+export interface ContextoDaVenda {
   origemAtual: string
-  /** `true` quando a venda tem comissão CONFIRMED/RECEIVED neste workspace. */
-  temComissaoReconhecida: boolean
+  /**
+   * `true` quando o `responsavelUserId` existe E pertence ao workspace da
+   * venda. Conferido contra o banco — a FK de `AuditLog.userId` não basta:
+   * ela garante que o usuário existe, não que é DESTE negócio.
+   */
+  responsavelDoWorkspace?: boolean
+  /**
+   * `true` quando a comissão indicada existe, é DESTA venda, DESTE
+   * workspace e está CONFIRMED ou RECEIVED.
+   */
+  comissaoComprovada?: boolean
 }
 
 export type ResultadoValidacao =
   | { ok: true }
   | { ok: false; motivo: MotivoRecusaPromocao; explicacao: string }
 
-/**
- * VALIDAÇÃO PURA — exigências por tipo de evidência.
- *
- * Separada do banco de propósito: é a parte que decide, e decidir tem de
- * ser testável com os dados exatos de cada caso.
- */
-export function validarPedidoDePromocao(
-  pedido: PedidoDePromocao,
-  contexto: ContextoDeValidacao
-): ResultadoValidacao {
-  const recusar = (motivo: MotivoRecusaPromocao, explicacao: string): ResultadoValidacao => ({
-    ok: false,
-    motivo,
-    explicacao,
-  })
+function recusar(motivo: MotivoRecusaPromocao, explicacao: string): ResultadoValidacao {
+  return { ok: false, motivo, explicacao }
+}
 
-  if (!textoUtil(pedido?.workspaceId) || !textoUtil(pedido?.saleId)) {
+/** Regras comuns aos dois caminhos: identificação e origem promovível. */
+export function validarOrigemPromovivel(
+  identificacao: { workspaceId: string; saleId: string },
+  origemAtual: string
+): ResultadoValidacao {
+  if (!textoUtil(identificacao?.workspaceId) || !textoUtil(identificacao?.saleId)) {
     return recusar(
       'WORKSPACE_AUSENTE',
       'Promoção exige workspaceId e saleId juntos — um id de venda solto não identifica de quem é a venda.'
     )
   }
-
-  const origem = normalizarOrigemDeRegistro(contexto?.origemAtual)
-
+  const origem = normalizarOrigemDeRegistro(origemAtual)
   if (origem === 'REAL_OPERATION') {
     return recusar('JA_ERA_OPERACAO_REAL', 'Esta venda já está marcada como operação real.')
   }
@@ -184,89 +203,129 @@ export function validarPedidoDePromocao(
   if (!(ORIGENS_PROMOVIVEIS as readonly string[]).includes(origem)) {
     return recusar('ORIGEM_NAO_PROMOVIVEL', `Origem ${origem} não está na lista de origens promovíveis.`)
   }
+  return { ok: true }
+}
 
-  if (!(EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL as readonly string[]).includes(pedido?.tipoEvidencia)) {
+/** VALIDAÇÃO PURA da correção manual. */
+export function validarCorrecaoManual(
+  pedido: PedidoDeCorrecaoManual,
+  contexto: ContextoDaVenda
+): ResultadoValidacao {
+  const base = validarOrigemPromovivel(pedido ?? ({} as PedidoDeCorrecaoManual), contexto?.origemAtual)
+  if (!base.ok) return base
+
+  if (!textoUtil(pedido.responsavelUserId)) {
     return recusar(
-      'TIPO_DE_EVIDENCIA_INVALIDO',
-      `"${pedido?.tipoEvidencia}" não é um tipo de evidência aceito.`
+      'RESPONSAVEL_AUSENTE',
+      'Correção manual exige o usuário responsável — uma correção sem quem assinou é indistinguível de alguém ter digitado "é real".'
     )
   }
-
-  // Referência externa é exigida em TODOS os tipos. É o que separa prova de
-  // afirmação, e vale inclusive para a correção manual.
+  if (contexto?.responsavelDoWorkspace !== true) {
+    // Mensagem única para "não existe" e "é de outro workspace": confirmar a
+    // existência de um id alheio já vazaria informação sobre o outro negócio.
+    return recusar(
+      'RESPONSAVEL_INVALIDO',
+      'O usuário responsável não pertence a este workspace.'
+    )
+  }
   if (!textoUtil(pedido.referencia)) {
     return recusar(
       'REFERENCIA_AUSENTE',
-      'Toda evidência precisa de referência externa conferível (id do evento, número do repasse, id da integração).'
+      'A correção manual precisa apontar onde a comprovação foi conferida (extrato, protocolo, painel).'
     )
   }
+  if (!textoUtil(pedido.motivo)) {
+    return recusar('MOTIVO_AUSENTE', 'Correção manual exige o motivo por escrito.')
+  }
+  if (pedido.motivo.trim().length < TAMANHO_MINIMO_DO_MOTIVO) {
+    return recusar(
+      'MOTIVO_INSUFICIENTE',
+      `O motivo precisa explicar a correção (mínimo ${TAMANHO_MINIMO_DO_MOTIVO} caracteres) — "ok" não é justificativa.`
+    )
+  }
+  return { ok: true }
+}
 
-  if (pedido.tipoEvidencia === 'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL') {
-    // `Commission.status = CONFIRMED` NÃO basta: na tela, confirmar a
-    // comissão é a mesma pessoa repetindo a mesma declaração. O que
-    // comprova é a referência externa de ONDE veio a confirmação — que já
-    // foi exigida acima. Aqui só conferimos que existe a comissão de que a
-    // evidência fala; sem ela, a referência não se refere a nada.
-    if (!contexto?.temComissaoReconhecida) {
-      return recusar(
-        'SEM_COMISSAO_PARA_A_EVIDENCIA',
-        'Não há comissão CONFIRMED ou RECEIVED nesta venda — a evidência afirma confirmar uma comissão que não existe.'
-      )
-    }
+/** VALIDAÇÃO PURA da evidência de sistema. */
+export function validarEvidenciaVerificada(
+  pedido: PedidoDeEvidenciaVerificada,
+  contexto: ContextoDaVenda
+): ResultadoValidacao {
+  const base = validarOrigemPromovivel(pedido ?? ({} as PedidoDeEvidenciaVerificada), contexto?.origemAtual)
+  if (!base.ok) return base
+
+  // CHECAGEM DE RUNTIME, não de tipo: um objeto com o mesmo formato vindo de
+  // `JSON.parse` de uma requisição não foi emitido por `verificarEvidencia()`
+  // e não passa daqui.
+  if (!ehFonteVerificada(pedido.fonte)) {
+    return recusar(
+      'FONTE_NAO_VERIFICADA',
+      'A evidência não foi emitida por um verificador registrado. Referência preenchida não é referência verificada.'
+    )
+  }
+  if (!textoUtil(pedido.fonte.referencia)) {
+    return recusar('REFERENCIA_AUSENTE', 'A fonte verificada não trouxe referência externa.')
   }
 
-  if (pedido.tipoEvidencia === 'CORRECAO_MANUAL_AUDITADA') {
-    if (!textoUtil(pedido.ator?.userId)) {
+  if (pedido.fonte.tipo === 'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL') {
+    if (!textoUtil(pedido.commissionId)) {
       return recusar(
-        'RESPONSAVEL_AUSENTE',
-        'Correção manual exige o usuário responsável — uma correção sem quem assinou é indistinguível de alguém ter digitado "é real".'
+        'COMISSAO_NAO_INFORMADA',
+        'Evidência sobre comissão precisa dizer QUAL comissão foi comprovada — referência genérica não basta.'
       )
     }
-    if (!textoUtil(pedido.motivo)) {
-      return recusar('MOTIVO_AUSENTE', 'Correção manual exige o motivo por escrito.')
-    }
-    if (pedido.motivo!.trim().length < TAMANHO_MINIMO_DO_MOTIVO) {
+    if (contexto?.comissaoComprovada !== true) {
       return recusar(
-        'MOTIVO_INSUFICIENTE',
-        `O motivo precisa explicar a correção (mínimo ${TAMANHO_MINIMO_DO_MOTIVO} caracteres) — "ok" não é justificativa.`
+        'COMISSAO_NAO_COMPROVADA',
+        'A comissão indicada não confere: não existe, é de outra venda ou workspace, ou não está CONFIRMED/RECEIVED.'
       )
     }
-  }
-
-  if (pedido.ator?.tipo === 'USUARIA' && !textoUtil(pedido.ator?.userId)) {
-    return recusar('RESPONSAVEL_AUSENTE', 'Ator do tipo USUARIA exige o userId de quem comprovou.')
   }
 
   return { ok: true }
 }
 
-/**
- * Promove uma venda a `REAL_OPERATION` mediante evidência comprovada.
- *
- * Tudo ou nada, dentro de uma transação:
- *   1. trava a chave da evidência (advisory lock);
- *   2. lê a venda DESTE workspace;
- *   3. valida o pedido contra as exigências do tipo de evidência;
- *   4. registra a evidência em `AuditLog`;
- *   5. muda `Sale.dataOrigin` para `REAL_OPERATION`;
- *   6. registra a promoção, com estado anterior e novo.
- *
- * Depois — FORA da transação, já com o dado gravado — submete a venda à
- * autoridade única e devolve o veredito. Promover não decide elegibilidade.
- */
-export async function promoverVendaParaRealOperation(
-  pedido: PedidoDePromocao
-): Promise<ResultadoDaPromocao> {
-  const base = {
-    saleId: pedido?.saleId ?? '',
-    workspaceId: pedido?.workspaceId ?? '',
+// ── Execução ────────────────────────────────────────────────────────────
+
+interface EntradaInterna {
+  workspaceId: string
+  saleId: string
+  tipoEvidencia: string
+  referencia: string
+  commissionId: string | null
+  responsavelUserId: string | null
+  motivo: string | null
+  verificadorId: string | null
+  atorTipo: 'USUARIA' | 'VERIFICADOR'
+  validar: (contexto: ContextoDaVenda) => ResultadoValidacao
+}
+
+function resultadoBase(workspaceId: string, saleId: string) {
+  return {
+    saleId: saleId ?? '',
+    workspaceId: workspaceId ?? '',
     origemAnterior: null,
     origemNova: null,
     evidencia: null,
     veredito: null,
   }
+}
 
-  if (!textoUtil(pedido?.workspaceId) || !textoUtil(pedido?.saleId)) {
+/**
+ * Núcleo transacional compartilhado pelos dois caminhos.
+ *
+ *   1. trava a chave da evidência (advisory lock);
+ *   2. lê a venda DESTE workspace;
+ *   3. apura o contexto NO BANCO (responsável, comissão);
+ *   4. valida;
+ *   5. registra a evidência;
+ *   6. muda `Sale.dataOrigin`;
+ *   7. registra a promoção, com estado anterior e novo.
+ */
+async function executarPromocao(entrada: EntradaInterna): Promise<ResultadoDaPromocao> {
+  const base = resultadoBase(entrada.workspaceId, entrada.saleId)
+
+  if (!textoUtil(entrada.workspaceId) || !textoUtil(entrada.saleId)) {
     return {
       ...base,
       promovido: false,
@@ -277,10 +336,10 @@ export async function promoverVendaParaRealOperation(
   }
 
   const chave = chaveDaEvidencia({
-    workspaceId: pedido.workspaceId,
-    saleId: pedido.saleId,
-    tipoEvidencia: String(pedido.tipoEvidencia),
-    referencia: String(pedido.referencia ?? ''),
+    workspaceId: entrada.workspaceId,
+    saleId: entrada.saleId,
+    tipoEvidencia: entrada.tipoEvidencia,
+    referencia: entrada.referencia ?? '',
   })
 
   const resultado = await prisma.$transaction(async (tx) => {
@@ -290,12 +349,8 @@ export async function promoverVendaParaRealOperation(
 
     // A venda é buscada SEMPRE com o workspace junto — nunca por id solto.
     const venda = await tx.sale.findFirst({
-      where: { id: pedido.saleId, workspaceId: pedido.workspaceId },
-      select: {
-        id: true,
-        dataOrigin: true,
-        commissions: { select: { status: true, workspaceId: true } },
-      },
+      where: { id: entrada.saleId, workspaceId: entrada.workspaceId },
+      select: { id: true, dataOrigin: true },
     })
     if (!venda) {
       return {
@@ -310,35 +365,63 @@ export async function promoverVendaParaRealOperation(
     // Idempotência: a MESMA evidência já registrada para esta venda.
     const jaRegistrada = await tx.auditLog.findFirst({
       where: {
-        workspaceId: pedido.workspaceId,
+        workspaceId: entrada.workspaceId,
         action: ACAO_AUDIT_EVIDENCIA,
         entityType: 'Sale',
-        entityId: pedido.saleId,
+        entityId: entrada.saleId,
         metadata: { path: ['chaveEvidencia'], equals: chave },
       },
       select: { id: true },
     })
     if (jaRegistrada) {
+      const origem = normalizarOrigemDeRegistro(venda.dataOrigin)
       return {
         ...base,
         promovido: false,
         idempotente: true,
         motivo: null,
-        origemAnterior: normalizarOrigemDeRegistro(venda.dataOrigin),
-        origemNova: normalizarOrigemDeRegistro(venda.dataOrigin),
-        evidencia: { tipo: pedido.tipoEvidencia, referencia: pedido.referencia },
+        origemAnterior: origem,
+        origemNova: origem,
+        evidencia: {
+          tipo: entrada.tipoEvidencia,
+          referencia: entrada.referencia,
+          commissionId: entrada.commissionId,
+        },
         explicacao: 'Esta evidência já havia sido registrada para esta venda — nada foi alterado nem duplicado.',
       }
     }
 
-    const temComissaoReconhecida = venda.commissions.some(
-      (c) => c.workspaceId === pedido.workspaceId && ['CONFIRMED', 'RECEIVED'].includes(c.status)
-    )
+    // ── Contexto apurado NO BANCO, nunca aceito do chamador ───────────
+    const contexto: ContextoDaVenda = { origemAtual: venda.dataOrigin }
 
-    const validacao = validarPedidoDePromocao(pedido, {
-      origemAtual: venda.dataOrigin,
-      temComissaoReconhecida,
-    })
+    if (entrada.responsavelUserId) {
+      // Não basta a FK de `AuditLog.userId`: ela garante que o usuário
+      // existe, não que pertence ao workspace desta venda. Gravar a
+      // auditoria assinada por alguém de outro negócio produziria um
+      // registro que parece legítimo e não é.
+      const responsavel = await tx.user.findFirst({
+        where: { id: entrada.responsavelUserId, workspaceId: entrada.workspaceId },
+        select: { id: true },
+      })
+      contexto.responsavelDoWorkspace = !!responsavel
+    }
+
+    if (entrada.commissionId) {
+      // A comissão tem de existir, ser DESTA venda, DESTE workspace e estar
+      // reconhecida. Os quatro, juntos.
+      const comissao = await tx.commission.findFirst({
+        where: {
+          id: entrada.commissionId,
+          workspaceId: entrada.workspaceId,
+          saleId: entrada.saleId,
+          status: { in: ['CONFIRMED', 'RECEIVED'] },
+        },
+        select: { id: true },
+      })
+      contexto.comissaoComprovada = !!comissao
+    }
+
+    const validacao = entrada.validar(contexto)
     if (!validacao.ok) {
       return {
         ...base,
@@ -353,50 +436,52 @@ export async function promoverVendaParaRealOperation(
     const origemAnterior = normalizarOrigemDeRegistro(venda.dataOrigin)
     const agora = new Date()
 
-    // 4) Evidência primeiro: se algo falhar daqui em diante, a transação
-    //    desfaz tudo e a venda NÃO fica promovida sem prova.
+    // Evidência primeiro: se algo falhar daqui em diante, a transação
+    // desfaz tudo e a venda NÃO fica promovida sem prova.
     await tx.auditLog.create({
       data: {
-        workspaceId: pedido.workspaceId,
-        userId: pedido.ator?.userId ?? null,
+        workspaceId: entrada.workspaceId,
+        userId: entrada.responsavelUserId,
         action: ACAO_AUDIT_EVIDENCIA,
         entityType: 'Sale',
-        entityId: pedido.saleId,
+        entityId: entrada.saleId,
         metadata: {
-          tipo: pedido.tipoEvidencia,
-          referencia: pedido.referencia.trim(),
+          tipo: entrada.tipoEvidencia,
+          referencia: entrada.referencia,
           chaveEvidencia: chave,
-          atorTipo: pedido.ator?.tipo ?? 'SISTEMA',
-          responsavelUserId: pedido.ator?.userId ?? null,
-          motivo: pedido.motivo?.trim() ?? null,
+          atorTipo: entrada.atorTipo,
+          responsavelUserId: entrada.responsavelUserId,
+          verificadorId: entrada.verificadorId,
+          commissionId: entrada.commissionId,
+          motivo: entrada.motivo,
           registradaEm: agora.toISOString(),
         } as never,
       },
     })
 
-    // 5) Origem.
     await tx.sale.update({
-      where: { id: pedido.saleId },
+      where: { id: entrada.saleId },
       data: { dataOrigin: 'REAL_OPERATION' },
     })
 
-    // 6) Promoção auditada, com estado anterior e novo.
     await tx.auditLog.create({
       data: {
-        workspaceId: pedido.workspaceId,
-        userId: pedido.ator?.userId ?? null,
+        workspaceId: entrada.workspaceId,
+        userId: entrada.responsavelUserId,
         action: ACAO_AUDIT_PROMOCAO,
         entityType: 'Sale',
-        entityId: pedido.saleId,
+        entityId: entrada.saleId,
         metadata: {
           estadoAnterior: origemAnterior,
           estadoNovo: 'REAL_OPERATION',
-          tipoEvidencia: pedido.tipoEvidencia,
-          referencia: pedido.referencia.trim(),
+          tipoEvidencia: entrada.tipoEvidencia,
+          referencia: entrada.referencia,
           chaveEvidencia: chave,
-          atorTipo: pedido.ator?.tipo ?? 'SISTEMA',
-          responsavelUserId: pedido.ator?.userId ?? null,
-          motivo: pedido.motivo?.trim() ?? null,
+          atorTipo: entrada.atorTipo,
+          responsavelUserId: entrada.responsavelUserId,
+          verificadorId: entrada.verificadorId,
+          commissionId: entrada.commissionId,
+          motivo: entrada.motivo,
           promovidaEm: agora.toISOString(),
         } as never,
       },
@@ -409,20 +494,77 @@ export async function promoverVendaParaRealOperation(
       motivo: null,
       origemAnterior,
       origemNova: 'REAL_OPERATION' as OrigemDeRegistro,
-      evidencia: { tipo: pedido.tipoEvidencia, referencia: pedido.referencia.trim() },
-      explicacao: `Venda promovida de ${origemAnterior} para REAL_OPERATION com evidência ${pedido.tipoEvidencia} (ref. ${pedido.referencia.trim()}).`,
+      evidencia: {
+        tipo: entrada.tipoEvidencia,
+        referencia: entrada.referencia,
+        commissionId: entrada.commissionId,
+      },
+      explicacao: `Venda promovida de ${origemAnterior} para REAL_OPERATION com evidência ${entrada.tipoEvidencia} (ref. ${entrada.referencia}).`,
     }
   })
 
   // Revalidação pela autoridade única, já com o dado gravado. Promover não
-  // é o mesmo que ser elegível — a venda ainda precisa estar CONFIRMED, com
-  // comissão reconhecida e relações coerentes.
+  // é o mesmo que ser elegível.
   if (resultado.promovido || resultado.idempotente) {
-    const veredito = await avaliarVendaParaOperacaoReal(pedido.workspaceId, pedido.saleId)
+    const veredito = await avaliarVendaParaOperacaoReal(entrada.workspaceId, entrada.saleId)
     return { ...resultado, veredito }
   }
-
   return resultado
+}
+
+/**
+ * CAMINHO MANUAL — o único que a interface pode iniciar.
+ *
+ * Exige usuária autenticada que pertença ao MESMO workspace da venda
+ * (conferido contra o banco), motivo escrito e referência de onde a
+ * comprovação foi conferida. É deliberadamente trabalhoso: comprovar venda
+ * a venda à mão não deve ser confortável, porque não deve virar rotina.
+ */
+export async function promoverPorCorrecaoManual(
+  pedido: PedidoDeCorrecaoManual
+): Promise<ResultadoDaPromocao> {
+  return executarPromocao({
+    workspaceId: pedido?.workspaceId,
+    saleId: pedido?.saleId,
+    tipoEvidencia: 'CORRECAO_MANUAL_AUDITADA',
+    referencia: (pedido?.referencia ?? '').trim(),
+    commissionId: null,
+    responsavelUserId: textoUtil(pedido?.responsavelUserId) ? pedido.responsavelUserId : null,
+    motivo: (pedido?.motivo ?? '').trim() || null,
+    verificadorId: null,
+    atorTipo: 'USUARIA',
+    validar: (contexto) => validarCorrecaoManual(pedido, contexto),
+  })
+}
+
+/**
+ * CAMINHO DE SISTEMA — indisponível para a interface.
+ *
+ * Só avança com uma `FonteVerificada` emitida por `verificarEvidencia()`. O
+ * TIPO da evidência vem da fonte, não do chamador: não há como pedir
+ * "promova isto como PROVIDER_OFICIAL".
+ *
+ * Hoje nenhum verificador está registrado, então este caminho está fechado
+ * na prática — e é exatamente esse o estado correto enquanto não houver
+ * integração de provider nem importação de conciliação.
+ */
+export async function promoverPorEvidenciaVerificada(
+  pedido: PedidoDeEvidenciaVerificada
+): Promise<ResultadoDaPromocao> {
+  const fonteOk = ehFonteVerificada(pedido?.fonte)
+  return executarPromocao({
+    workspaceId: pedido?.workspaceId,
+    saleId: pedido?.saleId,
+    // Sem fonte legítima não há tipo: o rótulo nunca vem do payload.
+    tipoEvidencia: fonteOk ? pedido.fonte.tipo : 'NAO_VERIFICADA',
+    referencia: fonteOk ? pedido.fonte.referencia : '',
+    commissionId: textoUtil(pedido?.commissionId) ? pedido.commissionId! : null,
+    responsavelUserId: null,
+    motivo: null,
+    verificadorId: fonteOk ? pedido.fonte.verificadorId : null,
+    atorTipo: 'VERIFICADOR',
+    validar: (contexto) => validarEvidenciaVerificada(pedido, contexto),
+  })
 }
 
 /**
@@ -435,12 +577,13 @@ export async function promoverVendaParaRealOperation(
  * funciona".
  *
  * A confirmação recorrente precisa vir de `PROVIDER_OFICIAL` (webhook/API
- * do provider) ou `CONCILIACAO_FINANCEIRA` (importação de extrato/repasse).
+ * do provider) ou `CONCILIACAO_FINANCEIRA` (importação de extrato/repasse),
+ * cada uma como um verificador registrado em `evidencia-verificada.ts`.
  */
 export const PENDENCIA_DE_AUTOMACAO = {
   chave: 'operacao-real:comprovacao-recorrente',
   explicacao:
-    'A comprovação de venda real depende hoje de correção manual auditada. Recorrente, isso é dívida de automação: deve passar a vir de webhook/API oficial do provider ou de conciliação financeira importada.',
-  evidenciaManualAceitaHoje: 'CORRECAO_MANUAL_AUDITADA' as EvidenciaDeOperacaoReal,
-  substitutosAutomaticos: ['PROVIDER_OFICIAL', 'CONCILIACAO_FINANCEIRA'] as EvidenciaDeOperacaoReal[],
+    'A comprovação de venda real depende hoje de correção manual auditada. Recorrente, isso é dívida de automação: deve passar a vir de webhook/API oficial do provider ou de conciliação financeira importada, registrados como verificadores de evidência.',
+  evidenciaManualAceitaHoje: 'CORRECAO_MANUAL_AUDITADA',
+  substitutosAutomaticos: ['PROVIDER_OFICIAL', 'CONCILIACAO_FINANCEIRA'],
 } as const
