@@ -17,6 +17,7 @@ param(
 )
 
 . (Join-Path $PSScriptRoot "resolver-venv.ps1")
+. (Join-Path $PSScriptRoot "patrono-comum.ps1")
 
 $nodeScript = Join-Path $PSScriptRoot "digital-twin-worker.ts"
 
@@ -93,10 +94,44 @@ $env:DIGITAL_TWIN_SYNTH_SCRIPT = Join-Path $PSScriptRoot "chatterbox_synthesize.
 $raizRepo = Split-Path $PSScriptRoot -Parent
 Set-Location $raizRepo
 
-Write-Host "Iniciando Patrono Generation Worker..." -ForegroundColor Cyan
+# RESOLUCAO POR CAMINHO ABSOLUTO (Rodada 15).
+#
+# A tarefa agendada NAO roda com o ambiente de um terminal interativo: PATH
+# pode ser diferente e o diretorio inicial costuma ser System32. Depender de
+# "npx" no PATH funciona no teste manual e falha calado no logon.
+#
+# Alem disso, `npx` resolve o pacote subindo a arvore de node_modules a
+# partir do diretorio atual; de System32 ele nao acharia o `tsx` e tentaria
+# BAIXA-LO da internet - lento, dependente de rede e sujeito a instalar versao
+# diferente da fixada. Chamar node + cli.mjs por caminho absoluto elimina os
+# tres riscos.
+$nodeExe = Get-PatronoNode
+$tsxCli = Get-PatronoTsxCli -RaizRepo $raizRepo
 
-if ($Once) {
-    npx tsx $nodeScript --once
-} else {
-    npx tsx $nodeScript
+Write-PatronoLog "Iniciando worker. raiz=$raizRepo venv=$venvPath node=$nodeExe tsx=$tsxCli once=$($Once.IsPresent)"
+
+if (-not $nodeExe) {
+    Write-PatronoLog "Node.js nao encontrado (nem em Program Files, nem no PATH)." "ERRO"
+    exit 1
+}
+if (-not $tsxCli) {
+    Write-PatronoLog "tsx nao encontrado em node_modules. Rode 'npm install' na raiz do repositorio." "ERRO"
+    exit 1
+}
+
+Write-Host "Iniciando Patrono Generation Worker..." -ForegroundColor Cyan
+Write-Host "  node: $nodeExe"
+Write-Host "  tsx : $tsxCli"
+
+$argumentos = @($tsxCli, $nodeScript)
+if ($Once) { $argumentos += "--once" }
+
+try {
+    & $nodeExe @argumentos
+    $codigo = $LASTEXITCODE
+    Write-PatronoLog "Worker encerrou com codigo $codigo." $(if ($codigo -eq 0) { "INFO" } else { "ERRO" })
+    exit $codigo
+} catch {
+    Write-PatronoLog "Excecao ao executar o worker: $($_.Exception.Message)" "ERRO"
+    exit 1
 }

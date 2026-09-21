@@ -18,8 +18,28 @@ param(
 )
 
 . (Join-Path $PSScriptRoot "resolver-venv.ps1")
+. (Join-Path $PSScriptRoot "patrono-comum.ps1")
 
 Write-Host "=== Patrono Generation Worker - instalacao ===" -ForegroundColor Cyan
+
+# AUTO-ELEVACAO (Rodada 15). Registrar tarefa agendada exige privilegio
+# administrativo nesta maquina - verificado em teste: mesmo uma tarefa nova,
+# so com AtLogOn e na pasta raiz, e recusada com 0x80070005 sem elevacao, e
+# `schtasks /Create` idem. O usuario jurid E administrador local; com UAC, a
+# sessao normal apenas nao esta elevada.
+#
+# Em vez de exigir "abra o PowerShell como administrador" toda vez, o script
+# se reergue sozinho e continua. Nada de politica do Windows, GPO, UAC,
+# Defender ou firewall e alterado - so este processo pede o privilegio que
+# ja pertence ao usuario.
+if (-not $PularInicioAutomatico) {
+    Invoke-PatronoAutoElevacao -CaminhoScript $PSCommandPath -Parametros @{
+        VenvPath = $VenvPath
+        PularInicioAutomatico = $PularInicioAutomatico
+    } | Out-Null
+}
+
+Write-PatronoLog "Setup iniciado (elevado=$(Test-PatronoElevado))." "INFO" "setup.log" 
 
 function Test-Command($nome) {
     return [bool](Get-Command $nome -ErrorAction SilentlyContinue)
@@ -113,28 +133,30 @@ if (-not $PularInicioAutomatico) {
         # O -VenvPath e passado explicitamente: a tarefa agendada roda numa
         # sessao propria, sem as variaveis de ambiente desta janela, e nao
         # teria como descobrir um venv fora do local padrao.
-        $acao = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -File `"$PSScriptRoot\start-digital-twin-worker.ps1`" -VenvPath `"$venvPath`""
+        $acao = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\start-digital-twin-worker.ps1`" -VenvPath `"$venvPath`""
 
-        # WATCHDOG (Rodada 12) - mecanismo NATIVO do Windows, sem supervisor
-        # proprio. Em 20/09/2026 o worker foi encerrado de fora (pressao de
-        # memoria) e ficou horas parado, porque nada o trazia de volta. O
-        # backoff do db-resiliencia so cobre o worker VIVO perdendo o banco;
-        # nao cobre o processo morto.
+        # GATILHO: SOMENTE AtLogOn (Rodada 15).
         #
-        # Dois gatilhos: logon (sessao da proprietaria) e boot (reinicio sem
-        # ninguem logar).
-        $gatilhos = @(
-            (New-ScheduledTaskTrigger -AtLogOn),
-            (New-ScheduledTaskTrigger -AtStartup)
-        )
+        # O -AtStartup foi REMOVIDO. Ele nao e tecnicamente necessario aqui: o
+        # worker depende do perfil do usuario (projeto dentro do OneDrive,
+        # Node/npm do perfil, venv em C:\patrono-venv, variaveis do usuario).
+        # Rodar antes do logon exigiria conta de servico/SYSTEM, que nao teria
+        # esse ambiente - e ainda elevaria o privilegio sem necessidade.
+        #
+        # Como ha um unico usuario nesta maquina e ele faz logon apos qualquer
+        # reinicializacao, AtLogOn cobre o cenario de reboot por completo.
+        $gatilhos = @( New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME" )
 
-        # RestartCount/RestartInterval: o proprio agendador reergue o worker
-        # a cada 2 min se ele morrer. MultipleInstances IgnoreNew e a rede de
-        # seguranca do lado do Windows para a mesma coisa que o lock de PID
-        # garante do lado do Node - duas camadas, de proposito.
-        # ExecutionTimeLimit 0 = sem limite: processo residente nao expira.
-        # StartWhenAvailable: se a maquina estava desligada na hora do
-        # gatilho, roda assim que possivel.
+        # PRINCIPAL EXPLICITO, com o MENOR privilegio que funciona.
+        #
+        # RunLevel Limited de proposito: o worker nao precisa de privilegio
+        # elevado para rodar - so o REGISTRO da tarefa precisava. Registrar
+        # elevado e executar limitado e o par correto.
+        $principal = New-ScheduledTaskPrincipal `
+            -UserId "$env:USERDOMAIN\$env:USERNAME" `
+            -LogonType Interactive `
+            -RunLevel Limited
+
         $configuracoes = New-ScheduledTaskSettingsSet `
             -AllowStartIfOnBatteries `
             -DontStopIfGoingOnBatteries `
@@ -144,8 +166,68 @@ if (-not $PularInicioAutomatico) {
             -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
             -MultipleInstances IgnoreNew
 
-        Register-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -Action $acao -Trigger $gatilhos -Settings $configuracoes -Description "Patrono Generation Worker - processa videos do Digital Twin localmente (reinicia sozinho se cair)" -Force | Out-Null
-        Write-Host "Inicio automatico configurado, com reinicio automatico a cada 2 min se o processo cair." -ForegroundColor Green
+        # IDEMPOTENCIA: se a tarefa ja existe, o -Force a substitui. Rodar o
+        # setup de novo atualiza a mesma tarefa, sem duplicar e sem erro.
+        $existente = Get-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -ErrorAction SilentlyContinue
+        if ($existente) {
+            Write-Host "Tarefa ja existe - sera atualizada (sem duplicar)." -ForegroundColor Yellow
+            Write-PatronoLog "Tarefa existente encontrada; atualizando." "INFO" "setup.log"
+        }
+
+        $registrada = $null
+        try {
+            $registrada = Register-ScheduledTask `
+                -TaskName "PatronoDigitalTwinWorker" `
+                -Action $acao `
+                -Trigger $gatilhos `
+                -Principal $principal `
+                -Settings $configuracoes `
+                -Description "Patrono Generation Worker - processa videos do Digital Twin localmente (reinicia sozinho se cair)" `
+                -Force `
+                -ErrorAction Stop
+        } catch {
+            # DIAGNOSTICO COMPLETO no lugar de "provavelmente e politica do TI".
+            Write-Host ""
+            Write-Host "FALHA AO REGISTRAR A TAREFA" -ForegroundColor Red
+            Write-Host "  etapa           : Register-ScheduledTask" -ForegroundColor Red
+            Write-Host "  excecao         : $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "  tipo            : $($_.Exception.GetType().FullName)" -ForegroundColor Red
+            Write-Host "  usuario atual   : $env:USERDOMAIN\$env:USERNAME" -ForegroundColor Red
+            Write-Host "  elevado         : $(Test-PatronoElevado)" -ForegroundColor Red
+            Write-Host "  admin local     : $(Test-PatronoAdministradorLocal)" -ForegroundColor Red
+            if ($existente) {
+                Write-Host "  tarefa existente: SIM" -ForegroundColor Red
+                Write-Host "  principal atual : $($existente.Principal.UserId) / RunLevel $($existente.Principal.RunLevel)" -ForegroundColor Red
+            } else {
+                Write-Host "  tarefa existente: NAO" -ForegroundColor Red
+            }
+            Write-PatronoLog "Falha ao registrar tarefa: $($_.Exception.Message)" "ERRO" "setup.log"
+            throw
+        }
+
+        # VALIDACAO: le de volta do Windows o que realmente ficou gravado.
+        # A versao anterior deste script imprimia "configurado" mesmo quando o
+        # registro falhava, porque nao conferia o resultado.
+        $conferida = Get-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -ErrorAction SilentlyContinue
+        if (-not $conferida) {
+            Write-PatronoLog "Registro retornou sem erro, mas a tarefa nao foi encontrada." "ERRO" "setup.log"
+            throw "A tarefa nao foi encontrada apos o registro."
+        }
+
+        Write-Host ""
+        Write-Host "TAREFA REGISTRADA COM SUCESSO" -ForegroundColor Green
+        Write-Host "  nome            : $($conferida.TaskName)"
+        Write-Host "  estado          : $($conferida.State)"
+        Write-Host "  principal       : $($conferida.Principal.UserId)"
+        Write-Host "  tipo de logon   : $($conferida.Principal.LogonType)"
+        Write-Host "  nivel           : $($conferida.Principal.RunLevel)"
+        Write-Host "  gatilhos        : $($conferida.Triggers.Count) (AtLogOn)"
+        Write-Host "  reinicio        : ate $($conferida.Settings.RestartCount)x a cada $($conferida.Settings.RestartInterval)"
+        Write-Host "  multiplas inst. : $($conferida.Settings.MultipleInstances)"
+        Write-Host "  limite de tempo : $($conferida.Settings.ExecutionTimeLimit) (0 = sem limite)"
+        Write-Host "  comando         : powershell.exe -File start-digital-twin-worker.ps1 -VenvPath $venvPath"
+        Write-PatronoLog "Tarefa registrada: principal=$($conferida.Principal.UserId) gatilhos=$($conferida.Triggers.Count) restart=$($conferida.Settings.RestartCount)" "INFO" "setup.log"
+        Write-Host ""
         Write-Host "Para desativar depois: .\stop-digital-twin-worker.ps1 -RemoverInicioAutomatico" -ForegroundColor Green
     } else {
         Write-Host "Ok, o inicio automatico nao foi configurado. Use start-digital-twin-worker.ps1 quando quiser processar." -ForegroundColor Yellow

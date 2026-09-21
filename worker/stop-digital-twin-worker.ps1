@@ -1,7 +1,7 @@
 # stop-digital-twin-worker.ps1 (Rodada 9)
 #
 # Para o Patrono Generation Worker e, se solicitado, remove o
-# agendamento de inicio automatico. Nunca apaga jobs em andamento —
+# agendamento de inicio automatico. Nunca apaga jobs em andamento -
 # o worker offline eh tratado normalmente pela fila (heartbeat expira,
 # outro worker retoma).
 
@@ -9,12 +9,23 @@ param(
     [switch]$RemoverInicioAutomatico
 )
 
+. (Join-Path $PSScriptRoot "patrono-comum.ps1")
+
+# Remover a tarefa exige o mesmo privilegio que criar. Auto-eleva so quando
+# o -RemoverInicioAutomatico for pedido; parar o processo nao precisa disso.
+if ($RemoverInicioAutomatico) {
+    Invoke-PatronoAutoElevacao -CaminhoScript $PSCommandPath -Parametros @{
+        RemoverInicioAutomatico = $RemoverInicioAutomatico
+    } | Out-Null
+}
+
 $processo = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*digital-twin-worker.ts*" }
 
 if ($processo) {
     foreach ($p in $processo) {
         Write-Host "Parando worker (PID $($p.ProcessId))..." -ForegroundColor Cyan
         Stop-Process -Id $p.ProcessId -Force
+        Write-PatronoLog "Worker parado manualmente (PID $($p.ProcessId))." "AVISO"
     }
     Write-Host "Worker parado." -ForegroundColor Green
 } else {
