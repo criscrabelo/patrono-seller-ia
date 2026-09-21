@@ -23,11 +23,15 @@ import {
 } from '../lib/atribuicao-clique'
 import {
   ORIGENS_DE_REGISTRO,
+  ORIGENS_DECLARAVEIS_POR_ROTA,
   ORIGEM_NAO_VERIFICADA,
+  ORIGEM_RELATADA_PELA_USUARIA,
+  EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL,
   DESCRICAO_DA_ORIGEM,
   ehOperacaoReal,
   ehOrigemDeRegistro,
   normalizarOrigemDeRegistro,
+  podeSerDeclaradaPorRota,
 } from '../lib/proveniencia'
 import { ML_DATA_ORIGINS } from '../lib/ml-types'
 
@@ -78,7 +82,7 @@ describe('Bloco 1 — proveniência é declarada, nunca inferida', () => {
 
   test('REAL_OPERATION é operação real; as demais NÃO são', () => {
     assert.equal(ehOperacaoReal('REAL_OPERATION'), true)
-    for (const o of ['SEED', 'TEST_FIXTURE', 'DEMO', 'SYNTHETIC_TEST', 'UNVERIFIED']) {
+    for (const o of ['USER_REPORTED', 'SEED', 'TEST_FIXTURE', 'DEMO', 'SYNTHETIC_TEST', 'UNVERIFIED']) {
       assert.equal(ehOperacaoReal(o), false, `${o} jamais pode contar como operação real`)
     }
   })
@@ -123,9 +127,12 @@ describe('Bloco 1 — o compilador obriga a declarar', () => {
     assert.match(fonte, /dataOrigin: input\.dataOrigin,/)
   })
 
-  test('as rotas autenticadas declaram REAL_OPERATION', () => {
+  test('as rotas autenticadas declaram a origem — e ela NÃO é REAL_OPERATION', () => {
+    // Asserção revista na microcorreção: na rodada anterior estas rotas
+    // declaravam REAL_OPERATION porque a sessão estava autenticada. Isso
+    // provava quem registrou, nunca que a venda aconteceu.
     for (const rota of ['app/api/vendas/route.ts', 'app/api/links/[id]/venda/route.ts']) {
-      assert.match(lerFonte(rota), /dataOrigin: 'REAL_OPERATION'/, `${rota} precisa declarar a origem`)
+      assert.match(lerCodigo(rota), /dataOrigin: 'USER_REPORTED'/, `${rota} precisa declarar a origem`)
     }
   })
 
@@ -442,5 +449,159 @@ describe('Esta rodada NÃO liga o ML', () => {
     const vendas = lerFonte('lib/vendas-comissoes.ts')
     // A única menção permitida é a declaração vinda de quem chama.
     assert.ok(!/= 'REAL_OPERATION'|\?\? 'REAL_OPERATION'/.test(vendas))
+  })
+})
+
+// ── MICROCORREÇÃO: rota autenticada NÃO é prova de operação real ────────
+
+describe('Correção 1 — separar origem do REGISTRO de evidência de OPERAÇÃO', () => {
+  test('USER_REPORTED existe e NÃO conta como operação real', () => {
+    assert.equal(ORIGEM_RELATADA_PELA_USUARIA, 'USER_REPORTED')
+    assert.ok(ehOrigemDeRegistro('USER_REPORTED'))
+    assert.equal(ehOperacaoReal('USER_REPORTED'), false)
+  })
+
+  test('USER_REPORTED não pertence às origens de ML', () => {
+    // Se pertencesse, entraria na contagem do MLReadinessGate e um relato
+    // sem evidência viraria amostra de treino.
+    assert.ok(!(ML_DATA_ORIGINS as readonly string[]).includes('USER_REPORTED'))
+  })
+
+  test('NENHUMA rota pode declarar REAL_OPERATION', () => {
+    assert.ok(!(ORIGENS_DECLARAVEIS_POR_ROTA as readonly string[]).includes('REAL_OPERATION'))
+    assert.equal(podeSerDeclaradaPorRota('REAL_OPERATION'), false)
+    assert.equal(podeSerDeclaradaPorRota('USER_REPORTED'), true)
+  })
+
+  test('VARREDURA: nenhuma rota do app escreve REAL_OPERATION', () => {
+    // É a asserção central desta correção. "Veio da tela logada" prova quem
+    // registrou, nunca que a venda aconteceu.
+    const rotas = [
+      'app/api/vendas/route.ts',
+      'app/api/links/[id]/venda/route.ts',
+    ]
+    for (const rota of rotas) {
+      const codigo = lerCodigo(rota)
+      assert.ok(
+        !/dataOrigin:\s*'REAL_OPERATION'/.test(codigo),
+        `${rota} não pode declarar operação real — ela não tem como prová-la`
+      )
+      assert.match(codigo, /dataOrigin: 'USER_REPORTED'/, `${rota} precisa declarar USER_REPORTED`)
+    }
+  })
+
+  test('venda criada pela tela, sem evidência externa, fica USER_REPORTED', () => {
+    // Contrato de ponta a ponta lido do código: a rota declara USER_REPORTED,
+    // e USER_REPORTED não é operação real. Logo a venda da tela não alimenta
+    // o ML enquanto não houver evidência.
+    assert.match(lerCodigo('app/api/vendas/route.ts'), /dataOrigin: 'USER_REPORTED'/)
+    assert.equal(ehOperacaoReal('USER_REPORTED'), false)
+  })
+
+  test('as evidências aceitas estão declaradas, e nenhuma é "rota autenticada"', () => {
+    assert.ok(EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL.length >= 4)
+    for (const e of EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL) {
+      assert.ok(!/ROTA|AUTENTICAD|SESSAO|LOGIN/i.test(e), `${e} não é evidência de operação comercial`)
+    }
+  })
+
+  test('nenhuma promoção automática para REAL_OPERATION no código', () => {
+    for (const arq of ['lib/proveniencia.ts', 'lib/vendas-comissoes.ts']) {
+      const codigo = lerCodigo(arq)
+      // Comparar com REAL_OPERATION e legitimo (`ehOperacaoReal`); ATRIBUIR
+      // nao e. O regex distingue os dois casos.
+      assert.ok(
+        !/(?<![=!<>])=[^=]\s*'REAL_OPERATION'|\?\?\s*'REAL_OPERATION'|dataOrigin:\s*'REAL_OPERATION'/.test(codigo),
+        `${arq} não pode promover nada a REAL_OPERATION nesta rodada`
+      )
+    }
+  })
+
+  test('toda origem — inclusive USER_REPORTED — tem descrição', () => {
+    for (const o of ORIGENS_DE_REGISTRO) {
+      assert.ok(DESCRICAO_DA_ORIGEM[o]?.length > 0, `falta descrição para ${o}`)
+    }
+    assert.match(DESCRICAO_DA_ORIGEM.USER_REPORTED, /não|NÃO/)
+  })
+
+  test('UNVERIFIED continua sendo o default do banco', () => {
+    assert.equal(ORIGEM_NAO_VERIFICADA, 'UNVERIFIED')
+    assert.match(lerFonte('prisma/schema.prisma'), /dataOrigin String @default\("UNVERIFIED"\)/)
+  })
+})
+
+// ── MICROCORREÇÃO: validar a cadeia da venda ANTES de gravar ────────────
+
+describe('Correção 2 — cadeia produto → link → conteúdo validada antes de gravar', () => {
+  const vendas = lerCodigo('lib/vendas-comissoes.ts')
+
+  test('a validação roda ANTES do atalho de idempotência', () => {
+    // Um reenvio com cadeia incoerente tem de falhar igual ao primeiro
+    // envio; devolver a venda anterior calada esconderia o erro.
+    const corpo = vendas.slice(vendas.indexOf('export async function registrarResultado'))
+    const posValidacao = corpo.indexOf('await validarCadeiaDaVenda(input)')
+    const posIdempotencia = corpo.indexOf('if (input.idempotencyKey)')
+    assert.ok(posValidacao > 0, 'registrarResultado precisa validar a cadeia')
+    assert.ok(posValidacao < posIdempotencia, 'a validação não pode ficar depois da idempotência')
+  })
+
+  test('link é conferido contra workspace E produto', () => {
+    assert.match(vendas, /link\.workspaceId !== input\.workspaceId/)
+    assert.match(vendas, /link\.produtoId !== input\.productId/)
+  })
+
+  test('conteúdo é conferido contra workspace E produto', () => {
+    assert.match(vendas, /conteudo\.workspaceId !== input\.workspaceId/)
+    assert.match(vendas, /conteudo\.produtoId !== input\.productId/)
+  })
+
+  test('link inativo NÃO é rejeitado — e a regra está escrita', () => {
+    // `ativo` diz se o link ainda redireciona, não se já produziu venda.
+    assert.ok(!/link\.ativo/.test(vendas), 'rejeitar link inativo impediria registrar venda de campanha encerrada')
+    assert.match(lerFonte('lib/vendas-comissoes.ts'), /LINK INATIVO É ACEITO, DE PROPÓSITO/)
+  })
+
+  test('a validação é feita no ponto único, não só na rota', () => {
+    // Validar só na rota deixaria seed, script e chamada futura livres para
+    // gravar venda com link de outro negócio.
+    assert.match(vendas, /async function validarCadeiaDaVenda/)
+  })
+
+  test('erro de cadeia é tipado e vira 400, não 500', () => {
+    assert.match(vendas, /export class CadeiaDaVendaInconsistente/)
+    const rota = lerCodigo('app/api/vendas/route.ts')
+    assert.match(rota, /e instanceof CadeiaDaVendaInconsistente/)
+    assert.match(rota, /status: 400/)
+  })
+
+  test('id de outro workspace não é confirmado na mensagem', () => {
+    // Dizer "existe, mas é de outro workspace" já vaza informação sobre o
+    // outro negócio. As duas mensagens são iguais de propósito.
+    assert.match(vendas, /'linkId', 'OUTRO_WORKSPACE', 'O link informado não existe\.'/)
+    assert.match(vendas, /'contentId', 'OUTRO_WORKSPACE', 'O conteúdo informado não existe\.'/)
+  })
+})
+
+describe('Correção — nada desta rodada alimenta ML', () => {
+  test('nenhum arquivo tocado gera MLFeatureSnapshot', () => {
+    const tocados = [
+      'lib/proveniencia.ts',
+      'lib/atribuicao-clique.ts',
+      'lib/vendas-comissoes.ts',
+      'app/api/vendas/route.ts',
+      'app/api/links/[id]/venda/route.ts',
+      'app/api/l/[slug]/route.ts',
+    ]
+    for (const arq of tocados) {
+      assert.ok(
+        !/salvarFeatureSnapshot|registrarLabelNoSnapshot|mLFeatureSnapshot|extrairFeaturesDeConteudo/.test(lerFonte(arq)),
+        `${arq} não deve tocar o feature store`
+      )
+    }
+  })
+
+  test('com USER_REPORTED, a contagem de dado elegível para ML continua zero', () => {
+    const origensDeVendaHoje = ['USER_REPORTED', 'TEST_FIXTURE', 'SEED', 'DEMO', 'SYNTHETIC_TEST', 'UNVERIFIED']
+    assert.equal(origensDeVendaHoje.filter(ehOperacaoReal).length, 0)
   })
 })

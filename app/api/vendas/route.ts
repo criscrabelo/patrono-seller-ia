@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { registrarResultado, atualizarStatusVenda } from '@/lib/vendas-comissoes'
+import { registrarResultado, atualizarStatusVenda, CadeiaDaVendaInconsistente } from '@/lib/vendas-comissoes'
 import { z } from 'zod'
 
 // "Vendas e Comissões" → "Registrar resultado" (design_handoff §4).
@@ -71,29 +71,41 @@ export async function POST(req: NextRequest) {
     if (!programa) return NextResponse.json({ error: 'Programa não encontrado' }, { status: 400 })
   }
 
-  const resultado = await registrarResultado({
-    workspaceId: session.user.workspaceId,
-    actorUserId: session.user.id,
-    // PROVENIÊNCIA (P0.2 Bloco 1): esta rota só é alcançada por usuária
-    // autenticada, registrando um resultado no workspace dela. É a definição
-    // de operação real. Seeds e testes chamam `registrarResultado()`
-    // diretamente e declaram SEED/TEST_FIXTURE — nunca passam por aqui.
-    //
-    // Limite honesto: se a proprietária registrar uma venda de treino pela
-    // tela de verdade, isso entra como REAL_OPERATION. Nenhuma tecnologia
-    // resolve isso; só a correção explícita e auditada resolveria.
-    dataOrigin: 'REAL_OPERATION',
-    productId: parsed.data.productId,
-    affiliateProgramId: parsed.data.affiliateProgramId ?? null,
-    linkId: parsed.data.linkId ?? null,
-    contentId: parsed.data.contentId ?? null,
-    date: parsed.data.date ? new Date(parsed.data.date) : undefined,
-    amount: parsed.data.amount ?? null,
-    status: parsed.data.status,
-    expectedCommission: parsed.data.expectedCommission ?? null,
-    notes: parsed.data.notes ?? null,
-    idempotencyKey: parsed.data.idempotencyKey ?? null,
-  })
+  let resultado
+  try {
+    resultado = await registrarResultado({
+      workspaceId: session.user.workspaceId,
+      actorUserId: session.user.id,
+      // PROVENIÊNCIA (P0.2 Bloco 1, corrigido).
+      //
+      // Esta rota sabe QUEM criou o registro — usuária autenticada, no
+      // workspace dela. Não sabe SE a operação comercial aconteceu: uma venda
+      // de treino digitada aqui é indistinguível de uma venda real.
+      //
+      // Por isso declara USER_REPORTED, e não REAL_OPERATION. O relato vale
+      // para a contabilidade da proprietária e para as telas; para ensinar o
+      // ML seria preciso evidência externa (provider, conciliação, comissão
+      // com origem verificável ou correção auditada), que esta rota não tem.
+      dataOrigin: 'USER_REPORTED',
+      productId: parsed.data.productId,
+      affiliateProgramId: parsed.data.affiliateProgramId ?? null,
+      linkId: parsed.data.linkId ?? null,
+      contentId: parsed.data.contentId ?? null,
+      date: parsed.data.date ? new Date(parsed.data.date) : undefined,
+      amount: parsed.data.amount ?? null,
+      status: parsed.data.status,
+      expectedCommission: parsed.data.expectedCommission ?? null,
+      notes: parsed.data.notes ?? null,
+      idempotencyKey: parsed.data.idempotencyKey ?? null,
+    })
+  } catch (e) {
+    // Cadeia incoerente é dado inválido de quem chamou, não falha do
+    // servidor — 400, com o campo nomeado para a tela poder destacá-lo.
+    if (e instanceof CadeiaDaVendaInconsistente) {
+      return NextResponse.json({ error: e.message, campo: e.campo }, { status: 400 })
+    }
+    throw e
+  }
 
   return NextResponse.json(resultado, { status: 201 })
 }

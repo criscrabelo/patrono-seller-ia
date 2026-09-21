@@ -249,6 +249,94 @@ type RegistrarResultadoInput = {
  *    antigas que não enviam chave, mas não é garantia forte sozinha.
  */
 /**
+ * Erro de coerência da cadeia da venda. Separado de erro técnico de
+ * propósito: a rota devolve 400 (dado inconsistente enviado), não 500.
+ */
+export class CadeiaDaVendaInconsistente extends Error {
+  constructor(
+    public readonly campo: 'linkId' | 'contentId',
+    public readonly motivo: 'NAO_ENCONTRADO' | 'OUTRO_WORKSPACE' | 'OUTRO_PRODUTO',
+    mensagem: string
+  ) {
+    super(mensagem)
+    this.name = 'CadeiaDaVendaInconsistente'
+  }
+}
+
+/**
+ * Valida a cadeia produto → link → conteúdo ANTES de gravar a venda.
+ *
+ * ── POR QUE AQUI, E NÃO SÓ NA ROTA ──────────────────────────────────────
+ * Este é o ponto único por onde toda venda nasce. Validar só na rota
+ * deixaria seeds, scripts e chamadas futuras livres para gravar uma venda
+ * apontando para link de outro workspace — e o defeito só apareceria depois,
+ * como número errado numa tela.
+ *
+ * ── POR QUE NÃO BASTA A ATRIBUIÇÃO ──────────────────────────────────────
+ * A regra de atribuição recusa clique incoerente, mas isso é tarde demais:
+ * a venda já teria sido gravada com `linkId` de outro negócio, e o relatório
+ * por link somaria receita no lugar errado. Atribuição protege o CLIQUE;
+ * esta função protege a VENDA.
+ *
+ * ── LINK INATIVO É ACEITO, DE PROPÓSITO ─────────────────────────────────
+ * `LinkDinamico.ativo` controla se o link AINDA REDIRECIONA, não se ele já
+ * produziu venda. Uma campanha encerrada tem o link desativado e continua
+ * gerando comissão semanas depois; recusar o registro obrigaria a
+ * proprietária a reativar um link que não deveria mais funcionar, ou a
+ * perder a venda. O vínculo histórico vale independentemente de o link
+ * estar ativo hoje.
+ */
+async function validarCadeiaDaVenda(input: {
+  workspaceId: string
+  productId: string
+  linkId?: string | null
+  contentId?: string | null
+}): Promise<void> {
+  if (input.linkId) {
+    const link = await prisma.linkDinamico.findUnique({
+      where: { id: input.linkId },
+      select: { workspaceId: true, produtoId: true },
+    })
+    if (!link) {
+      throw new CadeiaDaVendaInconsistente('linkId', 'NAO_ENCONTRADO', 'O link informado não existe.')
+    }
+    // Mensagem deliberadamente igual para "não existe" e "é de outro
+    // workspace": confirmar a existência de um id alheio já vazaria
+    // informação sobre o outro negócio.
+    if (link.workspaceId !== input.workspaceId) {
+      throw new CadeiaDaVendaInconsistente('linkId', 'OUTRO_WORKSPACE', 'O link informado não existe.')
+    }
+    if (link.produtoId !== input.productId) {
+      throw new CadeiaDaVendaInconsistente(
+        'linkId',
+        'OUTRO_PRODUTO',
+        'O link informado é de outro produto — uma venda não pode ser creditada a um link que não aponta para o produto vendido.'
+      )
+    }
+  }
+
+  if (input.contentId) {
+    const conteudo = await prisma.conteudo.findUnique({
+      where: { id: input.contentId },
+      select: { workspaceId: true, produtoId: true },
+    })
+    if (!conteudo) {
+      throw new CadeiaDaVendaInconsistente('contentId', 'NAO_ENCONTRADO', 'O conteúdo informado não existe.')
+    }
+    if (conteudo.workspaceId !== input.workspaceId) {
+      throw new CadeiaDaVendaInconsistente('contentId', 'OUTRO_WORKSPACE', 'O conteúdo informado não existe.')
+    }
+    if (conteudo.produtoId !== input.productId) {
+      throw new CadeiaDaVendaInconsistente(
+        'contentId',
+        'OUTRO_PRODUTO',
+        'O conteúdo informado é de outro produto — creditar a venda a ele distorceria o desempenho por conteúdo.'
+      )
+    }
+  }
+}
+
+/**
  * Busca os cliques candidatos e aplica a regra determinística
  * (`lib/atribuicao-clique.ts`). A CONSULTA já filtra por workspace e link —
  * a função pura filtra de novo. A redundância é intencional: se um dia a
@@ -293,6 +381,11 @@ async function resolverAtribuicao(input: {
 }
 
 export async function registrarResultado(input: RegistrarResultadoInput) {
+  // Antes de QUALQUER coisa — inclusive antes do atalho de idempotência.
+  // Um reenvio com cadeia inconsistente tem de falhar igual ao primeiro
+  // envio; devolver a venda anterior calada esconderia o erro de quem chama.
+  await validarCadeiaDaVenda(input)
+
   if (input.idempotencyKey) {
     const existente = await prisma.sale.findUnique({
       where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey } },

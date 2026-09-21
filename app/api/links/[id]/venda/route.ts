@@ -41,9 +41,9 @@ export async function POST(
   const resultado = await registrarResultado({
     workspaceId: session.user.workspaceId,
     actorUserId: session.user.id,
-    // PROVENIÊNCIA (P0.2 Bloco 1): rota autenticada, venda registrada pela
-    // proprietária a partir de um link real do workspace dela.
-    dataOrigin: 'REAL_OPERATION',
+    // PROVENIÊNCIA (P0.2 Bloco 1, corrigido): a rota sabe quem registrou,
+    // não sabe se a venda ocorreu. Ver lib/proveniencia.ts.
+    dataOrigin: 'USER_REPORTED',
     productId: link.produtoId,
     linkId: link.id,
     amount: valor,

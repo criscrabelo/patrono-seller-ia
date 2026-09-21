@@ -13,7 +13,7 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '../lib/prisma'
-import { registrarResultado } from '../lib/vendas-comissoes'
+import { registrarResultado, CadeiaDaVendaInconsistente } from '../lib/vendas-comissoes'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
 
@@ -21,9 +21,12 @@ let workspaceA = ''
 let workspaceB = ''
 let userId = ''
 let produtoA = ''
+let produtoA2 = ''
+let produtoB = ''
 let linkA1 = ''
 let linkA2 = ''
 let linkB1 = ''
+let linkOutroProduto = ''
 const criados: string[] = []
 
 async function limpar(ws: string) {
@@ -82,7 +85,8 @@ describe(
           })
         ).id
       produtoA = await criarProduto(workspaceA)
-      const produtoB = await criarProduto(workspaceB)
+      produtoA2 = await criarProduto(workspaceA)
+      produtoB = await criarProduto(workspaceB)
 
       const criarLink = async (ws: string, produtoId: string, slug: string) =>
         (
@@ -101,6 +105,7 @@ describe(
       linkA1 = await criarLink(workspaceA, produtoA, `p02-a1-${marca}`)
       linkA2 = await criarLink(workspaceA, produtoA, `p02-a2-${marca}`)
       linkB1 = await criarLink(workspaceB, produtoB, `p02-b1-${marca}`)
+      linkOutroProduto = await criarLink(workspaceA, produtoA2, `p02-a3-${marca}`)
     })
 
     after(async () => {
@@ -319,6 +324,179 @@ describe(
         assert.equal(v.clickEvent!.linkId, v.linkId, 'clique de outro link atribuído')
         assert.ok(v.clickEvent!.createdAt.getTime() < v.date.getTime(), 'clique posterior à venda atribuído')
       }
+    })
+    // ── Microcorrecao: cadeia da venda validada antes de gravar ─────────
+
+    async function esperarRecusa(
+      entrada: Parameters<typeof registrarResultado>[0],
+      motivo: 'NAO_ENCONTRADO' | 'OUTRO_WORKSPACE' | 'OUTRO_PRODUTO',
+      campo: 'linkId' | 'contentId'
+    ) {
+      const antes = await prisma.sale.count({ where: { workspaceId: entrada.workspaceId } })
+      let erro: unknown = null
+      try {
+        await registrarResultado(entrada)
+      } catch (e) {
+        erro = e
+      }
+      assert.ok(erro instanceof CadeiaDaVendaInconsistente, 'deveria recusar com erro tipado')
+      assert.equal((erro as CadeiaDaVendaInconsistente).motivo, motivo)
+      assert.equal((erro as CadeiaDaVendaInconsistente).campo, campo)
+      const depois = await prisma.sale.count({ where: { workspaceId: entrada.workspaceId } })
+      assert.equal(depois, antes, 'nenhuma venda pode ter sido gravada')
+    }
+
+    test('link de OUTRO WORKSPACE e recusado, e nada e gravado', async () => {
+      await limpar(workspaceA)
+      await esperarRecusa(
+        {
+          workspaceId: workspaceA,
+          actorUserId: userId,
+          dataOrigin: 'TEST_FIXTURE',
+          productId: produtoA,
+          linkId: linkB1,
+          amount: 10,
+          status: 'CONFIRMED',
+          idempotencyKey: `link-outro-ws-${Date.now()}`,
+        },
+        'OUTRO_WORKSPACE',
+        'linkId'
+      )
+    })
+
+    test('link de OUTRO PRODUTO do mesmo workspace e recusado', async () => {
+      await limpar(workspaceA)
+      await esperarRecusa(
+        {
+          workspaceId: workspaceA,
+          actorUserId: userId,
+          dataOrigin: 'TEST_FIXTURE',
+          productId: produtoA,
+          linkId: linkOutroProduto,
+          amount: 10,
+          status: 'CONFIRMED',
+          idempotencyKey: `link-outro-produto-${Date.now()}`,
+        },
+        'OUTRO_PRODUTO',
+        'linkId'
+      )
+    })
+
+    test('link inexistente e recusado', async () => {
+      await limpar(workspaceA)
+      await esperarRecusa(
+        {
+          workspaceId: workspaceA,
+          actorUserId: userId,
+          dataOrigin: 'TEST_FIXTURE',
+          productId: produtoA,
+          linkId: 'link-que-nao-existe',
+          amount: 10,
+          status: 'CONFIRMED',
+          idempotencyKey: `link-inexistente-${Date.now()}`,
+        },
+        'NAO_ENCONTRADO',
+        'linkId'
+      )
+    })
+
+    test('link CORRETO e aceito', async () => {
+      await limpar(workspaceA)
+      const { sale } = await registrarResultado({
+        workspaceId: workspaceA,
+        actorUserId: userId,
+        dataOrigin: 'TEST_FIXTURE',
+        productId: produtoA,
+        linkId: linkA1,
+        amount: 10,
+        status: 'CONFIRMED',
+        idempotencyKey: `link-correto-${Date.now()}`,
+      })
+      assert.equal(sale.linkId, linkA1)
+    })
+
+    test('link INATIVO continua aceito — campanha encerrada ainda gera venda', async () => {
+      await limpar(workspaceA)
+      await prisma.linkDinamico.update({ where: { id: linkA2 }, data: { ativo: false } })
+      try {
+        const { sale } = await registrarResultado({
+          workspaceId: workspaceA,
+          actorUserId: userId,
+          dataOrigin: 'TEST_FIXTURE',
+          productId: produtoA,
+          linkId: linkA2,
+          amount: 10,
+          status: 'CONFIRMED',
+          idempotencyKey: `link-inativo-${Date.now()}`,
+        })
+        assert.equal(sale.linkId, linkA2)
+      } finally {
+        await prisma.linkDinamico.update({ where: { id: linkA2 }, data: { ativo: true } })
+      }
+    })
+
+    test('venda SEM link continua possivel', async () => {
+      await limpar(workspaceA)
+      const { sale } = await registrarResultado({
+        workspaceId: workspaceA,
+        actorUserId: userId,
+        dataOrigin: 'TEST_FIXTURE',
+        productId: produtoA,
+        amount: 10,
+        status: 'CONFIRMED',
+        idempotencyKey: `sem-link-ok-${Date.now()}`,
+      })
+      assert.equal(sale.linkId, null)
+      assert.equal(sale.attributionMethod, 'SEM_LINK_NA_VENDA')
+    })
+
+    test('reenvio com cadeia incoerente falha de novo — a idempotencia nao esconde o erro', async () => {
+      await limpar(workspaceA)
+      const chave = `reenvio-incoerente-${Date.now()}`
+      const entrada = {
+        workspaceId: workspaceA,
+        actorUserId: userId,
+        dataOrigin: 'TEST_FIXTURE' as const,
+        productId: produtoA,
+        linkId: linkB1,
+        amount: 10,
+        status: 'CONFIRMED' as const,
+        idempotencyKey: chave,
+      }
+      await esperarRecusa(entrada, 'OUTRO_WORKSPACE', 'linkId')
+      await esperarRecusa(entrada, 'OUTRO_WORKSPACE', 'linkId')
+    })
+
+    test('venda da TELA fica USER_REPORTED e nao conta como operacao real', async () => {
+      await limpar(workspaceA)
+      // Reproduz exatamente o que a rota autenticada faz hoje.
+      const { sale } = await registrarResultado({
+        workspaceId: workspaceA,
+        actorUserId: userId,
+        dataOrigin: 'USER_REPORTED',
+        productId: produtoA,
+        linkId: linkA1,
+        amount: 10,
+        status: 'CONFIRMED',
+        idempotencyKey: `tela-${Date.now()}`,
+      })
+      assert.equal(sale.dataOrigin, 'USER_REPORTED')
+      const reais = await prisma.sale.count({ where: { workspaceId: workspaceA, dataOrigin: 'REAL_OPERATION' } })
+      assert.equal(reais, 0, 'venda da tela nunca pode virar operacao real sozinha')
+    })
+
+    test('NENHUMA venda em nenhum workspace de teste ficou REAL_OPERATION', async () => {
+      const reais = await prisma.sale.count({
+        where: { workspaceId: { in: [workspaceA, workspaceB] }, dataOrigin: 'REAL_OPERATION' },
+      })
+      assert.equal(reais, 0)
+    })
+
+    test('nenhum MLFeatureSnapshot foi criado por esta rodada', async () => {
+      const snapshots = await prisma.mLFeatureSnapshot.count({
+        where: { workspaceId: { in: [workspaceA, workspaceB] } },
+      })
+      assert.equal(snapshots, 0, 'proveniencia e atribuicao nao alimentam ML nesta rodada')
     })
   }
 )

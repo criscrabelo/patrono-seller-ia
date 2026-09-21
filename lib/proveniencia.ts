@@ -35,7 +35,57 @@ import { ML_DATA_ORIGINS, type MLDataOrigin } from './ml-types'
  */
 export const ORIGEM_NAO_VERIFICADA = 'UNVERIFIED' as const
 
-export const ORIGENS_DE_REGISTRO = [...ML_DATA_ORIGINS, ORIGEM_NAO_VERIFICADA] as const
+/**
+ * Registro relatado pela proprietária pela tela autenticada.
+ *
+ * ── POR QUE ESTE ESTADO PRECISOU EXISTIR ────────────────────────────────
+ * Antes, as rotas autenticadas declaravam `REAL_OPERATION` direto. Mas
+ * "veio da tela logada" prova apenas QUEM criou o registro — não prova que a
+ * operação comercial aconteceu. Uma venda de treino digitada na tela de
+ * verdade é indistinguível de uma venda real por esse critério, e entraria
+ * no treino do modelo como se fosse receita.
+ *
+ * `USER_REPORTED` separa as duas perguntas:
+ *   - origem do REGISTRO      → resolvida: foi a proprietária, autenticada;
+ *   - EVIDÊNCIA de operação   → ainda não existe.
+ *
+ * Por isso `ehOperacaoReal('USER_REPORTED') === false`. É um relato de boa-fé,
+ * suficiente para a contabilidade da proprietária e para as telas — e
+ * insuficiente para ensinar o ML.
+ */
+export const ORIGEM_RELATADA_PELA_USUARIA = 'USER_REPORTED' as const
+
+/**
+ * EVIDÊNCIAS que poderiam promover um registro a `REAL_OPERATION`.
+ *
+ * Listadas aqui como contrato do que virá, NÃO implementadas nesta rodada:
+ * a promoção é o Bloco 3 do P0.2. Enquanto ela não existir, NENHUM caminho
+ * de código escreve `REAL_OPERATION` — o valor continua no vocabulário
+ * porque é o que o ML consome, mas é inalcançável por rota.
+ *
+ *   1. confirmação vinda de provider/API/webhook oficial;
+ *   2. conciliação financeira (extrato, repasse, fatura);
+ *   3. comissão CONFIRMED/RECEIVED com origem verificável;
+ *   4. correção manual excepcional e auditada.
+ *
+ * Note que 1, 3 e 4 já têm onde morar no banco de hoje — `Sale.source`,
+ * `Commission.status` e `AuditLog` —, o que é justamente por que esta
+ * separação não exigiu coluna nova.
+ */
+export const EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL = [
+  'PROVIDER_OFICIAL',
+  'CONCILIACAO_FINANCEIRA',
+  'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL',
+  'CORRECAO_MANUAL_AUDITADA',
+] as const
+
+export type EvidenciaDeOperacaoReal = (typeof EVIDENCIAS_ACEITAS_PARA_OPERACAO_REAL)[number]
+
+export const ORIGENS_DE_REGISTRO = [
+  ...ML_DATA_ORIGINS,
+  ORIGEM_RELATADA_PELA_USUARIA,
+  ORIGEM_NAO_VERIFICADA,
+] as const
 export type OrigemDeRegistro = (typeof ORIGENS_DE_REGISTRO)[number]
 
 export function ehOrigemDeRegistro(valor: unknown): valor is OrigemDeRegistro {
@@ -62,9 +112,24 @@ export function ehOperacaoReal(valor: unknown): boolean {
   return normalizarOrigemDeRegistro(valor) === 'REAL_OPERATION'
 }
 
+/**
+ * Origens que uma ROTA pode declarar. `REAL_OPERATION` está fora de
+ * propósito: nenhuma rota tem como provar operação comercial, e poder
+ * declarar seria o mesmo que não ter a distinção.
+ */
+export const ORIGENS_DECLARAVEIS_POR_ROTA = [
+  ORIGEM_RELATADA_PELA_USUARIA,
+  ORIGEM_NAO_VERIFICADA,
+] as const
+
+export function podeSerDeclaradaPorRota(valor: unknown): boolean {
+  return (ORIGENS_DECLARAVEIS_POR_ROTA as readonly string[]).includes(String(valor))
+}
+
 /** Só para relatório/UI — nunca para decisão. */
 export const DESCRICAO_DA_ORIGEM: Record<OrigemDeRegistro, string> = {
-  REAL_OPERATION: 'Operação comercial real, registrada por usuária autenticada no workspace de produção.',
+  REAL_OPERATION: 'Operação comercial real COMPROVADA por evidência externa (provider, conciliação ou correção auditada). Nenhuma rota pode declarar esta origem — ela só é atingida por promoção com evidência.',
+  USER_REPORTED: 'Relatado pela proprietária pela tela autenticada. A origem do registro é conhecida; a operação comercial ainda NÃO foi comprovada. Vale para a contabilidade dela e para as telas — nunca para treinar o ML.',
   TEST_FIXTURE: 'Dado criado por teste automatizado.',
   DEMO: 'Dado criado para demonstração do sistema.',
   SEED: 'Dado criado por script de carga inicial.',
