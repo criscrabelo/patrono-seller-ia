@@ -21,6 +21,12 @@ if ($processo) {
 # Agendador de Tarefas para saber se o inicio automatico estava mesmo ativo.
 . (Join-Path $PSScriptRoot "patrono-comum.ps1")
 
+# Obtida UMA vez, imediatamente antes do bloco que a usa. A atribuicao havia
+# sumido na limpeza do bloco duplicado, e como patrono-comum.ps1 liga
+# Set-StrictMode -Version Latest, referenciar variavel nao inicializada
+# derruba o script em vez de apenas devolver vazio.
+$tarefa = Get-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -ErrorAction SilentlyContinue
+
 Write-Host ""
 if ($tarefa) {
     $info = Get-ScheduledTaskInfo -TaskName "PatronoDigitalTwinWorker" -ErrorAction SilentlyContinue
