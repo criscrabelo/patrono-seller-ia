@@ -84,6 +84,13 @@ export const MOTIVOS_RECUSA_PROMOCAO = [
   'MOTIVO_INSUFICIENTE',
   /** A "fonte verificada" não foi emitida por `verificarEvidencia()`. */
   'FONTE_NAO_VERIFICADA',
+  /**
+   * A fonte É legítima, mas foi verificada para OUTRO alvo — outra venda,
+   * outro workspace ou outra comissão. Motivo separado de propósito: "não
+   * foi verificada" e "foi verificada, mas para outra coisa" são problemas
+   * diferentes, e confundi-los esconderia uma tentativa de reaproveitamento.
+   */
+  'FONTE_NAO_CORRESPONDE_AO_ALVO',
   /** Evidência sobre comissão sem `commissionId`. */
   'COMISSAO_NAO_INFORMADA',
   /** A comissão indicada não confere: não existe, é de outra venda/workspace, ou não está CONFIRMED/RECEIVED. */
@@ -267,11 +274,36 @@ export function validarEvidenciaVerificada(
     return recusar('REFERENCIA_AUSENTE', 'A fonte verificada não trouxe referência externa.')
   }
 
+  // ── CORRESPONDÊNCIA EXATA COM O ALVO VERIFICADO ────────────────────
+  // Ser legítima não basta: a fonte tem de ter sido verificada PARA ESTE
+  // objeto. Sem isto, uma fonte emitida para a venda A do workspace A
+  // promoveria a venda B do workspace B — replay puro.
+  if (pedido.fonte.workspaceIdVerificado !== pedido.workspaceId) {
+    return recusar(
+      'FONTE_NAO_CORRESPONDE_AO_ALVO',
+      'A evidência foi verificada para outro workspace — uma verificação não vale fora do negócio em que foi feita.'
+    )
+  }
+  if (pedido.fonte.saleIdVerificado !== pedido.saleId) {
+    return recusar(
+      'FONTE_NAO_CORRESPONDE_AO_ALVO',
+      'A evidência foi verificada para outra venda — comprovar uma venda não comprova as demais.'
+    )
+  }
+
   if (pedido.fonte.tipo === 'COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL') {
     if (!textoUtil(pedido.commissionId)) {
       return recusar(
         'COMISSAO_NAO_INFORMADA',
         'Evidência sobre comissão precisa dizer QUAL comissão foi comprovada — referência genérica não basta.'
+      )
+    }
+    // Vale inclusive entre comissões da MESMA venda: conferir a comissão X
+    // não diz nada sobre a comissão Y.
+    if (pedido.fonte.commissionIdVerificado !== pedido.commissionId.trim()) {
+      return recusar(
+        'FONTE_NAO_CORRESPONDE_AO_ALVO',
+        'A evidência foi verificada para outra comissão — mesmo dentro da mesma venda, cada comissão precisa da sua conferência.'
       )
     }
     if (contexto?.comissaoComprovada !== true) {
@@ -296,6 +328,13 @@ interface EntradaInterna {
   responsavelUserId: string | null
   motivo: string | null
   verificadorId: string | null
+  /** Alvo que a fonte atestou. `null` na correção manual (não há fonte). */
+  alvoVerificado: {
+    workspaceId: string
+    saleId: string
+    commissionId: string | null
+    verificadaEm: string
+  } | null
   atorTipo: 'USUARIA' | 'VERIFICADOR'
   validar: (contexto: ContextoDaVenda) => ResultadoValidacao
 }
@@ -453,6 +492,13 @@ async function executarPromocao(entrada: EntradaInterna): Promise<ResultadoDaPro
           responsavelUserId: entrada.responsavelUserId,
           verificadorId: entrada.verificadorId,
           commissionId: entrada.commissionId,
+          // ALVO que a verificação atestou. Permite conferir depois que a
+          // evidência não foi reaproveitada de outro objeto. Nunca contém
+          // credencial: só ids do próprio sistema e o carimbo de tempo.
+          workspaceIdVerificado: entrada.alvoVerificado?.workspaceId ?? null,
+          saleIdVerificado: entrada.alvoVerificado?.saleId ?? null,
+          commissionIdVerificado: entrada.alvoVerificado?.commissionId ?? null,
+          verificadaEm: entrada.alvoVerificado?.verificadaEm ?? null,
           motivo: entrada.motivo,
           registradaEm: agora.toISOString(),
         } as never,
@@ -481,6 +527,10 @@ async function executarPromocao(entrada: EntradaInterna): Promise<ResultadoDaPro
           responsavelUserId: entrada.responsavelUserId,
           verificadorId: entrada.verificadorId,
           commissionId: entrada.commissionId,
+          workspaceIdVerificado: entrada.alvoVerificado?.workspaceId ?? null,
+          saleIdVerificado: entrada.alvoVerificado?.saleId ?? null,
+          commissionIdVerificado: entrada.alvoVerificado?.commissionId ?? null,
+          verificadaEm: entrada.alvoVerificado?.verificadaEm ?? null,
           motivo: entrada.motivo,
           promovidaEm: agora.toISOString(),
         } as never,
@@ -532,6 +582,7 @@ export async function promoverPorCorrecaoManual(
     responsavelUserId: textoUtil(pedido?.responsavelUserId) ? pedido.responsavelUserId : null,
     motivo: (pedido?.motivo ?? '').trim() || null,
     verificadorId: null,
+    alvoVerificado: null,
     atorTipo: 'USUARIA',
     validar: (contexto) => validarCorrecaoManual(pedido, contexto),
   })
@@ -562,6 +613,14 @@ export async function promoverPorEvidenciaVerificada(
     responsavelUserId: null,
     motivo: null,
     verificadorId: fonteOk ? pedido.fonte.verificadorId : null,
+    alvoVerificado: fonteOk
+      ? {
+          workspaceId: pedido.fonte.workspaceIdVerificado,
+          saleId: pedido.fonte.saleIdVerificado,
+          commissionId: pedido.fonte.commissionIdVerificado,
+          verificadaEm: pedido.fonte.verificadaEm.toISOString(),
+        }
+      : null,
     atorTipo: 'VERIFICADOR',
     validar: (contexto) => validarEvidenciaVerificada(pedido, contexto),
   })

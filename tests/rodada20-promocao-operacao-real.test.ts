@@ -537,3 +537,128 @@ describe('Bloco 3.1 não liga o ML', () => {
     }
   })
 })
+
+// ── Vínculo com o ALVO: a fonte prova O QUE comprovou ───────────────────
+
+describe('Fonte vinculada ao alvo — sem replay', () => {
+  const WS_B = 'ws-beta'
+  const SALE_B = 'sale-2'
+
+  async function fonteProvider(alvo: { workspaceId: string; saleId: string }) {
+    registrarVerificadorFake('PROVIDER_OFICIAL')
+    return (await verificarEvidencia('PROVIDER_OFICIAL', alvo))!
+  }
+
+  test('a fonte carrega o alvo que foi verificado', async () => {
+    const fonte = await fonteProvider({ workspaceId: WS, saleId: SALE })
+    assert.equal(fonte.workspaceIdVerificado, WS)
+    assert.equal(fonte.saleIdVerificado, SALE)
+    assert.equal(fonte.commissionIdVerificado, null)
+  })
+
+  test('fonte da Sale A usada na Sale A → aceita', async () => {
+    const fonte = await fonteProvider({ workspaceId: WS, saleId: SALE })
+    assert.deepEqual(validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE, fonte }, contexto()), {
+      ok: true,
+    })
+  })
+
+  test('fonte da Sale A usada na Sale B → recusa', async () => {
+    const fonte = await fonteProvider({ workspaceId: WS, saleId: SALE })
+    const r = validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE_B, fonte }, contexto())
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'FONTE_NAO_CORRESPONDE_AO_ALVO')
+  })
+
+  test('fonte do workspace A usada no workspace B → recusa', async () => {
+    const fonte = await fonteProvider({ workspaceId: WS, saleId: SALE })
+    const r = validarEvidenciaVerificada({ workspaceId: WS_B, saleId: SALE, fonte }, contexto())
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'FONTE_NAO_CORRESPONDE_AO_ALVO')
+  })
+
+  test('workspace A / venda A nunca promove workspace B / venda B', async () => {
+    const fonte = await fonteProvider({ workspaceId: WS, saleId: SALE })
+    const r = validarEvidenciaVerificada({ workspaceId: WS_B, saleId: SALE_B, fonte }, contexto())
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'FONTE_NAO_CORRESPONDE_AO_ALVO')
+  })
+
+  test('FONTE_NAO_CORRESPONDE_AO_ALVO é motivo distinto de FONTE_NAO_VERIFICADA', () => {
+    // São problemas diferentes: "não foi verificada" e "foi verificada, mas
+    // para outra coisa". Confundi-los esconderia o reaproveitamento.
+    assert.ok((MOTIVOS_RECUSA_PROMOCAO as readonly string[]).includes('FONTE_NAO_CORRESPONDE_AO_ALVO'))
+    assert.notEqual('FONTE_NAO_CORRESPONDE_AO_ALVO', 'FONTE_NAO_VERIFICADA')
+  })
+
+  test('objeto forjado continua recusado como NÃO VERIFICADA, não como alvo errado', () => {
+    const forjado = {
+      tipo: 'PROVIDER_OFICIAL',
+      referencia: 'webhook-123',
+      verificadorId: 'x',
+      verificadaEm: new Date(),
+      workspaceIdVerificado: WS,
+      saleIdVerificado: SALE,
+      commissionIdVerificado: null,
+      detalhes: {},
+    } as unknown as FonteVerificada
+    const r = validarEvidenciaVerificada({ workspaceId: WS, saleId: SALE, fonte: forjado }, contexto())
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'FONTE_NAO_VERIFICADA')
+  })
+})
+
+describe('Fonte de comissão vinculada à comissão específica', () => {
+  async function fonteComissao(commissionId: string) {
+    registrarVerificadorFake('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL')
+    return (await verificarEvidencia('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
+      workspaceId: WS,
+      saleId: SALE,
+      commissionId,
+    }))!
+  }
+
+  test('a fonte carrega a comissão verificada', async () => {
+    const fonte = await fonteComissao('com-X')
+    assert.equal(fonte.commissionIdVerificado, 'com-X')
+  })
+
+  test('fonte correta da comissão X → aceita', async () => {
+    const fonte = await fonteComissao('com-X')
+    const r = validarEvidenciaVerificada(
+      { workspaceId: WS, saleId: SALE, fonte, commissionId: 'com-X' },
+      contexto({ comissaoComprovada: true })
+    )
+    assert.deepEqual(r, { ok: true })
+  })
+
+  test('fonte da comissão X usada com a comissão Y → recusa, mesmo na mesma Sale', async () => {
+    const fonte = await fonteComissao('com-X')
+    const r = validarEvidenciaVerificada(
+      { workspaceId: WS, saleId: SALE, fonte, commissionId: 'com-Y' },
+      contexto({ comissaoComprovada: true })
+    )
+    assert.equal(r.ok, false)
+    assert.equal((r as { motivo: string }).motivo, 'FONTE_NAO_CORRESPONDE_AO_ALVO')
+  })
+
+  test('verificarEvidencia NÃO emite fonte de comissão sem commissionId', async () => {
+    // Emitir sem isso produziria um vínculo vazio — a fonte não poderia
+    // dizer QUAL comissão conferiu.
+    registrarVerificadorFake('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL')
+    for (const id of [undefined, null, '', '   ']) {
+      const fonte = await verificarEvidencia('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
+        workspaceId: WS,
+        saleId: SALE,
+        commissionId: id,
+      })
+      assert.equal(fonte, null, `commissionId ${JSON.stringify(id)} não podia emitir fonte`)
+    }
+  })
+
+  test('verificarEvidencia NÃO emite fonte sem workspace ou sem venda', async () => {
+    registrarVerificadorFake('PROVIDER_OFICIAL')
+    assert.equal(await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: '', saleId: SALE }), null)
+    assert.equal(await verificarEvidencia('PROVIDER_OFICIAL', { workspaceId: WS, saleId: '  ' }), null)
+  })
+})

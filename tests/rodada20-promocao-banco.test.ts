@@ -334,10 +334,16 @@ describe(
 
     // ── Comissão vinculada à evidência ─────────────────────────────────
 
-    test('comissão confirmada SEM commissionId → recusa', async () => {
+    test('comissão confirmada SEM commissionId no pedido → recusa', async () => {
       await limpar(workspaceA)
-      const { saleId } = await criarVenda({ statusComissao: 'CONFIRMED' })
-      const fonte = await fonteDe('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', { workspaceId: workspaceA, saleId })
+      const { saleId, commissionId } = await criarVenda({ statusComissao: 'CONFIRMED' })
+      // A fonte é emitida corretamente vinculada à comissão; quem esquece de
+      // informar qual comissão é o PEDIDO de promoção.
+      const fonte = await fonteDe('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
+        workspaceId: workspaceA,
+        saleId,
+        commissionId,
+      })
       const r = await promoverPorEvidenciaVerificada({ workspaceId: workspaceA, saleId, fonte })
       assert.equal(r.promovido, false)
       assert.equal(r.motivo, 'COMISSAO_NAO_INFORMADA')
@@ -347,9 +353,13 @@ describe(
       await limpar(workspaceA)
       const alvo = await criarVenda({ statusComissao: 'CONFIRMED' })
       const outra = await criarVenda({ statusComissao: 'RECEIVED' })
+      // A fonte é emitida JÁ vinculada à comissão alheia, então a
+      // correspondência passa e quem recusa é a conferência no banco: essa
+      // comissão não pertence a esta venda.
       const fonte = await fonteDe('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
         workspaceId: workspaceA,
         saleId: alvo.saleId,
+        commissionId: outra.commissionId,
       })
 
       const r = await promoverPorEvidenciaVerificada({
@@ -372,6 +382,7 @@ describe(
       const fonte = await fonteDe('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
         workspaceId: workspaceA,
         saleId: alvo.saleId,
+        commissionId: alheia.commissionId,
       })
 
       const r = await promoverPorEvidenciaVerificada({
@@ -387,7 +398,11 @@ describe(
     test('comissão apenas EXPECTED → recusa', async () => {
       await limpar(workspaceA)
       const { saleId, commissionId } = await criarVenda()
-      const fonte = await fonteDe('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', { workspaceId: workspaceA, saleId })
+      const fonte = await fonteDe('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
+        workspaceId: workspaceA,
+        saleId,
+        commissionId,
+      })
       const r = await promoverPorEvidenciaVerificada({ workspaceId: workspaceA, saleId, fonte, commissionId })
       assert.equal(r.promovido, false)
       assert.equal(r.motivo, 'COMISSAO_NAO_COMPROVADA')
@@ -600,6 +615,134 @@ describe(
       assert.equal(r.veredito?.elegivel, true, JSON.stringify(r.veredito?.motivos))
       assert.equal(
         await prisma.sale.count({ where: { workspaceId: workspaceA, dataOrigin: 'REAL_OPERATION' } }),
+        1
+      )
+    })
+    // ── Vinculo com o alvo: sem replay entre vendas e workspaces ────────
+
+    test('fonte da Sale A usada na Sale A → aceita', async () => {
+      await limpar(workspaceA)
+      const { saleId } = await criarVenda({ statusComissao: 'RECEIVED' })
+      const fonte = await fonteDe('PROVIDER_OFICIAL', { workspaceId: workspaceA, saleId })
+
+      const r = await promoverPorEvidenciaVerificada({ workspaceId: workspaceA, saleId, fonte })
+      assert.equal(r.promovido, true, r.explicacao)
+    })
+
+    test('fonte da Sale A usada na Sale B → recusa', async () => {
+      await limpar(workspaceA)
+      const a = await criarVenda({ statusComissao: 'RECEIVED' })
+      const b = await criarVenda({ statusComissao: 'RECEIVED' })
+      const fonte = await fonteDe('PROVIDER_OFICIAL', { workspaceId: workspaceA, saleId: a.saleId })
+
+      const r = await promoverPorEvidenciaVerificada({ workspaceId: workspaceA, saleId: b.saleId, fonte })
+      assert.equal(r.promovido, false)
+      assert.equal(r.motivo, 'FONTE_NAO_CORRESPONDE_AO_ALVO')
+
+      const venda = await prisma.sale.findUnique({ where: { id: b.saleId }, select: { dataOrigin: true } })
+      assert.equal(venda?.dataOrigin, 'USER_REPORTED')
+    })
+
+    test('fonte do workspace A usada no workspace B → recusa', async () => {
+      await limpar(workspaceA)
+      await limpar(workspaceB)
+      const a = await criarVenda({ statusComissao: 'RECEIVED' })
+      const b = await criarVenda({ statusComissao: 'RECEIVED', workspaceId: workspaceB })
+      const fonte = await fonteDe('PROVIDER_OFICIAL', { workspaceId: workspaceA, saleId: a.saleId })
+
+      // Mesmo apontando a venda certa do outro workspace, a fonte nao vale.
+      const r = await promoverPorEvidenciaVerificada({ workspaceId: workspaceB, saleId: b.saleId, fonte })
+      assert.equal(r.promovido, false)
+      assert.equal(r.motivo, 'FONTE_NAO_CORRESPONDE_AO_ALVO')
+
+      const venda = await prisma.sale.findUnique({ where: { id: b.saleId }, select: { dataOrigin: true } })
+      assert.equal(venda?.dataOrigin, 'USER_REPORTED')
+      assert.equal(
+        await prisma.auditLog.count({
+          where: { workspaceId: workspaceB, action: { in: [ACAO_AUDIT_EVIDENCIA, ACAO_AUDIT_PROMOCAO] } },
+        }),
+        0
+      )
+    })
+
+    test('fonte da comissao X usada com a comissao Y → recusa, mesma Sale', async () => {
+      await limpar(workspaceA)
+      const { saleId, commissionId } = await criarVenda({ statusComissao: 'RECEIVED' })
+      // Segunda comissao RECEIVED na MESMA venda.
+      const outraComissao = await prisma.commission.create({
+        data: {
+          workspaceId: workspaceA,
+          saleId,
+          productId: produtoA,
+          status: 'RECEIVED',
+          receivedAmount: 5,
+        },
+        select: { id: true },
+      })
+
+      const fonte = await fonteDe('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
+        workspaceId: workspaceA,
+        saleId,
+        commissionId,
+      })
+
+      const r = await promoverPorEvidenciaVerificada({
+        workspaceId: workspaceA,
+        saleId,
+        fonte,
+        commissionId: outraComissao.id,
+      })
+      assert.equal(r.promovido, false)
+      assert.equal(r.motivo, 'FONTE_NAO_CORRESPONDE_AO_ALVO')
+
+      const venda = await prisma.sale.findUnique({ where: { id: saleId }, select: { dataOrigin: true } })
+      assert.equal(venda?.dataOrigin, 'USER_REPORTED')
+    })
+
+    test('fonte correta da comissao X → aceita, e o alvo vai para a auditoria', async () => {
+      await limpar(workspaceA)
+      const { saleId, commissionId } = await criarVenda({ statusComissao: 'RECEIVED' })
+      const fonte = await fonteDe('COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL', {
+        workspaceId: workspaceA,
+        saleId,
+        commissionId,
+      })
+
+      const r = await promoverPorEvidenciaVerificada({ workspaceId: workspaceA, saleId, fonte, commissionId })
+      assert.equal(r.promovido, true, r.explicacao)
+
+      const log = await prisma.auditLog.findFirst({
+        where: { workspaceId: workspaceA, action: ACAO_AUDIT_EVIDENCIA, entityId: saleId },
+        select: { metadata: true },
+      })
+      const meta = log?.metadata as Record<string, unknown>
+      assert.equal(meta.workspaceIdVerificado, workspaceA)
+      assert.equal(meta.saleIdVerificado, saleId)
+      assert.equal(meta.commissionIdVerificado, commissionId)
+      assert.equal(meta.verificadorId, 'adapter-COMISSAO_CONFIRMADA_COM_ORIGEM_VERIFICAVEL')
+      assert.ok(typeof meta.verificadaEm === 'string')
+      // Nunca credencial.
+      for (const chave of Object.keys(meta)) {
+        assert.ok(!/token|senha|password|secret|apiKey/i.test(chave), `metadata nao pode ter ${chave}`)
+      }
+    })
+
+    test('idempotencia da fonte correta continua funcionando', async () => {
+      await limpar(workspaceA)
+      const { saleId } = await criarVenda({ statusComissao: 'RECEIVED' })
+      const fonte = await fonteDe('PROVIDER_OFICIAL', { workspaceId: workspaceA, saleId })
+
+      const primeira = await promoverPorEvidenciaVerificada({ workspaceId: workspaceA, saleId, fonte })
+      const segunda = await promoverPorEvidenciaVerificada({ workspaceId: workspaceA, saleId, fonte })
+
+      assert.equal(primeira.promovido, true, primeira.explicacao)
+      assert.equal(segunda.promovido, false)
+      assert.equal(segunda.idempotente, true)
+      assert.equal(segunda.motivo, null)
+      assert.equal(
+        await prisma.auditLog.count({
+          where: { workspaceId: workspaceA, action: ACAO_AUDIT_EVIDENCIA, entityId: saleId },
+        }),
         1
       )
     })
