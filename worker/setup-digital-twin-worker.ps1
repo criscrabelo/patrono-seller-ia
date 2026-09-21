@@ -14,13 +14,28 @@
 
 param(
     [switch]$PularInicioAutomatico,
-    [string]$VenvPath
+    [string]$VenvPath,
+    # Passados adiante para a tarefa agendada (Rodada 15.1). Sem -EnvFile, a
+    # tarefa sobe o worker sem DATABASE_URL: ele sai com codigo 1 e o
+    # watchdog o reinicia em laco a cada 2 minutos - verificado ao vivo.
+    [string]$EnvFile,
+    [string]$ExigirRef
 )
 
 . (Join-Path $PSScriptRoot "resolver-venv.ps1")
 . (Join-Path $PSScriptRoot "patrono-comum.ps1")
 
 Write-Host "=== Patrono Generation Worker - instalacao ===" -ForegroundColor Cyan
+
+# O processo ELEVADO comeca noutro diretorio de trabalho (normalmente
+# System32), entao um caminho relativo passado pela linha de comando deixaria
+# de resolver depois da elevacao - verificado ao vivo. Resolvemos aqui, antes,
+# e repassamos absoluto.
+if ($EnvFile -and -not [System.IO.Path]::IsPathRooted($EnvFile)) {
+    $tentativa = Resolve-Path $EnvFile -ErrorAction SilentlyContinue
+    if (-not $tentativa) { $tentativa = Resolve-Path (Join-Path $PSScriptRoot $EnvFile) -ErrorAction SilentlyContinue }
+    if ($tentativa) { $EnvFile = $tentativa.Path }
+}
 
 # AUTO-ELEVACAO (Rodada 15). Registrar tarefa agendada exige privilegio
 # administrativo nesta maquina - verificado em teste: mesmo uma tarefa nova,
@@ -35,6 +50,8 @@ Write-Host "=== Patrono Generation Worker - instalacao ===" -ForegroundColor Cya
 if (-not $PularInicioAutomatico) {
     Invoke-PatronoAutoElevacao -CaminhoScript $PSCommandPath -Parametros @{
         VenvPath = $VenvPath
+        EnvFile = $EnvFile
+        ExigirRef = $ExigirRef
         PularInicioAutomatico = $PularInicioAutomatico
     } | Out-Null
 }
@@ -133,7 +150,28 @@ if (-not $PularInicioAutomatico) {
         # O -VenvPath e passado explicitamente: a tarefa agendada roda numa
         # sessao propria, sem as variaveis de ambiente desta janela, e nao
         # teria como descobrir um venv fora do local padrao.
-        $acao = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\start-digital-twin-worker.ps1`" -VenvPath `"$venvPath`""
+        # O worker precisa do ambiente para achar o banco. A tarefa agendada
+        # NAO herda variaveis de nenhum terminal, entao o -EnvFile e repassado
+        # explicitamente; sem ele o worker sai com codigo 1 e o watchdog entra
+        # em laco de reinicio.
+        $argumentosStart = "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\start-digital-twin-worker.ps1`" -VenvPath `"$venvPath`""
+        if ($EnvFile) {
+            $envAbsoluto = (Resolve-Path $EnvFile -ErrorAction SilentlyContinue)
+            if (-not $envAbsoluto) {
+                Write-Host "Arquivo de ambiente nao encontrado: $EnvFile" -ForegroundColor Red
+                Write-PatronoLog "EnvFile informado nao existe: $EnvFile" "ERRO" "setup.log"
+                throw "Arquivo de ambiente nao encontrado: $EnvFile"
+            }
+            $argumentosStart += " -EnvFile `"$($envAbsoluto.Path)`""
+        } else {
+            Write-Host "AVISO: nenhum -EnvFile informado. A tarefa vai subir o worker sem" -ForegroundColor Yellow
+            Write-Host "       variaveis de ambiente, e ele encerrara com erro por falta de banco." -ForegroundColor Yellow
+            Write-Host "       Rode novamente com -EnvFile para um inicio automatico funcional." -ForegroundColor Yellow
+            Write-PatronoLog "Tarefa registrada SEM EnvFile - o worker vai falhar no logon." "AVISO" "setup.log"
+        }
+        if ($ExigirRef) { $argumentosStart += " -ExigirRef `"$ExigirRef`"" }
+
+        $acao = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argumentosStart
 
         # GATILHO: SOMENTE AtLogOn (Rodada 15).
         #
@@ -225,7 +263,7 @@ if (-not $PularInicioAutomatico) {
         Write-Host "  reinicio        : ate $($conferida.Settings.RestartCount)x a cada $($conferida.Settings.RestartInterval)"
         Write-Host "  multiplas inst. : $($conferida.Settings.MultipleInstances)"
         Write-Host "  limite de tempo : $($conferida.Settings.ExecutionTimeLimit) (0 = sem limite)"
-        Write-Host "  comando         : powershell.exe -File start-digital-twin-worker.ps1 -VenvPath $venvPath"
+        Write-Host "  comando         : powershell.exe $argumentosStart"
         Write-PatronoLog "Tarefa registrada: principal=$($conferida.Principal.UserId) gatilhos=$($conferida.Triggers.Count) restart=$($conferida.Settings.RestartCount)" "INFO" "setup.log"
         Write-Host ""
         Write-Host "Para desativar depois: .\stop-digital-twin-worker.ps1 -RemoverInicioAutomatico" -ForegroundColor Green

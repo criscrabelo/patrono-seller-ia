@@ -5,7 +5,6 @@
 # destaque principal.
 
 $processo = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*digital-twin-worker.ts*" }
-$tarefa = Get-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -ErrorAction SilentlyContinue
 
 if ($processo) {
     Write-Host "Processador de videos: CONECTADO" -ForegroundColor Green
@@ -18,23 +17,19 @@ if ($processo) {
     Write-Host "  ou reinicie o computador se o inicio automatico estiver configurado."
 }
 
-if ($tarefa) {
-    Write-Host "Inicio automatico: ATIVADO (roda sozinho ao entrar no Windows)" -ForegroundColor Cyan
-    Write-Host "  Para desativar: .\stop-digital-twin-worker.ps1 -RemoverInicioAutomatico"
-} else {
-    Write-Host "Inicio automatico: DESATIVADO" -ForegroundColor Yellow
-    Write-Host "  Para ativar: rode .\setup-digital-twin-worker.ps1 novamente e aceite o passo de agendamento."
-}
-
 # Estado da tarefa agendada (Rodada 15) - antes era preciso abrir o
 # Agendador de Tarefas para saber se o inicio automatico estava mesmo ativo.
 . (Join-Path $PSScriptRoot "patrono-comum.ps1")
 
-$tarefa = Get-ScheduledTask -TaskName "PatronoDigitalTwinWorker" -ErrorAction SilentlyContinue
 Write-Host ""
 if ($tarefa) {
     $info = Get-ScheduledTaskInfo -TaskName "PatronoDigitalTwinWorker" -ErrorAction SilentlyContinue
-    Write-Host "Inicio automatico: CONFIGURADO" -ForegroundColor Green
+    if ($tarefa.State -eq "Disabled") {
+        Write-Host "Inicio automatico: CONFIGURADO, porem DESABILITADO" -ForegroundColor Yellow
+        Write-Host "  (parada intencional - rode start-digital-twin-worker.ps1 para reativar)"
+    } else {
+        Write-Host "Inicio automatico: CONFIGURADO" -ForegroundColor Green
+    }
     Write-Host "  estado          : $($tarefa.State)"
     Write-Host "  principal       : $($tarefa.Principal.UserId) (nivel $($tarefa.Principal.RunLevel))"
     Write-Host "  gatilhos        : $($tarefa.Triggers.Count)"

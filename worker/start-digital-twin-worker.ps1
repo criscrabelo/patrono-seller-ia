@@ -108,7 +108,26 @@ Set-Location $raizRepo
 $nodeExe = Get-PatronoNode
 $tsxCli = Get-PatronoTsxCli -RaizRepo $raizRepo
 
-Write-PatronoLog "Iniciando worker. raiz=$raizRepo venv=$venvPath node=$nodeExe tsx=$tsxCli once=$($Once.IsPresent)"
+# INVENTARIO OPERACIONAL (Rodada 15.1, pedido do TI).
+#
+# Registrado ANTES de qualquer execucao: quando algo falhar as 7h da manha no
+# logon, este bloco responde sozinho "com que ambiente ele rodou?".
+#
+# NUNCA registra segredo: nenhum valor de .env, token, chave ou string de
+# conexao entra aqui - so CAMINHOS e nomes de arquivo.
+$pythonExe = if ($env:DIGITAL_TWIN_PYTHON) { $env:DIGITAL_TWIN_PYTHON } else { "(nao definido)" }
+Write-PatronoLog "===== inicio da execucao ====="
+Write-PatronoLog "  usuario        : $env:USERDOMAIN\$env:USERNAME"
+Write-PatronoLog "  elevado        : $(Test-PatronoElevado)"
+Write-PatronoLog "  diretorio      : $raizRepo"
+Write-PatronoLog "  venv           : $venvPath"
+Write-PatronoLog "  python         : $pythonExe"
+Write-PatronoLog "  node           : $nodeExe"
+Write-PatronoLog "  tsx            : $tsxCli"
+Write-PatronoLog "  npm/npx        : NAO utilizados na execucao agendada (node + tsx/cli.mjs por caminho absoluto)"
+Write-PatronoLog "  script         : $nodeScript"
+Write-PatronoLog "  modo           : $(if ($Once) { 'once' } else { 'residente' })"
+Write-PatronoLog "  arquivo de env : $(if ($EnvFile) { $EnvFile } else { '(nenhum)' }) (conteudo NUNCA registrado)"
 
 if (-not $nodeExe) {
     Write-PatronoLog "Node.js nao encontrado (nem em Program Files, nem no PATH)." "ERRO"
@@ -118,6 +137,10 @@ if (-not $tsxCli) {
     Write-PatronoLog "tsx nao encontrado em node_modules. Rode 'npm install' na raiz do repositorio." "ERRO"
     exit 1
 }
+
+# Flag de parada de uma execucao anterior nao pode valer para esta.
+$flagParada = Get-PatronoFlagParada
+if (Test-Path $flagParada) { Remove-Item $flagParada -Force -ErrorAction SilentlyContinue }
 
 Write-Host "Iniciando Patrono Generation Worker..." -ForegroundColor Cyan
 Write-Host "  node: $nodeExe"
@@ -129,6 +152,16 @@ if ($Once) { $argumentos += "--once" }
 try {
     & $nodeExe @argumentos
     $codigo = $LASTEXITCODE
+
+    # PARADA INTENCIONAL: o stop deixou o flag. Encerrar com 0 faz o
+    # Agendador entender SUCESSO e nao reiniciar. Sem o flag, o codigo real
+    # e preservado - e o watchdog reergue o worker, como deve.
+    if (Test-Path $flagParada) {
+        Remove-Item $flagParada -Force -ErrorAction SilentlyContinue
+        Write-PatronoLog "Worker encerrou por parada INTENCIONAL (codigo real $codigo). Saindo com 0 para nao acionar o watchdog." "AVISO"
+        exit 0
+    }
+
     Write-PatronoLog "Worker encerrou com codigo $codigo." $(if ($codigo -eq 0) { "INFO" } else { "ERRO" })
     exit $codigo
 } catch {

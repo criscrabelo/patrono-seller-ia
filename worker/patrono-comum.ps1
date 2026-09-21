@@ -175,3 +175,22 @@ function Get-PatronoNpm {
         "$env:LOCALAPPDATA\Programs\nodejs\npm.cmd"
     )
 }
+
+<#
+.SYNOPSIS
+Arquivo-sinal de parada intencional.
+
+.DESCRIPTION
+O Agendador reinicia a tarefa quando a ACAO termina em erro. Matar o worker
+faz exatamente isso - e cada nova tentativa de matar gera outra falha, num
+gato e rato sem fim (medido ao vivo na Rodada 15.1: o worker reaparecia de 6
+a 9 segundos depois, inclusive com a tarefa desabilitada).
+
+A saida e nao brigar com o Agendador: quando a parada e INTENCIONAL, o
+wrapper PowerShell encerra com codigo 0. O Windows entende sucesso e nao
+reinicia nada. O watchdog continua valendo para quedas REAIS, em que o flag
+nao existe.
+#>
+function Get-PatronoFlagParada {
+    return Join-Path (Join-Path $env:LOCALAPPDATA "Patrono") "parada-solicitada.flag"
+}
