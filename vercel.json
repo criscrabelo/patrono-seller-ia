@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/publicar",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/sincronizar-catalogo",
+      "schedule": "0 6,12,18 * * *"
     }
   ]
 }
