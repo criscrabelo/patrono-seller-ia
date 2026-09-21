@@ -56,6 +56,7 @@ model Workspace {
   sales             Sale[]
   commissions       Commission[]
   auditLogs         AuditLog[]
+  eventosLink       EventoLink[]
 
   // ── Digital Twin (Rodada 7) ────────────────────────────────────────
   digitalTwinProfiles DigitalTwinProfile[]
@@ -145,13 +146,30 @@ model LinkDinamico {
 }
 
 model EventoLink {
-  id         String       @id @default(cuid())
+  id String @id @default(cuid())
+
+  // P0.2 Bloco 2: isolamento EXPLICITO. Antes o workspace do evento so
+  // existia indiretamente, atraves de `link.workspaceId` — qualquer consulta
+  // que esquecesse o join leria clique de outro negocio. Com a coluna
+  // propria, a atribuicao filtra por workspace diretamente e o banco garante
+  // a integridade pela FK.
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
   linkId     String
   link       LinkDinamico @relation(fields: [linkId], references: [id])
   tipo       String
   plataforma String?
   referer    String?
   createdAt  DateTime     @default(now())
+
+  // Vendas atribuidas a ESTE clique. Um clique pode, em tese, preceder mais
+  // de uma venda; a atribuicao nunca e criada por inferencia (ver
+  // lib/atribuicao-clique.ts).
+  sales Sale[]
+
+  // Indice da consulta de atribuicao: workspace + link + ordem temporal.
+  @@index([workspaceId, linkId, createdAt])
 }
 
 model Integracao {
@@ -353,6 +371,31 @@ model Sale {
   // manual | webhook (webhook não é usado ainda nesta fase)
   source String @default("manual")
 
+  // ── P0.2 Bloco 1: PROVENIENCIA (nunca inferida) ─────────────────────
+  // REAL_OPERATION | SEED | TEST_FIXTURE | DEMO | SYNTHETIC_TEST | UNVERIFIED
+  // (lib/proveniencia.ts). `source` diz COMO a venda entrou; `dataOrigin`
+  // diz SE ela representa operacao comercial real. Sao perguntas diferentes:
+  // uma venda de teste tambem entra como "manual".
+  //
+  // O default e UNVERIFIED de proposito. Toda linha que ja existe no banco
+  // passa a valer como "origem nao demonstravel" — nunca como real. Promover
+  // historico a REAL_OPERATION por conveniencia seria ensinar o ML com dado
+  // de origem duvidosa, que e exatamente o que a regra permanente proibe.
+  // Fail-closed: perder dado de treino e melhor que contaminar o modelo.
+  dataOrigin String @default("UNVERIFIED")
+
+  // ── P0.2 Bloco 2: ATRIBUICAO (deterministica, nunca inventada) ───────
+  // Clique que originou esta venda. `null` quando nao houve atribuicao
+  // confiavel — e `attributionMethod` diz POR QUE. Nunca preenchido por
+  // palpite, correlacao estatistica ou inferencia de ML.
+  clickEventId String?
+  clickEvent   EventoLink? @relation(fields: [clickEventId], references: [id])
+
+  // Regra que produziu (ou recusou) a atribuicao acima — ver
+  // lib/atribuicao-clique.ts. Gravado SEMPRE, inclusive quando nao houve
+  // atribuicao: "nao atribuido" tambem e um resultado auditavel.
+  attributionMethod String?
+
   notes String? @db.Text
 
   // Idempotência persistente (Rodada 4): a mesma operação lógica de
@@ -373,6 +416,7 @@ model Sale {
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId])
   @@index([workspaceId, status])
+  @@index([workspaceId, dataOrigin])
 }
 
 model Commission {

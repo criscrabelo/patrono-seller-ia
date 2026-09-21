@@ -158,6 +158,7 @@ describe('Proteção contra duplo clique', () => {
     const input = {
       workspaceId,
       actorUserId: userId,
+      dataOrigin: 'TEST_FIXTURE' as const,
       productId: produto.id,
       amount: 321,
       status: 'CONFIRMED' as const,
@@ -177,6 +178,7 @@ describe('Proteção contra duplo clique', () => {
     const resultado = await registrarResultado({
       workspaceId,
       actorUserId: userId,
+      dataOrigin: 'TEST_FIXTURE' as const,
       productId: produto.id,
       amount: 654,
       status: 'PENDING',

@@ -74,6 +74,15 @@ export async function POST(req: NextRequest) {
   const resultado = await registrarResultado({
     workspaceId: session.user.workspaceId,
     actorUserId: session.user.id,
+    // PROVENIÊNCIA (P0.2 Bloco 1): esta rota só é alcançada por usuária
+    // autenticada, registrando um resultado no workspace dela. É a definição
+    // de operação real. Seeds e testes chamam `registrarResultado()`
+    // diretamente e declaram SEED/TEST_FIXTURE — nunca passam por aqui.
+    //
+    // Limite honesto: se a proprietária registrar uma venda de treino pela
+    // tela de verdade, isso entra como REAL_OPERATION. Nenhuma tecnologia
+    // resolve isso; só a correção explícita e auditada resolveria.
+    dataOrigin: 'REAL_OPERATION',
     productId: parsed.data.productId,
     affiliateProgramId: parsed.data.affiliateProgramId ?? null,
     linkId: parsed.data.linkId ?? null,

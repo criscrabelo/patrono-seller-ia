@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { registrarAuditoria } from '@/lib/audit-log'
+import { atribuirClique, type ResultadoAtribuicao } from '@/lib/atribuicao-clique'
+import type { OrigemDeRegistro } from '@/lib/proveniencia'
 
 /**
  * `Sale`/`Commission` são a FONTE ÚNICA de vendas e comissões do MVP.
@@ -197,6 +199,18 @@ export async function primeiraComissao(workspaceId: string) {
 type RegistrarResultadoInput = {
   workspaceId: string
   actorUserId: string
+  /**
+   * PROVENIÊNCIA — obrigatória e SEM valor padrão (P0.2 Bloco 1).
+   *
+   * De propósito não tem default: esquecer de declarar não compila. A rota
+   * autenticada da proprietária declara `REAL_OPERATION`; seeds declaram
+   * `SEED`; testes declaram `TEST_FIXTURE`. Quem cria dado sintético é
+   * código nosso — é nele que o ônus deve cair, nunca na proprietária.
+   *
+   * Nunca inferida a partir de ambiente, host, nome de usuária ou qualquer
+   * outro sinal indireto: inferir proveniência é como não ter proveniência.
+   */
+  dataOrigin: OrigemDeRegistro
   productId: string
   affiliateProgramId?: string | null
   linkId?: string | null
@@ -234,6 +248,50 @@ type RegistrarResultadoInput = {
  *    últimos 5 segundos ainda é detectada como duplicata — cobre chamadas
  *    antigas que não enviam chave, mas não é garantia forte sozinha.
  */
+/**
+ * Busca os cliques candidatos e aplica a regra determinística
+ * (`lib/atribuicao-clique.ts`). A CONSULTA já filtra por workspace e link —
+ * a função pura filtra de novo. A redundância é intencional: se um dia a
+ * consulta for alterada por engano, a regra ainda recusa clique de outro
+ * negócio.
+ *
+ * Falha de leitura NÃO derruba o registro da venda: a venda é o fato
+ * comercial e não pode ser perdida porque a atribuição falhou. Nesse caso a
+ * venda fica sem clique, com o motivo gravado — nunca com clique aproximado.
+ */
+async function resolverAtribuicao(input: {
+  workspaceId: string
+  linkId: string | null
+  dataDaVenda: Date
+}): Promise<ResultadoAtribuicao> {
+  if (!input.linkId) {
+    return atribuirClique({ ...input, cliques: [] })
+  }
+  try {
+    const cliques = await prisma.eventoLink.findMany({
+      where: {
+        workspaceId: input.workspaceId,
+        linkId: input.linkId,
+        tipo: 'clique',
+        createdAt: { lt: input.dataDaVenda },
+      },
+      // Dois bastam para detectar empate no instante mais recente; puxar o
+      // histórico inteiro de um link movimentado seria desperdício.
+      orderBy: { createdAt: 'desc' },
+      take: 2,
+      select: { id: true, workspaceId: true, linkId: true, createdAt: true },
+    })
+    return atribuirClique({ ...input, cliques })
+  } catch (e) {
+    console.error('[vendas] não foi possível ler os cliques para atribuição — venda segue sem clique atribuído:', e)
+    return {
+      clickEventId: null,
+      metodo: 'AMBIGUO_NAO_ATRIBUIDO',
+      explicacao: 'Não foi possível consultar os cliques no momento do registro — a venda ficou sem atribuição, e isso não é suprido por inferência depois.',
+    }
+  }
+}
+
 export async function registrarResultado(input: RegistrarResultadoInput) {
   if (input.idempotencyKey) {
     const existente = await prisma.sale.findUnique({
@@ -261,6 +319,13 @@ export async function registrarResultado(input: RegistrarResultadoInput) {
     }
   }
 
+  const dataDaVenda = input.date ?? new Date()
+  const atribuicao = await resolverAtribuicao({
+    workspaceId: input.workspaceId,
+    linkId: input.linkId ?? null,
+    dataDaVenda,
+  })
+
   try {
     const { sale, commission } = await prisma.$transaction(async (tx) => {
       const sale = await tx.sale.create({
@@ -270,10 +335,15 @@ export async function registrarResultado(input: RegistrarResultadoInput) {
           affiliateProgramId: input.affiliateProgramId ?? null,
           linkId: input.linkId ?? null,
           contentId: input.contentId ?? null,
-          date: input.date ?? new Date(),
+          date: dataDaVenda,
           amount: input.amount ?? null,
           status: input.status,
           source: 'manual',
+          // Declarada por quem chama, nunca inferida aqui.
+          dataOrigin: input.dataOrigin,
+          // `null` quando a atribuição não foi inequívoca; o método diz por quê.
+          clickEventId: atribuicao.clickEventId,
+          attributionMethod: atribuicao.metodo,
           notes: input.notes ?? null,
           idempotencyKey: input.idempotencyKey ?? null,
         },
@@ -298,7 +368,19 @@ export async function registrarResultado(input: RegistrarResultadoInput) {
           action: 'venda.criada',
           entityType: 'Sale',
           entityId: sale.id,
-          metadata: { productId: input.productId, status: sale.status, amount: sale.amount },
+          metadata: {
+            productId: input.productId,
+            status: sale.status,
+            amount: sale.amount,
+            // Proveniência e atribuição entram na auditoria: são justamente
+            // as informações que decidem se esta venda pode, um dia, ensinar
+            // o ML. Precisam ser rastreáveis desde o instante do registro.
+            dataOrigin: sale.dataOrigin,
+            linkId: sale.linkId,
+            clickEventId: sale.clickEventId,
+            attributionMethod: sale.attributionMethod,
+            atribuicaoExplicacao: atribuicao.explicacao,
+          },
         },
       })
 

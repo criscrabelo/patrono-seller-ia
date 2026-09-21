@@ -49,7 +49,7 @@ describe('Chave persistente (sem depender de janela de tempo)', () => {
     const chave = `chave-teste-${Date.now()}`
 
     const r1 = await registrarResultado({
-      workspaceId, actorUserId: userId, productId: produto.id,
+      workspaceId, actorUserId: userId, dataOrigin: 'TEST_FIXTURE' as const, productId: produto.id,
       amount: 100, status: 'CONFIRMED', idempotencyKey: chave,
     })
 
@@ -57,7 +57,7 @@ describe('Chave persistente (sem depender de janela de tempo)', () => {
     // estado entre o clique e o retry) — a chave é o que importa; o
     // servidor não deve criar uma segunda Sale só porque o corpo mudou.
     const r2 = await registrarResultado({
-      workspaceId, actorUserId: userId, productId: produto.id,
+      workspaceId, actorUserId: userId, dataOrigin: 'TEST_FIXTURE' as const, productId: produto.id,
       amount: 999, status: 'PENDING', idempotencyKey: chave,
     })
 
@@ -69,11 +69,11 @@ describe('Chave persistente (sem depender de janela de tempo)', () => {
 
   test('chaves diferentes criam vendas diferentes', async () => {
     const r1 = await registrarResultado({
-      workspaceId, actorUserId: userId, productId: produto.id,
+      workspaceId, actorUserId: userId, dataOrigin: 'TEST_FIXTURE' as const, productId: produto.id,
       amount: 50, status: 'CONFIRMED', idempotencyKey: `chave-a-${Date.now()}`,
     })
     const r2 = await registrarResultado({
-      workspaceId, actorUserId: userId, productId: produto.id,
+      workspaceId, actorUserId: userId, dataOrigin: 'TEST_FIXTURE' as const, productId: produto.id,
       amount: 50, status: 'CONFIRMED', idempotencyKey: `chave-b-${Date.now()}`,
     })
     assert.notEqual(r1.sale.id, r2.sale.id)
@@ -84,7 +84,7 @@ describe('Concorrência real (duas chamadas simultâneas, mesma chave)', () => {
   test('só uma Sale é criada, mesmo sob race condition de verdade', async () => {
     const chave = `chave-concorrente-${Date.now()}`
     const input = {
-      workspaceId, actorUserId: userId, productId: produto.id,
+      workspaceId, actorUserId: userId, dataOrigin: 'TEST_FIXTURE' as const, productId: produto.id,
       amount: 777, status: 'CONFIRMED' as const, idempotencyKey: chave,
     }
 
@@ -104,7 +104,7 @@ describe('Compatibilidade — sem chave, cai no fallback por janela de tempo', (
   test('continua funcionando para chamadas que não enviam idempotencyKey', async () => {
     const antes = await prisma.sale.count({ where: { workspaceId } })
     const input = {
-      workspaceId, actorUserId: userId, productId: produto.id,
+      workspaceId, actorUserId: userId, dataOrigin: 'TEST_FIXTURE' as const, productId: produto.id,
       amount: 456, status: 'CONFIRMED' as const,
     }
     const r1 = await registrarResultado(input)

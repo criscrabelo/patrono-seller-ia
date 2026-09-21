@@ -22,6 +22,24 @@
  * erra para o lado de gastar menos. Mas não pode ser apresentado como
  * despesa contábil. Quando o Motor Financeiro existir, `custoReal` será
  * campo próprio, conciliado com a fatura.
+ *
+ * ── MELHORIA FUTURA (registrada, NÃO implementada) ──────────────────────
+ * Hoje uma reserva autorizada nunca é desfeita: ela consome orçamento do mês
+ * mesmo que a chamada tenha falhado antes de gerar cobrança, ou que o
+ * fornecedor tenha cobrado menos que o teto. O ciclo completo seria:
+ *
+ *     custoReservado  →  CONSUMIDO (cobrança confirmada, com custoReal)
+ *                     →  LIBERADO  (não houve cobrança; volta ao saldo)
+ *
+ * Isso só deve ser implementado quando existir forma CONFIÁVEL de saber se
+ * uma chamada autorizada gerou cobrança de verdade — fatura, webhook de
+ * billing ou API de uso do fornecedor. Liberar reserva por inferência
+ * ("deu erro HTTP, então não cobraram") é justamente o tipo de suposição que
+ * fura teto: vários fornecedores cobram por trabalho iniciado.
+ *
+ * Até lá, a reserva conservadora FICA. Errar para o lado de gastar menos é a
+ * escolha certa; o custo desse erro é uma operação a menos no mês, e o custo
+ * do erro oposto é orçamento estourado sem ninguém perceber.
  */
 
 import { prisma } from './prisma'
