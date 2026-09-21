@@ -1,6 +1,8 @@
 // Integração com o fal.ai para geração de vídeo a partir de imagem.
 // Documentação: https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video/api
 
+import { guardarChamadaPaga } from './cost-safety-gate'
+
 const FAL_BASE = 'https://queue.fal.run'
 
 // ── Registro de motores de vídeo ──────────────────────────────────────
@@ -89,7 +91,42 @@ function headers(): HeadersInit {
   }
 }
 
-async function falFetch(url: string, init?: RequestInit) {
+/**
+ * CUSTO ZERO POR PADRÃO (Rodada 14): fal.ai cobra por vídeo gerado. Toda
+ * chamada passa por aqui, então o gate fica neste único ponto — nenhum
+ * caminho de código alcança a rede sem ele. Bloqueado, o chamador recebe um
+ * erro identificável e cai no FFmpeg local, que faz o mesmo por R$ 0,00.
+ */
+export class BloqueadoPorPoliticaDeCusto extends Error {
+  constructor(
+    public readonly provider: string,
+    public readonly operacao: string,
+    public readonly fallback: string | null,
+    mensagem: string
+  ) {
+    super(mensagem)
+    this.name = 'BloqueadoPorPoliticaDeCusto'
+  }
+}
+
+async function falFetch(url: string, init?: RequestInit, workspaceId: string | null = null) {
+  const guarda = await guardarChamadaPaga({
+    provider: 'fal.ai',
+    operacao: 'gerar-video',
+    workspaceId,
+    // Custo por vídeo não é publicado de forma estável pelo provedor —
+    // desconhecido é tratado como "não cabe no orçamento", nunca como zero.
+    custoEstimado: null,
+  })
+  if (!guarda.permitido) {
+    throw new BloqueadoPorPoliticaDeCusto(
+      'fal.ai',
+      'gerar-video',
+      guarda.fallback?.alternativa ?? null,
+      `${guarda.decisao.explicacao} Alternativa gratuita: ${guarda.fallback?.alternativa ?? 'nenhuma'}.`
+    )
+  }
+
   const res = await fetch(url, { ...init, headers: { ...headers(), ...(init?.headers ?? {}) } })
   // Tenta ler como JSON; se falhar, captura o texto para diagnóstico.
   const textBody = await res.text()

@@ -1,3 +1,4 @@
+import { guardarChamadaPaga } from './cost-safety-gate'
 // Integração com Z-API para envio de mensagens WhatsApp em massa.
 // Docs: https://developer.z-api.io
 
@@ -35,6 +36,25 @@ function zapiHeaders(cfg: ZApiConfig): HeadersInit {
 }
 
 /** Normaliza número: remove tudo que não é dígito e garante código do país */
+/**
+ * CUSTO ZERO POR PADRÃO (Rodada 14): Z-API é serviço pago por instância.
+ * Os três pontos de envio passam por aqui. Sem alternativa gratuita no
+ * projeto, o envio fica PENDENTE por política — devolve resultado negativo
+ * em vez de lançar, para não derrubar o fluxo que chamou.
+ */
+async function envioPermitidoPelaPolitica(operacao: string): Promise<{ permitido: boolean; motivo: string }> {
+  const guarda = await guardarChamadaPaga({
+    provider: 'z-api',
+    operacao,
+    workspaceId: null,
+    custoEstimado: null,
+  })
+  if (guarda.permitido) return { permitido: true, motivo: '' }
+  const motivo = `Bloqueado por política de custo: ${guarda.decisao.explicacao}`
+  console.warn(`[whatsapp] ${motivo}`)
+  return { permitido: false, motivo }
+}
+
 export function normalizarNumero(raw: string): string | null {
   const digits = raw.replace(/\D/g, '')
   // Aceita 10-13 dígitos
@@ -59,6 +79,8 @@ export async function enviarTexto(cfg: ZApiConfig, params: EnvioTexto): Promise<
   const numero = normalizarNumero(params.numero)
   if (!numero) return { numero: params.numero, ok: false, erro: 'Número inválido' }
   try {
+    const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp')
+    if (!permissao.permitido) return { numero: params.numero, ok: false, erro: permissao.motivo }
     const res = await fetch(`${zapiBase(cfg)}/send-text`, {
       method: 'POST',
       headers: zapiHeaders(cfg),
@@ -79,6 +101,8 @@ export async function enviarImagem(cfg: ZApiConfig, params: EnvioImagem): Promis
   const numero = normalizarNumero(params.numero)
   if (!numero) return { numero: params.numero, ok: false, erro: 'Número inválido' }
   try {
+    const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp')
+    if (!permissao.permitido) return { numero: params.numero, ok: false, erro: permissao.motivo }
     const res = await fetch(`${zapiBase(cfg)}/send-image`, {
       method: 'POST',
       headers: zapiHeaders(cfg),

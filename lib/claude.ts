@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { guardarChamadaPaga } from './cost-safety-gate'
 import type { ConteudoGerado, VideoSellerOutput, AlertaCompliance } from '@/types'
 
 const client = new Anthropic({
@@ -6,6 +7,45 @@ const client = new Anthropic({
 })
 
 const MODEL = 'claude-sonnet-4-6'
+
+/**
+ * CUSTO ZERO POR PADRÃO (Rodada 14): a API da Anthropic cobra por token.
+ * Nenhuma das funções abaixo alcança a rede sem passar por aqui.
+ *
+ * Bloqueado, o chamador recebe `BloqueadoPorPoliticaDeCusto` e deve usar o
+ * caminho determinístico gratuito — `gerarPresetTikTokDigitalTwinV1()` cobre
+ * hook, caption, CTA, hashtags e disclosures sem IA paga.
+ */
+export class BloqueadoPorPoliticaDeCusto extends Error {
+  constructor(
+    public readonly provider: string,
+    public readonly operacao: string,
+    public readonly fallback: string | null,
+    mensagem: string
+  ) {
+    super(mensagem)
+    this.name = 'BloqueadoPorPoliticaDeCusto'
+  }
+}
+
+async function exigirPermissaoDeCusto(operacao: string, workspaceId: string | null = null): Promise<void> {
+  const guarda = await guardarChamadaPaga({
+    provider: 'anthropic',
+    operacao,
+    workspaceId,
+    // Custo por token depende do tamanho do prompt/resposta — desconhecido
+    // no momento da decisão, e desconhecido nunca é tratado como zero.
+    custoEstimado: null,
+  })
+  if (!guarda.permitido) {
+    throw new BloqueadoPorPoliticaDeCusto(
+      'anthropic',
+      operacao,
+      guarda.fallback?.alternativa ?? null,
+      `${guarda.decisao.explicacao} Alternativa gratuita: ${guarda.fallback?.alternativa ?? 'nenhuma'}.`
+    )
+  }
+}
 
 // ─── Geração principal de conteúdo ───────────────────────────────────────────
 
@@ -59,6 +99,7 @@ Retorne APENAS este JSON (valores curtos e diretos):
   "alertasCompliance": [{"tipo":"publicidade","mensagem":"...","severidade":"verde","acaoRecomendada":"..."}]
 }`
 
+  await exigirPermissaoDeCusto('gerar-roteiro')
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 900,
@@ -182,6 +223,7 @@ Retorne JSON com:
   "tituloSugerido": "string"
 }`
 
+  await exigirPermissaoDeCusto('gerar-roteiro')
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
@@ -229,6 +271,7 @@ Retorne JSON:
   ]
 }`
 
+  await exigirPermissaoDeCusto('gerar-roteiro')
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 1024,

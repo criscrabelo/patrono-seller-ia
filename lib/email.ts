@@ -1,9 +1,25 @@
 import { Resend } from 'resend'
+import { guardarChamadaPaga } from './cost-safety-gate'
 
 // Envia email via Resend. Se RESEND_API_KEY não estiver configurada (ex.:
 // ambiente local), apenas registra o link no console e não falha — assim o
 // fluxo continua testável sem serviço de email.
 export async function enviarEmailReset(para: string, link: string): Promise<{ enviado: boolean }> {
+  // CUSTO ZERO POR PADRÃO (Rodada 14): Resend cobra acima do free tier.
+  // Sem alternativa gratuita no projeto, o envio fica PENDENTE por política —
+  // devolve `enviado: false` em vez de lançar, para não derrubar o fluxo que
+  // chamou (recuperação de senha continua funcionando pela tela).
+  const guarda = await guardarChamadaPaga({
+    provider: 'resend',
+    operacao: 'enviar-email',
+    workspaceId: null,
+    custoEstimado: null,
+  })
+  if (!guarda.permitido) {
+    console.warn(`[email] envio bloqueado por política de custo: ${guarda.decisao.explicacao}`)
+    return { enviado: false }
+  }
+
   const key = process.env.RESEND_API_KEY
   const from = process.env.RESEND_FROM || 'Patrono Seller <onboarding@resend.dev>'
 
