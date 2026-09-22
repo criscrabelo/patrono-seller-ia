@@ -42,12 +42,7 @@
  */
 
 import { prisma } from './prisma'
-import {
-  FEATURE_VERSION,
-  extrairFeaturesDeConteudo,
-  type ContentMLFeatures,
-} from './ml-feature-store'
-import { verificarSemDadosBiometricos } from './ml-privacy'
+import { FEATURE_VERSION } from './ml-feature-store'
 import { avaliarVendaParaOperacaoReal, type VereditoDeOperacaoReal } from './real-operation'
 
 export const ENTIDADE_DA_AMOSTRA = 'Conteudo' as const
@@ -61,6 +56,12 @@ export const MOTIVOS_BLOQUEIO_ML = [
   'VENDA_SEM_CONTEUDO',
   /** O conteúdo não existe neste workspace, ou não deu para extrair features. */
   'FEATURES_INDISPONIVEIS',
+  /**
+   * Não há amostra capturada na publicação deste conteúdo (Bloco 4.1).
+   * NUNCA criamos uma agora: as features seriam reextraídas do conteúdo
+   * como ele está HOJE, que pode ter sido editado desde a publicação.
+   */
+  'SEM_AMOSTRA_CAPTURADA',
 ] as const
 
 export type MotivoBloqueioML = (typeof MOTIVOS_BLOQUEIO_ML)[number]
@@ -138,7 +139,7 @@ export interface LabelDeOperacaoReal {
   receitaRealizada: number
   atribuicaoDeClique: { comClique: number; semClique: number }
   /** De onde o label veio. Nunca inferência, nunca modelo. */
-  origemDoLabel: 'SALE_COMMISSION_COMPROVADA'
+  origemDoLabel: 'SALE_COMMISSION_COMPROVADA' | 'JANELA_DE_OBSERVACAO_ENCERRADA'
   featureVersion: string
   /** Quando o resultado passou a ser conhecido. Sempre > `capturedAt`. */
   labeledAt: string
@@ -345,31 +346,20 @@ export async function registrarOperacaoRealNoFeatureStore(params: {
     )
   }
 
-  // 3) Features do conteúdo, cortadas na data de referência.
-  const extraido = await extrairFeaturesDeConteudo(base.workspaceId, contentId)
-  if (!extraido) {
-    return bloquear(
-      base,
-      'FEATURES_INDISPONIVEIS',
-      'Não foi possível extrair as features do conteúdo neste workspace.',
-      veredito,
-      contentId
-    )
-  }
-
-  const { features, referenceDate } = extraido
-  const asRecord = features as unknown as Record<string, unknown>
-  verificarSemDadosBiometricos(asRecord)
-  verificarSemVazamentoDeResultado(asRecord)
-
-  // 4) Label a partir SÓ das vendas que a autoridade aprova.
+  // 3) Label a partir SÓ das vendas que a autoridade aprova.
   const elegiveis = await vendasElegiveisDoConteudo(base.workspaceId, contentId)
   const label = montarLabelDeOperacaoReal(elegiveis, params.agora ?? new Date())
 
-  // 5) Escrita idempotente.
+  // 4) Rotulagem da amostra JÁ CAPTURADA na publicação.
+  //
+  // Esta função NUNCA cria snapshot (correção do Bloco 4.1). Criar aqui
+  // significaria reextrair as features do conteúdo como ele está HOJE —
+  // possivelmente editado desde a publicação — e gravar isso como se fosse
+  // a observação do momento em que ele foi ao ar. A captura acontece em
+  // `ml-captura-publicacao.ts`, na publicação.
   const chave = chaveDaAmostra({ workspaceId: base.workspaceId, entityId: contentId })
 
-  const { snapshotId, criado } = await prisma.$transaction(async (tx) => {
+  const alvo = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 AS ok FROM (SELECT pg_advisory_xact_lock(hashtext(${chave}))) AS trava`
 
     const existente = await tx.mLFeatureSnapshot.findFirst({
@@ -379,50 +369,37 @@ export async function registrarOperacaoRealNoFeatureStore(params: {
         entityId: contentId,
         featureVersion: FEATURE_VERSION,
       },
-      select: { id: true, dataOrigin: true },
-    })
-
-    if (existente) {
-      // Reprocessamento: o label é reatualizado com os fatos atuais, mas a
-      // amostra continua sendo a mesma linha. `dataOrigin` NÃO é alterado —
-      // uma amostra de teste jamais vira de produção por reprocessamento.
-      await tx.mLFeatureSnapshot.update({
-        where: { id: existente.id },
-        data: { label: label as never, labeledAt: new Date(label.labeledAt) },
-      })
-      return { snapshotId: existente.id, criado: false }
-    }
-
-    const novo = await tx.mLFeatureSnapshot.create({
-      data: {
-        workspaceId: base.workspaceId,
-        entityType: ENTIDADE_DA_AMOSTRA,
-        entityId: contentId,
-        featureVersion: FEATURE_VERSION,
-        // Herdado da venda JÁ validada pela autoridade. É o único lugar do
-        // sistema que grava REAL_OPERATION num snapshot.
-        dataOrigin: 'REAL_OPERATION',
-        features: features as never,
-        // O instante que as FEATURES descrevem, não o instante em que a
-        // linha foi gravada. Garante capturedAt < labeledAt sempre.
-        capturedAt: referenceDate,
-        label: label as never,
-        labeledAt: new Date(label.labeledAt),
-      },
       select: { id: true },
     })
-    return { snapshotId: novo.id, criado: true }
+    if (!existente) return null
+
+    // SÓ o rótulo. `features`, `capturedAt` e `dataOrigin` nunca são
+    // tocados: a observação histórica é imutável, e uma amostra de teste
+    // jamais vira de produção por reprocessamento.
+    await tx.mLFeatureSnapshot.update({
+      where: { id: existente.id },
+      data: { label: label as never, labeledAt: new Date(label.labeledAt) },
+    })
+    return existente.id
   })
+
+  if (!alvo) {
+    return bloquear(
+      base,
+      'SEM_AMOSTRA_CAPTURADA',
+      `Não há amostra capturada na publicação do conteúdo ${contentId}. Criar uma agora usaria as features atuais, que podem ter sido editadas — a lacuna fica registrada em vez de preenchida com palpite.`,
+      veredito,
+      contentId
+    )
+  }
 
   return {
     registrado: true,
     motivo: null,
     motivosDaAutoridade: [],
-    explicacao: criado
-      ? `Amostra de produção criada para o conteúdo ${contentId} a partir da venda comprovada ${base.saleId}.`
-      : `Amostra já existia para o conteúdo ${contentId}; o label foi reatualizado sem duplicar.`,
-    snapshotId,
-    criado,
+    explicacao: `Amostra do conteúdo ${contentId} rotulada como conversão real a partir da venda comprovada ${base.saleId}.`,
+    snapshotId: alvo,
+    criado: false,
     workspaceId: base.workspaceId,
     saleId: base.saleId,
     contentId,

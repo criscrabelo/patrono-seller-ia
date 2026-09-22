@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { capturarSnapshotDePublicacao } from '@/lib/ml-captura-publicacao'
 import {
   criarContainerReel,
   criarContainerStoryVideo,
@@ -159,6 +160,12 @@ export async function POST(
         erroPublicacao: null,
         videoRequestId: null,
       },
+    })
+    // GATILHO A (P0.2 Bloco 4.1): publicação real → captura da amostra sem
+    // rótulo. Nunca lança; publicar não pode falhar por causa do ML.
+    await capturarSnapshotDePublicacao({
+      workspaceId: conteudo.workspaceId,
+      contentId: conteudo.id,
     })
     return NextResponse.json({ ok: true, mediaId })
   } catch (e) {

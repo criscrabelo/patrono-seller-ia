@@ -1,0 +1,608 @@
+/**
+ * P0.2 Bloco 4.1 — captura prospectiva, rotulagem posterior e gatilhos.
+ *
+ * A prova central desta rodada está em "editar o conteúdo depois NÃO altera
+ * a feature histórica": é o que separa uma observação de uma opinião atual
+ * disfarçada de dado.
+ */
+
+import { test, describe, before, after, beforeEach } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { prisma } from '../lib/prisma'
+import { registrarResultado, atualizarComissao } from '../lib/vendas-comissoes'
+import { promoverPorCorrecaoManual } from '../lib/promocao-operacao-real'
+import { ENTIDADE_DA_AMOSTRA } from '../lib/ml-operacao-real'
+import {
+  capturarSnapshotDePublicacao,
+  rotularNegativoSeJanelaEncerrada,
+  fecharJanelasDeObservacao,
+  listarLacunasDeCaptura,
+  lerPoliticaDeObservacao,
+  janelaEncerrada,
+  montarLabelNegativo,
+  JANELA_OBSERVACAO_PADRAO_DIAS,
+  LIMITACAO_DE_REVISAO,
+} from '../lib/ml-captura-publicacao'
+import { FEATURE_VERSION } from '../lib/ml-feature-store'
+import { contarAmostrasRotuladas } from '../lib/ml-readiness-gate'
+import { limparVerificadoresDeEvidencia } from '../lib/evidencia-verificada'
+
+const TEM_BANCO = !!process.env.DATABASE_URL
+const RAIZ = join(__dirname, '..')
+const lerFonte = (rel: string) => readFileSync(join(RAIZ, rel), 'utf8')
+
+const DIA = 24 * 60 * 60 * 1000
+const MOTIVO_OK = 'Comissão recebida e conferida no extrato bancário da empresa.'
+
+// ── Política da janela (pura) ───────────────────────────────────────────
+
+describe('Janela de observação — política INTERNA, nunca regra de provider', () => {
+  test('o padrão é conservador e declarado', () => {
+    const p = lerPoliticaDeObservacao({})
+    assert.equal(p.dias, JANELA_OBSERVACAO_PADRAO_DIAS)
+    assert.equal(p.dias, 30)
+    assert.equal(p.origem, 'PADRAO_INTERNO')
+  })
+
+  test('NUNCA é apresentada como regra oficial de provider', () => {
+    // Apresentar número interno como "a janela do TikTok" produziria um dado
+    // que parece oficial e não é.
+    for (const env of [{}, { ML_CONVERSION_OBSERVATION_WINDOW_DAYS: '7' }]) {
+      assert.equal(lerPoliticaDeObservacao(env).oficialDeProvider, false)
+    }
+  })
+
+  test('é configurável por ML_CONVERSION_OBSERVATION_WINDOW_DAYS', () => {
+    const p = lerPoliticaDeObservacao({ ML_CONVERSION_OBSERVATION_WINDOW_DAYS: '7' })
+    assert.equal(p.dias, 7)
+    assert.equal(p.origem, 'CONFIGURADO')
+  })
+
+  test('valor inválido cai no padrão, nunca em zero', () => {
+    // Zero dias rotularia tudo como negativo no mesmo instante da publicação.
+    for (const v of ['0', '-5', 'abc', '', '  ']) {
+      const p = lerPoliticaDeObservacao({ ML_CONVERSION_OBSERVATION_WINDOW_DAYS: v })
+      assert.equal(p.dias, JANELA_OBSERVACAO_PADRAO_DIAS)
+      assert.equal(p.origem, 'PADRAO_INTERNO')
+    }
+  })
+
+  test('a janela só fecha depois do prazo', () => {
+    const pub = new Date('2026-09-01T00:00:00.000Z')
+    assert.equal(janelaEncerrada(pub, new Date('2026-09-30T23:59:59.000Z'), 30), false)
+    assert.equal(janelaEncerrada(pub, new Date('2026-10-01T00:00:00.000Z'), 30), true)
+  })
+
+  test('sem data de publicação a janela nunca fecha', () => {
+    assert.equal(janelaEncerrada(null, new Date(), 30), false)
+    assert.equal(janelaEncerrada(new Date('xx'), new Date(), 30), false)
+  })
+})
+
+describe('Label negativo — zeros explícitos', () => {
+  test('tudo zerado, com a ausência de conversão preservada', () => {
+    const l = montarLabelNegativo(new Date('2026-10-01T00:00:00.000Z'))
+    assert.equal(l.converted, false)
+    assert.equal(l.vendasElegiveis, 0)
+    assert.equal(l.valorBrutoVendas, 0)
+    assert.equal(l.comissaoEsperada, 0)
+    assert.equal(l.comissaoConfirmada, 0)
+    assert.equal(l.comissaoRecebida, 0)
+    assert.equal(l.receitaRealizada, 0)
+    assert.equal(l.origemDoLabel, 'JANELA_DE_OBSERVACAO_ENCERRADA')
+    assert.equal(l.featureVersion, FEATURE_VERSION)
+  })
+
+  test('a origem do negativo é distinta da do positivo', () => {
+    assert.notEqual(montarLabelNegativo().origemDoLabel, 'SALE_COMMISSION_COMPROVADA')
+  })
+})
+
+describe('Gatilhos ligados no código', () => {
+  test('A — as três rotas de publicação capturam a amostra', () => {
+    for (const rota of [
+      'app/api/conteudos/route.ts',
+      'app/api/conteudos/[id]/publicar/route.ts',
+      'app/api/cron/publicar/route.ts',
+    ]) {
+      assert.match(lerFonte(rota), /capturarSnapshot(s)?DePublicacao/, `${rota} precisa capturar na publicação`)
+    }
+  })
+
+  test('B — a promoção tenta rotular quando fica elegível', () => {
+    const fonte = lerFonte('lib/promocao-operacao-real.ts')
+    assert.match(fonte, /if \(veredito\?\.elegivel\)/)
+    assert.match(fonte, /rotularAmostraDeOperacaoReal\(entrada\.workspaceId, entrada\.saleId\)/)
+  })
+
+  test('C — comissão CONFIRMED/RECEIVED reavalia e rotula', () => {
+    const fonte = lerFonte('lib/vendas-comissoes.ts')
+    assert.match(fonte, /params\.status === 'CONFIRMED' \|\| params\.status === 'RECEIVED'/)
+    assert.match(fonte, /rotularAmostraDeOperacaoReal\(params\.workspaceId, commission\.saleId\)/)
+  })
+
+  test('D — o cron da janela existe, exige segredo e está agendado', () => {
+    const rota = lerFonte('app/api/cron/ml-janela-observacao/route.ts')
+    assert.match(rota, /CRON_SECRET/)
+    assert.match(rota, /status: 401/)
+    assert.match(rota, /fecharJanelasDeObservacao/)
+    assert.match(lerFonte('vercel.json'), /ml-janela-observacao/)
+  })
+
+  test('nenhum gatilho derruba a operação principal quando o ML falha', () => {
+    assert.match(lerFonte('lib/promocao-operacao-real.ts'), /catch \(e\)[\s\S]{0,300}console\.error/)
+  })
+
+  test('a rotulagem NUNCA cria snapshot — só rotula o que já foi capturado', () => {
+    const fonte = lerFonte('lib/ml-operacao-real.ts')
+    assert.ok(!/mLFeatureSnapshot\.create/.test(fonte), 'criar aqui reconstruiria features possivelmente editadas')
+    assert.match(fonte, /SEM_AMOSTRA_CAPTURADA/)
+  })
+
+  test('a limitação de conteúdo republicado está declarada', () => {
+    assert.equal(LIMITACAO_DE_REVISAO.chave, 'ml:revisao-de-conteudo-republicado')
+    assert.match(LIMITACAO_DE_REVISAO.explicacao, /versionar a revisão/i)
+  })
+})
+
+// ── Banco ───────────────────────────────────────────────────────────────
+
+let workspaceA = ''
+let workspaceB = ''
+let userA = ''
+let userB = ''
+let produtoA = ''
+let produtoB = ''
+const criados: string[] = []
+
+async function limpar(ws: string) {
+  await prisma.mLFeatureSnapshot.deleteMany({ where: { workspaceId: ws } })
+  await prisma.commission.deleteMany({ where: { workspaceId: ws } })
+  await prisma.sale.deleteMany({ where: { workspaceId: ws } })
+  await prisma.conteudo.deleteMany({ where: { workspaceId: ws } })
+  await prisma.auditLog.deleteMany({ where: { workspaceId: ws } })
+}
+
+async function criarConteudo(opcoes: { roteiro?: string; publicadoEm?: Date | null; ws?: string } = {}) {
+  const ws = opcoes.ws ?? workspaceA
+  return (
+    await prisma.conteudo.create({
+      data: {
+        workspaceId: ws,
+        userId: ws === workspaceA ? userA : userB,
+        produtoId: ws === workspaceA ? produtoA : produtoB,
+        roteiro: opcoes.roteiro ?? 'Você já viu esse produto? Ele resolve tudo.',
+        chamadaAcao: 'Link na bio',
+        duracao: 30,
+        redeSocial: 'tiktok',
+        status: 'publicado',
+        dataPublicacao: opcoes.publicadoEm === undefined ? new Date() : opcoes.publicadoEm,
+      },
+      select: { id: true },
+    })
+  ).id
+}
+
+async function criarVenda(opcoes: { contentId?: string | null; statusComissao?: string; ws?: string } = {}) {
+  const ws = opcoes.ws ?? workspaceA
+  const { sale, commission } = await registrarResultado({
+    workspaceId: ws,
+    actorUserId: ws === workspaceA ? userA : userB,
+    dataOrigin: 'USER_REPORTED',
+    productId: ws === workspaceA ? produtoA : produtoB,
+    contentId: opcoes.contentId ?? null,
+    amount: 200,
+    status: 'CONFIRMED',
+    expectedCommission: 20,
+    idempotencyKey: `b41-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  })
+  if (opcoes.statusComissao) {
+    await prisma.commission.update({
+      where: { id: commission!.id },
+      data: {
+        status: opcoes.statusComissao,
+        confirmedAmount: opcoes.statusComissao === 'EXPECTED' ? null : 18,
+        receivedAmount: opcoes.statusComissao === 'RECEIVED' ? 15 : null,
+      },
+    })
+  }
+  return { saleId: sale.id, commissionId: commission!.id }
+}
+
+async function promover(saleId: string) {
+  return promoverPorCorrecaoManual({
+    workspaceId: workspaceA,
+    saleId,
+    responsavelUserId: userA,
+    motivo: MOTIVO_OK,
+    referencia: `extrato-${saleId}`,
+  })
+}
+
+describe(
+  'Bloco 4.1 no banco — captura prospectiva e gatilhos',
+  { skip: !TEM_BANCO ? 'DATABASE_URL ausente — este arquivo exige Postgres' : false },
+  () => {
+    before(async () => {
+      const marca = Date.now()
+      for (const nome of ['A', 'B']) {
+        const ws = await prisma.workspace.create({
+          data: { name: `B41-${nome}`, ownerId: `b41-${nome}-${marca}` },
+          select: { id: true },
+        })
+        criados.push(ws.id)
+      }
+      ;[workspaceA, workspaceB] = criados
+
+      const criarUser = async (ws: string, sufixo: string) =>
+        (
+          await prisma.user.create({
+            data: {
+              email: `b41-${sufixo}-${marca}@teste.local`,
+              name: `Teste ${sufixo}`,
+              password: 'nao-usada-neste-teste',
+              workspaceId: ws,
+            },
+            select: { id: true },
+          })
+        ).id
+      userA = await criarUser(workspaceA, 'a')
+      userB = await criarUser(workspaceB, 'b')
+
+      const criarProduto = async (ws: string, uid: string) =>
+        (
+          await prisma.produto.create({
+            data: {
+              workspaceId: ws,
+              userId: uid,
+              nome: 'Produto Bloco 4.1',
+              categoria: 'casa',
+              preco: 120,
+              tipoVenda: 'Afiliado',
+              origemConteudo: 'Proprio',
+            },
+            select: { id: true },
+          })
+        ).id
+      produtoA = await criarProduto(workspaceA, userA)
+      produtoB = await criarProduto(workspaceB, userB)
+    })
+
+    after(async () => {
+      for (const ws of criados) await limpar(ws)
+      await prisma.produto.deleteMany({ where: { workspaceId: { in: criados } } })
+      await prisma.user.deleteMany({ where: { workspaceId: { in: criados } } })
+      await prisma.workspace.deleteMany({ where: { id: { in: criados } } })
+      await prisma.$disconnect()
+    })
+
+    beforeEach(() => limparVerificadoresDeEvidencia())
+
+    // ── PROVA OBRIGATÓRIA: imutabilidade da observação ───────────────
+
+    test('editar o conteúdo depois NÃO altera a feature histórica', async () => {
+      await limpar(workspaceA)
+      // 1. publica com hook A (pergunta)
+      const contentId = await criarConteudo({ roteiro: 'Você já viu esse produto? Resolve tudo.' })
+      const captura = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      assert.equal(captura.capturado, true, captura.explicacao)
+
+      const antes = await prisma.mLFeatureSnapshot.findUnique({
+        where: { id: captura.snapshotId! },
+        select: { features: true, labeledAt: true },
+      })
+      const hookOriginal = (antes?.features as Record<string, unknown>).hook_type
+      assert.equal(antes?.labeledAt, null, 'a captura nasce sem rótulo')
+
+      // 2. a proprietária edita o conteúdo para um hook diferente
+      await prisma.conteudo.update({
+        where: { id: contentId },
+        data: { roteiro: 'Compre agora com 50% de desconto por tempo limitado.' },
+      })
+
+      // 3. uma venda comprovada chega e rotula a amostra
+      const { saleId } = await criarVenda({ contentId, statusComissao: 'RECEIVED' })
+      const r = await promover(saleId)
+      assert.equal(r.promovido, true, r.explicacao)
+
+      // 4. a feature histórica continua sendo a do momento da publicação
+      const depois = await prisma.mLFeatureSnapshot.findUnique({
+        where: { id: captura.snapshotId! },
+        select: { features: true, labeledAt: true, label: true },
+      })
+      assert.equal(
+        (depois?.features as Record<string, unknown>).hook_type,
+        hookOriginal,
+        'a observação histórica foi reescrita — é exatamente o vazamento que o Bloco 4.1 corrige'
+      )
+      assert.ok(depois?.labeledAt, 'o rótulo foi adicionado depois')
+      assert.equal((depois?.label as Record<string, unknown>).converted, true)
+    })
+
+    test('a captura nasce sem label e sem labeledAt', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      const r = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const snap = await prisma.mLFeatureSnapshot.findUnique({ where: { id: r.snapshotId! } })
+      assert.equal(snap?.label, null)
+      assert.equal(snap?.labeledAt, null)
+      assert.equal(snap?.entityType, ENTIDADE_DA_AMOSTRA)
+      assert.equal(snap?.featureVersion, FEATURE_VERSION)
+      assert.ok(snap?.capturedAt instanceof Date)
+    })
+
+    // ── Idempotência ─────────────────────────────────────────────────
+
+    test('publicar duas vezes o mesmo conteúdo não duplica snapshot', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      const a = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const b = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      assert.equal(a.capturado, true)
+      assert.equal(b.capturado, false)
+      assert.equal(b.motivo, 'JA_CAPTURADO')
+      assert.equal(a.snapshotId, b.snapshotId)
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
+    })
+
+    test('duas capturas SIMULTÂNEAS criam uma só', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      const [a, b] = await Promise.all([
+        capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId }),
+        capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId }),
+      ])
+      assert.equal([a, b].filter((r) => r.capturado).length, 1)
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
+    })
+
+    test('promoção repetida não duplica rótulo nem linha', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const { saleId } = await criarVenda({ contentId, statusComissao: 'RECEIVED' })
+
+      await promover(saleId)
+      await promover(saleId)
+      await promover(saleId)
+
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
+      const conta = await contarAmostrasRotuladas(workspaceA)
+      assert.equal(conta.total, 1)
+      assert.equal(conta.positivas, 1)
+    })
+
+    test('mudança de comissão repetida não duplica', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const { saleId, commissionId } = await criarVenda({ contentId, statusComissao: 'RECEIVED' })
+      await promover(saleId)
+
+      for (let i = 0; i < 3; i++) {
+        await atualizarComissao({
+          workspaceId: workspaceA,
+          commissionId,
+          actorUserId: userA,
+          status: 'RECEIVED',
+          receivedAmount: 15,
+        })
+      }
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
+    })
+
+    test('cron da janela repetido não cria linhas novas', async () => {
+      await limpar(workspaceA)
+      const publicadoEm = new Date(Date.now() - 40 * DIA)
+      const contentId = await criarConteudo({ publicadoEm })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId, agora: publicadoEm })
+
+      const um = await fecharJanelasDeObservacao({ workspaceId: workspaceA })
+      const dois = await fecharJanelasDeObservacao({ workspaceId: workspaceA })
+
+      assert.equal(um.rotulados, 1)
+      assert.equal(dois.rotulados, 0, 'rotulado não é reexaminado')
+      assert.equal(dois.examinados, 0)
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
+    })
+
+    // ── GATILHO C: comissão tardia ───────────────────────────────────
+
+    test('promoção ANTES da comissão: nada é rotulado; a comissão depois rotula', async () => {
+      // O caso que o gatilho da promoção sozinho não cobre.
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const { saleId, commissionId } = await criarVenda({ contentId })
+
+      const promocao = await promover(saleId)
+      assert.equal(promocao.promovido, true, promocao.explicacao)
+      assert.equal(promocao.veredito?.elegivel, false, 'comissão ainda EXPECTED')
+
+      let snap = await prisma.mLFeatureSnapshot.findFirst({ where: { workspaceId: workspaceA } })
+      assert.equal(snap?.labeledAt, null, 'nenhum rótulo com a venda ainda inelegível')
+
+      // Agora a comissão é reconhecida — o GATILHO C assume.
+      await atualizarComissao({
+        workspaceId: workspaceA,
+        commissionId,
+        actorUserId: userA,
+        status: 'RECEIVED',
+        confirmedAmount: 18,
+        receivedAmount: 15,
+      })
+
+      snap = await prisma.mLFeatureSnapshot.findFirst({ where: { workspaceId: workspaceA } })
+      assert.ok(snap?.labeledAt, 'o gatilho da comissão rotulou sozinho')
+      const label = snap?.label as Record<string, unknown>
+      assert.equal(label.converted, true)
+      assert.equal(label.receitaRealizada, 15)
+    })
+
+    // ── Não contaminar produção ──────────────────────────────────────
+
+    test('USER_REPORTED não rotula positivo', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const { saleId, commissionId } = await criarVenda({ contentId, statusComissao: 'RECEIVED' })
+
+      // Sem promoção: a venda continua USER_REPORTED.
+      await atualizarComissao({
+        workspaceId: workspaceA,
+        commissionId,
+        actorUserId: userA,
+        status: 'RECEIVED',
+        receivedAmount: 15,
+      })
+
+      const snap = await prisma.mLFeatureSnapshot.findFirst({ where: { workspaceId: workspaceA } })
+      assert.equal(snap?.labeledAt, null)
+      assert.equal((await contarAmostrasRotuladas(workspaceA)).total, 0)
+      assert.equal(saleId.length > 0, true)
+    })
+
+    test('venda inelegível não vira label positivo', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const { saleId } = await criarVenda({ contentId }) // comissão EXPECTED
+      await promover(saleId)
+
+      const snap = await prisma.mLFeatureSnapshot.findFirst({ where: { workspaceId: workspaceA } })
+      assert.equal(snap?.labeledAt, null)
+    })
+
+    // ── Negativos ────────────────────────────────────────────────────
+
+    test('janela aberta NÃO vira negativo prematuro', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo({ publicadoEm: new Date() })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, false)
+      assert.equal(r.motivo, 'JANELA_ABERTA')
+      const snap = await prisma.mLFeatureSnapshot.findFirst({ where: { workspaceId: workspaceA } })
+      assert.equal(snap?.labeledAt, null)
+    })
+
+    test('janela encerrada SEM venda nenhuma → negativo', async () => {
+      await limpar(workspaceA)
+      const publicadoEm = new Date(Date.now() - 40 * DIA)
+      const contentId = await criarConteudo({ publicadoEm })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId, agora: publicadoEm })
+
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, true, r.explicacao)
+
+      const snap = await prisma.mLFeatureSnapshot.findFirst({ where: { workspaceId: workspaceA } })
+      const label = snap?.label as Record<string, unknown>
+      assert.equal(label.converted, false)
+      assert.equal(label.receitaRealizada, 0)
+      assert.equal(label.origemDoLabel, 'JANELA_DE_OBSERVACAO_ENCERRADA')
+    })
+
+    test('janela encerrada COM venda em dúvida → fica SEM rótulo', async () => {
+      // Venda relatada e não comprovada: declarar "não converteu" seria
+      // afirmar mais do que se sabe.
+      await limpar(workspaceA)
+      const publicadoEm = new Date(Date.now() - 40 * DIA)
+      const contentId = await criarConteudo({ publicadoEm })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId, agora: publicadoEm })
+      await criarVenda({ contentId, statusComissao: 'RECEIVED' })
+
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, false)
+      assert.equal(r.motivo, 'RESULTADO_EM_DUVIDA')
+      const snap = await prisma.mLFeatureSnapshot.findFirst({ where: { workspaceId: workspaceA } })
+      assert.equal(snap?.labeledAt, null)
+    })
+
+    test('conteúdo legado sem amostra NÃO recebe negativo retroativo', async () => {
+      await limpar(workspaceA)
+      const publicadoEm = new Date(Date.now() - 40 * DIA)
+      const contentId = await criarConteudo({ publicadoEm })
+      // Nenhuma captura: é o legado.
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, false)
+      assert.equal(r.motivo, 'SEM_AMOSTRA_CAPTURADA')
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+    })
+
+    test('a lacuna do legado é listada, não preenchida com palpite', async () => {
+      await limpar(workspaceA)
+      const legado = await criarConteudo({ publicadoEm: new Date(Date.now() - 40 * DIA) })
+      const novo = await criarConteudo()
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId: novo })
+
+      const lacunas = await listarLacunasDeCaptura(workspaceA)
+      assert.equal(lacunas.length, 1)
+      assert.equal(lacunas[0].contentId, legado)
+    })
+
+    test('conteúdo já rotulado não é rerrotulado pela janela', async () => {
+      await limpar(workspaceA)
+      const publicadoEm = new Date(Date.now() - 40 * DIA)
+      const contentId = await criarConteudo({ publicadoEm })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId, agora: publicadoEm })
+      await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, false)
+      assert.equal(r.motivo, 'JA_ROTULADO')
+    })
+
+    // ── Isolamento e readiness ───────────────────────────────────────
+
+    test('workspace A não captura nem rotula conteúdo de B', async () => {
+      await limpar(workspaceA)
+      await limpar(workspaceB)
+      const contentB = await criarConteudo({ ws: workspaceB })
+
+      const r = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId: contentB })
+      assert.equal(r.capturado, false)
+      assert.equal(r.motivo, 'CONTEUDO_NAO_ENCONTRADO')
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceB } }), 0)
+    })
+
+    test('o readiness conta positivos E negativos reais, só REAL_OPERATION', async () => {
+      await limpar(workspaceA)
+
+      // Um positivo comprovado.
+      const positivo = await criarConteudo()
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId: positivo })
+      const { saleId } = await criarVenda({ contentId: positivo, statusComissao: 'RECEIVED' })
+      await promover(saleId)
+
+      // Um negativo por janela encerrada.
+      const publicadoEm = new Date(Date.now() - 40 * DIA)
+      const negativo = await criarConteudo({ publicadoEm })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId: negativo, agora: publicadoEm })
+      await fecharJanelasDeObservacao({ workspaceId: workspaceA })
+
+      const conta = await contarAmostrasRotuladas(workspaceA)
+      assert.equal(conta.total, 2, 'positivo e negativo entram no total')
+      assert.equal(conta.positivas, 1, 'só o positivo conta como positiva')
+    })
+
+    test('os limiares de prontidão continuam intocados', async () => {
+      const gate = lerFonte('lib/ml-readiness-gate.ts')
+      assert.match(gate, /minimoParaEstatistica: 30/)
+      assert.match(gate, /minimoParaML: 200/)
+      assert.match(gate, /minimoPositivosParaML: 20/)
+    })
+
+    test('nenhum modelo foi criado, treinado ou promovido', async () => {
+      assert.equal(await prisma.mLModel.count({ where: { workspaceId: { in: criados } } }), 0)
+      assert.equal(await prisma.mLTrainingRun.count({ where: { workspaceId: { in: criados } } }), 0)
+      assert.equal(
+        await prisma.mLModel.count({ where: { workspaceId: { in: criados }, status: 'ACTIVE' } }),
+        0
+      )
+    })
+  }
+)

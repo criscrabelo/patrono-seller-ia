@@ -557,9 +557,39 @@ async function executarPromocao(entrada: EntradaInterna): Promise<ResultadoDaPro
   // é o mesmo que ser elegível.
   if (resultado.promovido || resultado.idempotente) {
     const veredito = await avaliarVendaParaOperacaoReal(entrada.workspaceId, entrada.saleId)
+    // GATILHO B (P0.2 Bloco 4.1): promoveu e ficou elegível → tenta rotular
+    // a amostra como conversão real, sem ninguém pedir "atualizar ML".
+    //
+    // Quando NÃO fica elegível — promoção antes da comissão ser reconhecida —
+    // nada é escrito, e quem retoma é o GATILHO C, na mudança da comissão.
+    if (veredito?.elegivel) {
+      await rotularAmostraDeOperacaoReal(entrada.workspaceId, entrada.saleId)
+    }
     return { ...resultado, veredito }
   }
   return resultado
+}
+
+/**
+ * Chama o Feature Store sem deixar que uma falha dele derrube a promoção ou
+ * a atualização de comissão. O fato comercial é o principal; a observação de
+ * ML é consequência, e uma consequência que falha vira log, não exceção.
+ *
+ * Idempotente: rotular de novo reaproveita a mesma amostra.
+ */
+export async function rotularAmostraDeOperacaoReal(
+  workspaceId: string,
+  saleId: string
+): Promise<void> {
+  try {
+    const { registrarOperacaoRealNoFeatureStore } = await import('./ml-operacao-real')
+    const r = await registrarOperacaoRealNoFeatureStore({ workspaceId, saleId })
+    if (!r.registrado) {
+      console.warn(`[ml-gatilho] amostra não rotulada (${r.motivo}) venda=${saleId}: ${r.explicacao}`)
+    }
+  } catch (e) {
+    console.error(`[ml-gatilho] falha ao rotular amostra da venda ${saleId} — o registro comercial seguiu normalmente:`, e)
+  }
 }
 
 /**

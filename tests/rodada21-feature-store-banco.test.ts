@@ -17,6 +17,7 @@ import { registrarOperacaoRealNoFeatureStore, ENTIDADE_DA_AMOSTRA } from '../lib
 import { FEATURE_VERSION, salvarFeatureSnapshot, registrarLabelNoSnapshot } from '../lib/ml-feature-store'
 import { contarAmostrasRotuladas } from '../lib/ml-readiness-gate'
 import { limparVerificadoresDeEvidencia } from '../lib/evidencia-verificada'
+import { capturarSnapshotDePublicacao } from '../lib/ml-captura-publicacao'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
 
@@ -39,7 +40,25 @@ async function limpar(ws: string) {
   await prisma.auditLog.deleteMany({ where: { workspaceId: ws } })
 }
 
-async function criarConteudo(ws = workspaceA) {
+/**
+ * Cria o conteúdo e, por padrão, CAPTURA a amostra no instante da
+ * publicação (Bloco 4.1). A rotulagem não cria mais snapshot: ela só rotula
+ * o que já foi observado quando o conteúdo foi ao ar.
+ */
+async function criarConteudo(ws = workspaceA, capturar = true) {
+  const id = await criarConteudoSemCaptura(ws)
+  if (capturar) {
+    // Capturado "ontem" para que capturedAt fique claramente antes do label.
+    await capturarSnapshotDePublicacao({
+      workspaceId: ws,
+      contentId: id,
+      agora: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    })
+  }
+  return id
+}
+
+async function criarConteudoSemCaptura(ws = workspaceA) {
   return (
     await prisma.conteudo.create({
       data: {
@@ -95,6 +114,19 @@ async function criarVenda(opcoes: {
     })
   }
   return { saleId: sale.id, commissionId: commission!.id }
+}
+
+/**
+ * Depois do Bloco 4.1 a amostra existe desde a PUBLICAÇÃO. O que uma venda
+ * inelegível não pode fazer é RÓTULO — então é isso que se verifica, não a
+ * ausência da linha.
+ */
+async function assertNaoRotulou(ws = workspaceA) {
+  const rotuladas = await prisma.mLFeatureSnapshot.count({
+    where: { workspaceId: ws, labeledAt: { not: null } },
+  })
+  assert.equal(rotuladas, 0, 'nenhuma amostra podia ter sido rotulada')
+  assert.equal((await contarAmostrasRotuladas(ws)).total, 0)
 }
 
 /** Cria a venda e a promove pelo caminho legítimo — o cenário elegível. */
@@ -181,7 +213,7 @@ describe(
       assert.equal(r.registrado, false)
       assert.equal(r.motivo, 'VENDA_NAO_ELEGIVEL')
       assert.ok(r.motivosDaAutoridade.includes('ORIGEM_NAO_E_OPERACAO_REAL'))
-      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+      await assertNaoRotulou()
     })
 
     test('UNVERIFIED não gera snapshot REAL_OPERATION', async () => {
@@ -192,7 +224,7 @@ describe(
       const r = await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
       assert.equal(r.registrado, false)
       assert.equal(r.motivo, 'VENDA_NAO_ELEGIVEL')
-      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+      await assertNaoRotulou()
     })
 
     for (const origem of ['SEED', 'TEST_FIXTURE', 'DEMO', 'SYNTHETIC_TEST']) {
@@ -204,7 +236,7 @@ describe(
         const r = await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
         assert.equal(r.registrado, false)
         assert.ok(r.motivosDaAutoridade.includes('ORIGEM_NAO_E_OPERACAO_REAL'))
-        assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+        await assertNaoRotulou()
       })
     }
 
@@ -227,7 +259,7 @@ describe(
       assert.equal(r.registrado, false)
       assert.equal(r.motivo, 'VENDA_NAO_ELEGIVEL')
       assert.ok(r.motivosDaAutoridade.includes('SEM_COMISSAO_RECONHECIDA'))
-      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+      await assertNaoRotulou()
     })
 
     test('venda elegível SEM conteúdo não gera amostra — e diz por quê', async () => {
@@ -247,14 +279,14 @@ describe(
 
     // ── O caminho que funciona ─────────────────────────────────────────
 
-    test('Sale elegível gera EXATAMENTE um snapshot, com REAL_OPERATION', async () => {
+    test('Sale elegível rotula a amostra capturada, sem criar outra', async () => {
       await limpar(workspaceA)
       const contentId = await criarConteudo()
       const { saleId } = await vendaElegivel(contentId)
 
       const r = await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
       assert.equal(r.registrado, true, r.explicacao)
-      assert.equal(r.criado, true)
+      assert.equal(r.criado, false, 'a amostra nasceu na publicação, não aqui')
       assert.equal(r.contentId, contentId)
 
       const snaps = await prisma.mLFeatureSnapshot.findMany({ where: { workspaceId: workspaceA } })
@@ -361,10 +393,12 @@ describe(
       const segunda = await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
       const terceira = await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
 
-      assert.equal(primeira.criado, true)
-      assert.equal(segunda.criado, false)
-      assert.equal(terceira.criado, false)
+      for (const r of [primeira, segunda, terceira]) {
+        assert.equal(r.registrado, true, r.explicacao)
+        assert.equal(r.criado, false, 'rotular nunca cria amostra')
+      }
       assert.equal(primeira.snapshotId, segunda.snapshotId)
+      assert.equal(segunda.snapshotId, terceira.snapshotId)
       assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
     })
 
@@ -377,7 +411,8 @@ describe(
         registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId }),
         registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId }),
       ])
-      assert.equal([a, b].filter((r) => r.criado).length, 1)
+      assert.equal([a, b].filter((r) => r.registrado).length, 2)
+      assert.equal([a, b].filter((r) => r.criado).length, 0)
       assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
     })
 
@@ -408,10 +443,15 @@ describe(
       assert.equal(r.registrado, false)
       assert.equal(r.motivo, 'VENDA_NAO_ENCONTRADA')
       assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceB } }), 0)
+      assert.equal(await contarAmostrasRotuladas(workspaceB).then((c) => c.total), 0)
 
       // E o caminho certo continua funcionando, só em A.
-      await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
-      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
+      const ok = await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
+      assert.equal(ok.registrado, true, ok.explicacao)
+      assert.equal(
+        await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA, labeledAt: { not: null } } }),
+        1
+      )
       assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceB } }), 0)
     })
 
@@ -420,21 +460,31 @@ describe(
     test('snapshot REAL_OPERATION é contado pelo readiness gate', async () => {
       await limpar(workspaceA)
       const contentId = await criarConteudo()
+
+      // Antes da venda: a amostra existe (capturada na publicação), mas sem
+      // rótulo — e sem rótulo ela não conta para prontidão nenhuma.
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
+      assert.equal((await contarAmostrasRotuladas(workspaceA)).total, 0)
+
+      // A promoção já dispara o GATILHO B sozinha (Bloco 4.1): ninguém
+      // precisa mandar "atualizar ML".
       const { saleId } = await vendaElegivel(contentId)
 
-      const antes = await contarAmostrasRotuladas(workspaceA)
-      assert.equal(antes.total, 0)
+      const depoisDoGatilho = await contarAmostrasRotuladas(workspaceA)
+      assert.equal(depoisDoGatilho.total, 1, 'o gatilho automático rotulou')
+      assert.equal(depoisDoGatilho.positivas, 1, 'venda comprovada é amostra positiva')
 
-      await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
-
-      const depois = await contarAmostrasRotuladas(workspaceA)
-      assert.equal(depois.total, 1)
-      assert.equal(depois.positivas, 1, 'venda comprovada é amostra positiva')
+      // Chamar de novo explicitamente é idempotente.
+      const r = await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
+      assert.equal(r.registrado, true, r.explicacao)
+      const final = await contarAmostrasRotuladas(workspaceA)
+      assert.equal(final.total, 1)
+      assert.equal(final.positivas, 1)
     })
 
     test('snapshots sintéticos NÃO são contados pelo readiness gate', async () => {
       await limpar(workspaceA)
-      const contentId = await criarConteudo()
+      const contentId = await criarConteudo(workspaceA, false)
 
       // Amostras de teste podem existir para validar o motor...
       for (const origem of ['TEST_FIXTURE', 'DEMO', 'SEED', 'SYNTHETIC_TEST'] as const) {
@@ -458,7 +508,7 @@ describe(
 
     test('reprocessar NÃO transforma amostra de teste em produção', async () => {
       await limpar(workspaceA)
-      const contentId = await criarConteudo()
+      const contentId = await criarConteudo(workspaceA, false)
       // Uma amostra de teste já existe para este conteúdo e versão.
       await salvarFeatureSnapshot(
         workspaceA,

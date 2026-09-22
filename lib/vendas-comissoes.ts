@@ -576,5 +576,17 @@ export async function atualizarComissao(params: {
     metadata: { statusAnterior: atual.status, statusNovo: commission.status },
   })
 
+  // GATILHO C (P0.2 Bloco 4.1): comissão reconhecida → reavalia a venda pela
+  // autoridade e, se agora for elegível, rotula a amostra.
+  //
+  // Por que não basta o gatilho da promoção: uma venda pode ser promovida
+  // ANTES da comissão ser reconhecida. Naquele instante a autoridade diz
+  // inelegível e nada é escrito — corretamente. Sem este gatilho, a amostra
+  // ficaria sem rótulo para sempre, esperando alguém mandar "atualizar ML".
+  if ((params.status === 'CONFIRMED' || params.status === 'RECEIVED') && commission.saleId) {
+    const { rotularAmostraDeOperacaoReal } = await import('@/lib/promocao-operacao-real')
+    await rotularAmostraDeOperacaoReal(params.workspaceId, commission.saleId)
+  }
+
   return commission
 }

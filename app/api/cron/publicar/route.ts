@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { publicarReelInstagram, montarLegenda, renovarTokenInstagram } from '@/lib/instagram'
+import { capturarSnapshotDePublicacao } from '@/lib/ml-captura-publicacao'
 
 // Endpoint chamado pela Vercel Cron para publicar automaticamente os
 // conteúdos cuja data de agendamento já chegou.
@@ -71,6 +72,14 @@ export async function GET(req: NextRequest) {
   let publicadosApp = 0
   let publicadosInstagram = 0
   let falhas = 0
+  // GATILHO A (P0.2 Bloco 4.1): cada publicação real captura a amostra de
+  // ML no mesmo instante, sem rótulo. Nunca lança — a publicação é o fato
+  // principal e não pode falhar porque a observação falhou.
+  let amostrasCapturadas = 0
+  const capturar = async (workspaceId: string, contentId: string) => {
+    const r = await capturarSnapshotDePublicacao({ workspaceId, contentId, agora })
+    if (r.capturado) amostrasCapturadas++
+  }
 
   for (const c of devidos) {
     // Sem vídeo: publicação apenas dentro do app.
@@ -79,6 +88,7 @@ export async function GET(req: NextRequest) {
         where: { id: c.id },
         data: { status: 'publicado', dataPublicacao: agora },
       })
+      await capturar(c.workspaceId, c.id)
       publicadosApp++
       continue
     }
@@ -97,6 +107,7 @@ export async function GET(req: NextRequest) {
         where: { id: c.id },
         data: { status: 'publicado', dataPublicacao: agora },
       })
+      await capturar(c.workspaceId, c.id)
       publicadosApp++
       continue
     }
@@ -117,6 +128,7 @@ export async function GET(req: NextRequest) {
           erroPublicacao: null,
         },
       })
+      await capturar(c.workspaceId, c.id)
       publicadosInstagram++
     } catch (e) {
       // Mantém como "agendado" para tentar de novo na próxima execução.
@@ -133,6 +145,7 @@ export async function GET(req: NextRequest) {
     publicadosApp,
     publicadosInstagram,
     falhas,
+    amostrasCapturadas,
     tokensRenovados,
     tokensFalha,
     executadoEm: agora.toISOString(),

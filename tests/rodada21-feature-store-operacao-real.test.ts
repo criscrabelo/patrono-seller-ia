@@ -241,10 +241,11 @@ describe('Sem data leakage — o resultado nunca entra como feature', () => {
     assert.match(codigo, /excluirContentId \? \{ id: \{ not: excluirContentId \} \}/)
   })
 
-  test('capturedAt é gravado como o referenceDate, não como "agora"', () => {
-    // Garante capturedAt < labeledAt sempre: as features descrevem a
-    // publicação, o label descreve o que veio depois.
-    assert.match(lerCodigo('lib/ml-operacao-real.ts'), /capturedAt: referenceDate/)
+  test('capturedAt é o instante da PUBLICAÇÃO, gravado na captura', () => {
+    // Revisto no Bloco 4.1: a amostra nasce quando o conteúdo vai ao ar, e
+    // não quando a venda chega. As features descrevem aquele momento; o
+    // label descreve o que veio depois.
+    assert.match(lerCodigo('lib/ml-captura-publicacao.ts'), /capturedAt: agora/)
   })
 })
 
@@ -255,8 +256,8 @@ describe('Autoridade única — este módulo não tem regra própria', () => {
 
   test('pergunta à autoridade ANTES de qualquer escrita', () => {
     const posAutoridade = codigo.indexOf('avaliarVendaParaOperacaoReal(base.workspaceId, base.saleId)')
-    const posCreate = codigo.indexOf('tx.mLFeatureSnapshot.create')
-    assert.ok(posAutoridade > 0 && posCreate > posAutoridade)
+    const posUpdate = codigo.indexOf('tx.mLFeatureSnapshot.update')
+    assert.ok(posAutoridade > 0 && posUpdate > posAutoridade)
   })
 
   test('não reproduz a regra de elegibilidade', () => {
@@ -278,10 +279,15 @@ describe('Autoridade única — este módulo não tem regra própria', () => {
     assert.match(codigo, /motivosDaAutoridade: veredito\?\.motivos \?\? \[\]/)
   })
 
-  test('REAL_OPERATION no snapshot é herdado da venda validada, e só aqui', () => {
-    assert.match(codigo, /dataOrigin: 'REAL_OPERATION'/)
-    // Um único ponto no repositório escreve isso num snapshot.
-    for (const arq of ['lib/ml-feature-store.ts', 'lib/ml-training-pipeline.ts', 'lib/ml-engine.ts']) {
+  test('um único módulo grava REAL_OPERATION num snapshot', () => {
+    // Desde o Bloco 4.1 esse módulo é o da CAPTURA, na publicação.
+    assert.match(lerCodigo('lib/ml-captura-publicacao.ts'), /dataOrigin: 'REAL_OPERATION'/)
+    for (const arq of [
+      'lib/ml-operacao-real.ts',
+      'lib/ml-feature-store.ts',
+      'lib/ml-training-pipeline.ts',
+      'lib/ml-engine.ts',
+    ]) {
       assert.ok(
         !/dataOrigin: 'REAL_OPERATION'/.test(lerCodigo(arq)),
         `${arq} não pode gravar REAL_OPERATION por conta própria`
@@ -289,10 +295,11 @@ describe('Autoridade única — este módulo não tem regra própria', () => {
     }
   })
 
-  test('reprocessamento NÃO altera o dataOrigin de uma amostra existente', () => {
-    // Uma amostra de teste jamais vira de produção por reprocessamento.
-    const trecho = codigo.slice(codigo.indexOf('if (existente)'), codigo.indexOf('const novo ='))
-    assert.ok(!/dataOrigin/.test(trecho))
+  test('a rotulagem só toca label e labeledAt', () => {
+    // Uma amostra de teste jamais vira de produção por reprocessamento, e a
+    // observação histórica nunca é reescrita.
+    const trecho = codigo.slice(codigo.indexOf('tx.mLFeatureSnapshot.update'), codigo.indexOf('return existente.id'))
+    assert.ok(!/dataOrigin|features:|capturedAt/.test(trecho))
     assert.match(trecho, /data: \{ label: label as never, labeledAt/)
   })
 
