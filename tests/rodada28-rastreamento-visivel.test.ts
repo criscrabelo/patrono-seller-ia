@@ -293,7 +293,7 @@ describe('A lacuna aparece na interface, não só no log', () => {
   // accessToken e explicacao — isso fica no servidor e no log; o que não
   // pode é atravessar para o cliente.
   const corpoDaResposta = (() => {
-    const i = rota.indexOf('rastreamento: rastreado.ok')
+    const i = rota.indexOf('rastreamento: respostaDeRastreamento')
     assert.ok(i > 0, 'o bloco de rastreamento da resposta precisa existir')
     return rota.slice(rota.lastIndexOf('NextResponse.json({', i), rota.indexOf('} catch', i))
   })()
@@ -301,8 +301,11 @@ describe('A lacuna aparece na interface, não só no log', () => {
   const tela = lerCodigo('app/(dashboard)/conteudos/page.tsx')
 
   test('a rota manual devolve o aviso pronto', () => {
-    assert.match(rota, /avisoDaPublicacao/)
-    assert.match(rota, /estado: 'NAO_RASTREADA_COM_FALLBACK'/)
+    // A Etapa 2.c moveu a montagem do aviso para o fluxo; a rota so repassa.
+    assert.match(rota, /respostaDeRastreamento\(tentativa\)/)
+    const fluxo = lerCodigo('lib/publicacao-fluxo.ts')
+    assert.match(fluxo, /avisoDaPublicacao/)
+    assert.match(fluxo, /estado: 'NAO_RASTREADA_COM_FALLBACK'/)
   })
 
   test('a rota NÃO devolve mais a explicação interna', () => {
@@ -312,7 +315,8 @@ describe('A lacuna aparece na interface, não só no log', () => {
       !/explicacao/.test(corpoDaResposta),
       'a explicação interna não pode viajar para a tela'
     )
-    assert.match(rota, /registrarLacunaDeRastreamento/, 'mas o log continua recebendo')
+    // O log continua recebendo — no fluxo, que e quem sabe da lacuna.
+    assert.match(lerCodigo('lib/publicacao-fluxo.ts'), /registrarLacunaDeRastreamento/)
   })
 
   test('a tela avisa imediatamente quando o post sai sem rastreamento', () => {

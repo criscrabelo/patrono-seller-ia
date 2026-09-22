@@ -13,12 +13,12 @@ import {
   publicarContainer,
   montarLegenda,
 } from '@/lib/instagram'
-import { LINK_COMPRA } from '@/lib/config'
 import {
-  obterLinkRastreavelDaPublicacao,
-  registrarLacunaDeRastreamento,
-} from '@/lib/link-de-publicacao'
-import { avisoDaPublicacao } from '@/lib/rastreamento-da-publicacao'
+  prepararTentativaDePublicacao,
+  confirmarDistribuicao,
+  registrarFalhaDaTentativa,
+  respostaDeRastreamento,
+} from '@/lib/publicacao-fluxo'
 
 // Publicar pode levar até ~50s (processamento do vídeo na Meta).
 export const maxDuration = 60
@@ -79,37 +79,27 @@ export async function POST(
   const accessToken = integracao.accessToken
   const igUserId = integracao.accountId
 
-  // P1.0 Etapa 2.a: o que vai ao público é o link RASTREADO do Patrono.
-  // `Produto.linkProduto` continua sendo o destino do redirect — deixa de
-  // ser o que a legenda divulga.
+  // P1.0 Etapa 2.c: a tentativa passa pela AUTORIDADE CENTRAL. Ela cria ou
+  // reusa a Publicacao, obtem o link rastreado, valida o vinculo pelo guard
+  // e move o estado para DISTRIBUINDO — tudo antes de falar com a Meta.
   //
-  // `chaveDaTentativa` vem do corpo quando quem chama quiser um link
-  // distinto por republicação; sem ela, a chave padrão é estável e o retry
-  // reusa o mesmo link.
-  const rastreado = await obterLinkRastreavelDaPublicacao({
+  // `workspaceId` vem da SESSAO, nunca do corpo. `chaveDaTentativa` pode vir
+  // do corpo: e a intencao de quem publica, e e ela que separa retry de
+  // republicacao.
+  const tentativa = await prepararTentativaDePublicacao({
     workspaceId: session.user.workspaceId,
     contentId: conteudo.id,
     canal: 'instagram',
     chaveDaTentativa: typeof body?.chaveDaTentativa === 'string' ? body.chaveDaTentativa : null,
+    urlDiretaDoProduto: conteudo.produto?.linkProduto ?? null,
+    dataAgendamento: conteudo.dataAgendamento,
   })
-  if (!rastreado.ok) {
-    // Fail-closed no LINK RASTREADO, nunca em silêncio: a publicação segue
-    // com o link direto para não derrubar a receita, e a lacuna fica
-    // nomeada no log e na resposta.
-    registrarLacunaDeRastreamento({
-      contentId: conteudo.id,
-      canal: 'instagram',
-      motivo: rastreado.motivo!,
-      explicacao: rastreado.explicacao,
-    })
-  }
-  const linkParaDivulgar = rastreado.urlPublica ?? conteudo.produto?.linkProduto ?? LINK_COMPRA
 
   const legenda = montarLegenda(
     conteudo.legendaInstagram,
     conteudo.hashtags,
     conteudo.chamadaAcao,
-    linkParaDivulgar
+    tentativa.urlParaDivulgar
   )
   const ehVideo = tipoMidia === 'video'
 
@@ -157,6 +147,14 @@ export async function POST(
     }
 
     if (status === 'ERROR' || status === 'EXPIRED') {
+      // Falha REAL do provider — a midia nao vai ao ar. "Ainda processando"
+      // nao passa por aqui: aquilo e retry, e retry reusa a mesma tentativa.
+      if (tentativa.publicacao) {
+        await registrarFalhaDaTentativa({
+          workspaceId: session.user.workspaceId,
+          publicacaoId: tentativa.publicacao.id,
+        })
+      }
       await prisma.conteudo.update({
         where: { id: conteudo.id },
         data: {
@@ -193,6 +191,16 @@ export async function POST(
         videoRequestId: null,
       },
     })
+    // A distribuicao esta CONFIRMADA pelo canal: id externo e instante reais.
+    // O id passa por normalizarPublicacaoExternaId dentro do repositorio.
+    if (tentativa.publicacao) {
+      await confirmarDistribuicao({
+        workspaceId: session.user.workspaceId,
+        publicacaoId: tentativa.publicacao.id,
+        publicacaoExternaId: mediaId,
+        distribuidaEm: new Date(),
+      })
+    }
     // GATILHO A (P0.2 Bloco 4.1): publicação real → captura da amostra sem
     // rótulo. Nunca lança; publicar não pode falhar por causa do ML.
     await capturarSnapshotDePublicacao({
@@ -202,21 +210,10 @@ export async function POST(
     return NextResponse.json({
       ok: true,
       mediaId,
-      // A lacuna viaja na resposta com FRASE PRONTA. `explicacao` fica de
-      // fora de proposito: ela cita o valor de PUBLIC_BASE_URL e o caminho
-      // que falhou — diagnostico de servidor, nao texto de tela.
-      rastreamento: rastreado.ok
-        ? { rastreado: true, estado: 'RASTREADA', slug: rastreado.slug, reutilizado: rastreado.reutilizado, aviso: null }
-        : {
-            rastreado: false,
-            estado: 'NAO_RASTREADA_COM_FALLBACK',
-            motivo: rastreado.motivo,
-            aviso: avisoDaPublicacao({
-              rastreado: false,
-              motivo: rastreado.motivo,
-              submotivo: rastreado.submotivo,
-            }),
-          },
+      // A lacuna viaja na resposta com FRASE PRONTA. A `explicacao` interna
+      // fica de fora: ela cita o valor de PUBLIC_BASE_URL e o caminho que
+      // falhou — diagnostico de servidor, nao texto de tela.
+      rastreamento: respostaDeRastreamento(tentativa),
     })
   } catch (e) {
     const raw = e instanceof Error ? e.message : 'Falha ao publicar no Instagram'

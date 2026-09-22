@@ -12,8 +12,19 @@
 
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+
+/** Todos os .ts/.tsx sob um diretório, recursivamente. */
+function varrer(dir: string): string[] {
+  const saida: string[] = []
+  for (const nome of readdirSync(dir)) {
+    const abs = join(dir, nome)
+    if (statSync(abs).isDirectory()) saida.push(...varrer(abs))
+    else if (/[.]tsx?$/.test(nome)) saida.push(abs)
+  }
+  return saida
+}
 import { prisma } from '../lib/prisma'
 import {
   avaliarVinculoDeLinkComPublicacao,
@@ -124,21 +135,35 @@ describe('Por que o guard existe além do contrato', () => {
     assert.equal(VINCULO_EXIGE_AVALIACAO.colunaProtegida, 'LinkDinamico.publicacaoId')
   })
 
-  test('HOJE nenhum caminho grava publicacaoId — e quando gravar, passa pelo guard', () => {
-    // Enquanto não há escrita, a trava é uma promessa. Este teste a cobra:
-    // qualquer módulo que passe a gravar a coluna tem de chamar o guard.
-    const modulos = ['lib/link-de-publicacao.ts', 'lib/rastreamento-da-publicacao.ts']
-    for (const rel of modulos) {
-      const codigo = lerCodigo(rel)
-      const escreve = /publicacaoId\s*:/.test(codigo)
-      if (escreve) {
+  test('TODO módulo que grava publicacaoId passa pelo guard', () => {
+    // Varredura ampla de propósito: `lib/` e as rotas inteiras, não uma
+    // lista que alguém esqueceria de atualizar ao criar arquivo novo.
+    //
+    // O padrão procurado é a ESCRITA via Prisma — `data: { ... publicacaoId`
+    // —, não a menção ao nome da coluna, que aparece em tipo e comentário.
+    const arquivos = [
+      ...varrer(join(RAIZ, 'lib')),
+      ...varrer(join(RAIZ, 'app')),
+    ]
+    const escrevem: string[] = []
+    for (const abs of arquivos) {
+      const semComentario = readFileSync(abs, 'utf8')
+        .split(/\r?\n/)
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join('\n')
+      if (/data:\s*\{[^}]*\bpublicacaoId\b/.test(semComentario)) {
+        const rel = abs.slice(RAIZ.length + 1).split('\\').join('/')
+        escrevem.push(rel)
         assert.match(
-          codigo,
+          semComentario,
           /avaliarVinculoDeLinkComPublicacao/,
           `${rel} grava publicacaoId sem passar pelo guard`
         )
       }
     }
+    // Uma porta so. Se aparecer outra, ela precisa do guard — e este teste
+    // obriga a decisao a ser consciente.
+    assert.deepEqual(escrevem, ['lib/publicacao-repositorio.ts'])
   })
 })
 

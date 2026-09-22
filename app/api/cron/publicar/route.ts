@@ -3,9 +3,10 @@ import { prisma } from '@/lib/prisma'
 import { publicarReelInstagram, montarLegenda, renovarTokenInstagram } from '@/lib/instagram'
 import { capturarSnapshotDePublicacao } from '@/lib/ml-captura-publicacao'
 import {
-  obterLinkRastreavelDaPublicacao,
-  registrarLacunaDeRastreamento,
-} from '@/lib/link-de-publicacao'
+  prepararTentativaDePublicacao,
+  confirmarDistribuicao,
+  registrarFalhaDaTentativa,
+} from '@/lib/publicacao-fluxo'
 
 // Endpoint chamado pela Vercel Cron para publicar automaticamente os
 // conteúdos cuja data de agendamento já chegou.
@@ -88,33 +89,10 @@ export async function GET(req: NextRequest) {
     if (r.capturado) amostrasCapturadas++
   }
 
-  // P1.0 Etapa 2.a: o link divulgado passa a ser o RASTREADO do Patrono.
-  // `Produto.linkProduto` vira o destino do redirect, não o que vai ao ar.
-  // A chave da tentativa é derivada do agendamento, então um retry da mesma
-  // publicação reusa o mesmo link em vez de criar outro.
+  // P1.0 Etapa 2.c: o caminho agendado usa a MESMA autoridade central do
+  // "publicar agora". A chave da tentativa deriva do agendamento, entao uma
+  // reexecucao do cron reencontra a mesma Publicacao e o mesmo link.
   let publicacoesSemRastreamento = 0
-  const linkParaDivulgar = async (c: {
-    id: string
-    workspaceId: string
-    produto?: { linkProduto: string | null } | null
-  }): Promise<string | null | undefined> => {
-    const r = await obterLinkRastreavelDaPublicacao({
-      workspaceId: c.workspaceId,
-      contentId: c.id,
-      canal: 'instagram',
-    })
-    if (r.ok) return r.urlPublica
-    // Fail-closed no link rastreado, nunca em silêncio: cai para o link
-    // direto para não derrubar a receita, com a lacuna nomeada no log.
-    registrarLacunaDeRastreamento({
-      contentId: c.id,
-      canal: 'instagram',
-      motivo: r.motivo!,
-      explicacao: r.explicacao,
-    })
-    publicacoesSemRastreamento++
-    return c.produto?.linkProduto
-  }
 
   for (const c of devidos) {
     // Sem vídeo: publicação apenas dentro do app.
@@ -149,12 +127,21 @@ export async function GET(req: NextRequest) {
       continue
     }
 
+    const tentativa = await prepararTentativaDePublicacao({
+      workspaceId: c.workspaceId,
+      contentId: c.id,
+      canal: 'instagram',
+      urlDiretaDoProduto: c.produto?.linkProduto ?? null,
+      dataAgendamento: c.dataAgendamento,
+    })
+    if (!tentativa.rastreada) publicacoesSemRastreamento++
+
     try {
       const mediaId = await publicarReelInstagram({
         accessToken: integracao.accessToken,
         igUserId: integracao.accountId,
         videoUrl: c.videoUrl,
-        legenda: montarLegenda(c.legendaInstagram, c.hashtags, c.chamadaAcao, await linkParaDivulgar(c)),
+        legenda: montarLegenda(c.legendaInstagram, c.hashtags, c.chamadaAcao, tentativa.urlParaDivulgar),
       })
       await prisma.conteudo.update({
         where: { id: c.id },
@@ -165,12 +152,28 @@ export async function GET(req: NextRequest) {
           erroPublicacao: null,
         },
       })
+      if (tentativa.publicacao) {
+        await confirmarDistribuicao({
+          workspaceId: c.workspaceId,
+          publicacaoId: tentativa.publicacao.id,
+          publicacaoExternaId: mediaId,
+          distribuidaEm: agora,
+        })
+      }
       // DISTRIBUIÇÃO REAL: o canal devolveu `mediaId`. É aqui — e só aqui,
       // neste cron — que a amostra de produção nasce.
       await capturar(c.workspaceId, c.id)
       publicadosInstagram++
     } catch (e) {
-      // Mantém como "agendado" para tentar de novo na próxima execução.
+      // Falha REAL do provider. O conteudo continua "agendado" e a proxima
+      // execucao reusa a MESMA chave da tentativa — mesma Publicacao, que
+      // volta de FALHOU para DISTRIBUINDO.
+      if (tentativa.publicacao) {
+        await registrarFalhaDaTentativa({
+          workspaceId: c.workspaceId,
+          publicacaoId: tentativa.publicacao.id,
+        })
+      }
       await prisma.conteudo.update({
         where: { id: c.id },
         data: { erroPublicacao: e instanceof Error ? e.message : 'Falha ao publicar' },

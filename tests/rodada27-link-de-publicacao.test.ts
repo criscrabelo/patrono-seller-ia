@@ -164,21 +164,30 @@ describe('Publicação divulga o link RASTREADO, não o do produto', () => {
   })
 
   test('as duas rotas obtêm o link rastreado antes de montar a legenda', () => {
+    // A Etapa 2.c moveu a obtencao do link para dentro de
+    // `prepararTentativaDePublicacao`, no fluxo. O invariante e o mesmo: a
+    // URL tem de existir ANTES da legenda, senao o post sai sem ela.
     for (const [nome, codigo] of [['manual', manual], ['cron', cron]] as const) {
-      assert.match(codigo, /obterLinkRastreavelDaPublicacao/, `${nome} precisa obter o link rastreado`)
-      // A chamada, nao o import — senao a linha do `import {}` venceria sempre.
-      const posLink = codigo.indexOf('obterLinkRastreavelDaPublicacao({')
+      assert.match(codigo, /prepararTentativaDePublicacao/, `${nome} precisa preparar a tentativa`)
+      const posPreparo = codigo.indexOf('prepararTentativaDePublicacao({')
       const posLegenda = codigo.indexOf('montarLegenda(')
-      assert.ok(posLink < posLegenda, `${nome} monta a legenda antes de obter o link`)
+      assert.ok(posPreparo < posLegenda, `${nome} monta a legenda antes de preparar a tentativa`)
+      assert.match(codigo, /tentativa\.urlParaDivulgar/, `${nome} usa a URL que o fluxo decidiu`)
     }
+    // E o fluxo realmente obtem o link rastreado.
+    const fluxo = lerCodigo('lib/publicacao-fluxo.ts')
+    assert.match(fluxo, /obterLinkRastreavelDaPublicacao\({/)
   })
 
   test('a lacuna é registrada, nunca silenciosa', () => {
-    for (const codigo of [manual, cron]) {
-      assert.match(codigo, /registrarLacunaDeRastreamento/)
-    }
-    assert.match(manual, /rastreamento: rastreado\.ok/)
+    // O registro tambem desceu para o fluxo — uma vez so, em vez de copiado
+    // nas duas rotas.
+    const fluxo = lerCodigo('lib/publicacao-fluxo.ts')
+    assert.match(fluxo, /registrarLacunaDeRastreamento/)
+    // E cada rota continua expondo a lacuna a sua maneira.
+    assert.match(manual, /rastreamento: respostaDeRastreamento\(tentativa\)/)
     assert.match(cron, /publicacoesSemRastreamento/)
+    assert.match(cron, /if \(!tentativa\.rastreada\) publicacoesSemRastreamento\+\+/)
   })
 
   test('a rota manual aceita chaveDaTentativa de quem chama', () => {

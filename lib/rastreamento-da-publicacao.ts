@@ -356,13 +356,59 @@ export async function avaliarRastreamentoDosConteudos(
 
   if (!workspaceId?.trim() || lista.length === 0) return mapa
 
+  // ── FONTE PREFERIDA: a Publicacao persistida (Etapa 2.c) ──────────────
+  //
+  // Onde ela existe, o slug nao e mais consultado. A relacao e explicita:
+  // Publicacao -> LinkDinamico. Recalcular slug so continua valendo para o
+  // legado da Etapa 2.a, que publicou antes da tabela existir — e para esse
+  // legado nao ha backfill, porque o banco nao consegue provar o que
+  // aconteceu.
+  const comPublicacao = new Map<string, AvaliacaoDeRastreamento>()
+  try {
+    const publicacoes = await prisma.publicacao.findMany({
+      where: { workspaceId, contentId: { in: lista.map((c) => c.id) } },
+      select: {
+        contentId: true,
+        estado: true,
+        distribuidaEm: true,
+        createdAt: true,
+        link: { select: { createdAt: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    // A mais recente manda: e ela que descreve como o conteudo esta no ar
+    // agora. `orderBy desc` + `has` garante que so a primeira de cada
+    // conteudo entra.
+    for (const p of publicacoes) {
+      if (comPublicacao.has(p.contentId)) continue
+      const estado = derivarEstadoDaPublicacaoPersistida({
+        estado: p.estado,
+        distribuidaEm: p.distribuidaEm,
+        link: p.link ? { criadoEm: p.link.createdAt } : null,
+      })
+      comPublicacao.set(p.contentId, {
+        contentId: p.contentId,
+        estado,
+        aviso: estado === 'NAO_RASTREADA_COM_FALLBACK' ? avisoDaPublicacao({ rastreado: false }) : null,
+        metricasDeClique: metricasDeCliqueDaPublicacao(estado),
+      })
+    }
+  } catch {
+    // Banco indisponivel: cai para o caminho legado, que e conservador.
+  }
+  for (const [id, avaliacao] of comPublicacao) mapa.set(id, avaliacao)
+
+  // Daqui para baixo, so o legado — conteudo sem nenhuma Publicacao.
+  const legado = lista.filter((c) => !mapa.has(c.id))
+  if (legado.length === 0) return mapa
+
   const porSufixo = new Map<string, ConteudoParaAvaliar>()
-  for (const c of lista) {
+  for (const c of legado) {
     if (c.workspaceId !== workspaceId) continue
     for (const sufixo of sufixosDerivaveisDaPublicacao(c)) porSufixo.set(sufixo, c)
   }
   if (porSufixo.size === 0) {
-    for (const c of lista) mapa.set(c.id, conservador(c))
+    for (const c of legado) mapa.set(c.id, conservador(c))
     return mapa
   }
 
@@ -382,7 +428,7 @@ export async function avaliarRastreamentoDosConteudos(
     slugs = achados.map((l) => l.slug)
   } catch {
     // Banco indisponível não pode virar "rastreada". Todos conservadores.
-    for (const c of lista) mapa.set(c.id, conservador(c))
+    for (const c of legado) mapa.set(c.id, conservador(c))
     return mapa
   }
 
@@ -391,7 +437,7 @@ export async function avaliarRastreamentoDosConteudos(
     if (slugs.some((s) => s.endsWith(`-${sufixo}`))) rastreados.add(c.id)
   }
 
-  for (const c of lista) {
+  for (const c of legado) {
     const estado = derivarEstadoDaPublicacao({
       distribuida: avaliarDistribuicaoReal(c).distribuida,
       rastreada: rastreados.has(c.id),
