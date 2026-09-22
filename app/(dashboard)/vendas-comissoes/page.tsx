@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { Receipt, Plus, Loader2, DollarSign } from 'lucide-react'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import { Receipt, Plus, Loader2, DollarSign, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
+import { ComprovarOperacaoReal } from '@/components/comprovar-operacao-real'
 
 interface Produto { id: string; nome: string }
 interface Programa { id: string; platform: string }
@@ -44,6 +45,9 @@ export default function VendasComissoesPage() {
   // rede) até o servidor confirmar — nunca duas vendas pelo mesmo envio.
   // Só é trocada depois de um sucesso ou quando a usuária cancela o form.
   const idempotencyKeyRef = useRef<string | null>(null)
+  // Comprovação manual auditada: só uma venda por vez, e o painel abre
+  // fechado. É ação excepcional, não passo do fluxo normal.
+  const [comprovando, setComprovando] = useState<string | null>(null)
 
   useEffect(() => { fetchAll() }, [])
 
@@ -206,18 +210,44 @@ export default function VendasComissoesPage() {
                   <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Status</th>
                   <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Valor</th>
                   <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Data</th>
+                  <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Comprovação</th>
                 </tr>
               </thead>
               <tbody>
                 {vendas.map((v) => {
                   const status = VENDA_STATUS[v.status] ?? VENDA_STATUS.PENDING
                   return (
-                    <tr key={v.id} className="border-b border-border last:border-0">
-                      <td className="px-4 py-3 font-medium text-white">{v.product?.nome ?? '—'}</td>
-                      <td className="px-4 py-3"><span className={`badge-status ${status.cor}`}>{status.label}</span></td>
-                      <td className="px-4 py-3 text-right text-muted-foreground">{v.amount != null ? formatCurrency(v.amount) : '—'}</td>
-                      <td className="px-4 py-3 text-right text-muted-foreground hidden sm:table-cell">{formatDateShort(v.date)}</td>
-                    </tr>
+                    <Fragment key={v.id}>
+                      <tr className="border-b border-border last:border-0">
+                        <td className="px-4 py-3 font-medium text-white">{v.product?.nome ?? '—'}</td>
+                        <td className="px-4 py-3"><span className={`badge-status ${status.cor}`}>{status.label}</span></td>
+                        <td className="px-4 py-3 text-right text-muted-foreground">{v.amount != null ? formatCurrency(v.amount) : '—'}</td>
+                        <td className="px-4 py-3 text-right text-muted-foreground hidden sm:table-cell">{formatDateShort(v.date)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => setComprovando(comprovando === v.id ? null : v.id)}
+                            className="inline-flex items-center gap-1.5 text-xs text-warning hover:underline"
+                            title="Ação excepcional e auditada"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            {comprovando === v.id ? 'Fechar' : 'Comprovar operação real'}
+                          </button>
+                        </td>
+                      </tr>
+                      {comprovando === v.id && (
+                        <tr>
+                          <td colSpan={5} className="px-4 pb-4">
+                            <ComprovarOperacaoReal
+                              saleId={v.id}
+                              aoFechar={() => setComprovando(null)}
+                              // Recarrega a lista sozinha depois da
+                              // comprovação — ninguém precisa atualizar a tela.
+                              aoComprovar={fetchAll}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   )
                 })}
               </tbody>
