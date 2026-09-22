@@ -7,16 +7,29 @@
  */
 
 import { prisma } from './prisma'
+import {
+  calcularMetricasPorProduto,
+  type Granularidade,
+  type MetricasPorProduto,
+  type MotivoCliqueIndisponivel,
+} from './metricas-clique'
 
 export interface ResumoFinanceiroPorConteudo {
   contentId: string
   produtoId: string | null
   canal: string | null
   visualizacoes: number
-  cliques: number
+  /**
+   * SEMPRE `null`: não existe atribuição `EventoLink → Conteudo`.
+   * Até o P0.3 vinha de `Conteudo.cliquesLink`, contador que produção nunca
+   * incrementa — era 0 disfarçado de medição.
+   */
+  cliques: null
+  cliquesIndisponiveisPorque: MotivoCliqueIndisponivel
   vendasConfirmadas: number
   receitaVendas: number
   comissaoReconhecida: number
+  granularidade: Granularidade
 }
 
 /** Mesmo vínculo real de `lib/learning-engine.ts::resumoPorConteudo`, com visualizacoes/produtoId/receita agregados para as métricas financeiras. */
@@ -27,7 +40,6 @@ export async function resumoFinanceiroPorConteudo(workspaceId: string): Promise<
       id: true,
       redeSocial: true,
       visualizacoes: true,
-      cliquesLink: true,
       produtoId: true,
       sales: {
         where: { status: 'CONFIRMED' },
@@ -52,14 +64,12 @@ export async function resumoFinanceiroPorConteudo(workspaceId: string): Promise<
       produtoId: c.produtoId,
       canal: c.redeSocial,
       visualizacoes: c.visualizacoes,
-      // DEPRECATED_LEGACY (P0.3): `cliquesLink` nunca e incrementado em
-      // producao. Mantido para nao quebrar quem ja lia este resumo; a
-      // contagem confiavel vem de `contarCliquesReais()`, que consulta
-      // `EventoLink` e so responde no nivel produto/categoria.
-      cliques: c.cliquesLink,
+      cliques: null,
+      cliquesIndisponiveisPorque: 'SEM_ATRIBUICAO_POR_CONTEUDO' as const,
       vendasConfirmadas: c.sales.length,
       receitaVendas,
       comissaoReconhecida,
+      granularidade: 'CONTEUDO' as const,
     }
   })
 }
@@ -67,11 +77,25 @@ export async function resumoFinanceiroPorConteudo(workspaceId: string): Promise<
 export interface MetricasFinanceiras {
   revenuePer1000Views: number | null
   commissionPerPublication: number | null
-  clicksPerView: number | null
-  saleConversionRate: number | null
-  commissionPerClick: number | null
+  /**
+   * As TRÊS métricas por clique abaixo são SEMPRE `null` neste nível.
+   *
+   * O numerador aqui é de CONTEÚDO (venda ligada por `Sale.contentId`) e o
+   * único denominador de clique disponível é de PRODUTO. Dividir um pelo
+   * outro daria um número com cara de taxa e sem significado — é o erro que
+   * `Granularidade` existe para impedir.
+   *
+   * Para conversão e comissão por clique de verdade, use
+   * `calcularMetricasPorProdutoDoWorkspace()`, onde as duas pontas ficam no
+   * mesmo nível.
+   */
+  clicksPerView: null
+  saleConversionRate: null
+  commissionPerClick: null
+  metricasPorCliqueIndisponiveisPorque: MotivoCliqueIndisponivel
   commissionPerProduct: Record<string, number>
   commissionPerChannel: Record<string, number>
+  granularidade: Granularidade
 }
 
 /**
@@ -80,7 +104,6 @@ export interface MetricasFinanceiras {
  */
 export function calcularMetricasFinanceiras(itens: ResumoFinanceiroPorConteudo[]): MetricasFinanceiras {
   const totalViews = itens.reduce((s, i) => s + i.visualizacoes, 0)
-  const totalCliques = itens.reduce((s, i) => s + i.cliques, 0)
   const totalVendas = itens.reduce((s, i) => s + i.vendasConfirmadas, 0)
   const totalReceita = itens.reduce((s, i) => s + i.receitaVendas, 0)
   const totalComissao = itens.reduce((s, i) => s + i.comissaoReconhecida, 0)
@@ -97,12 +120,32 @@ export function calcularMetricasFinanceiras(itens: ResumoFinanceiroPorConteudo[]
   return {
     revenuePer1000Views: totalViews > 0 ? (totalReceita / totalViews) * 1000 : null,
     commissionPerPublication: totalPublicacoes > 0 ? totalComissao / totalPublicacoes : null,
-    clicksPerView: totalViews > 0 ? totalCliques / totalViews : null,
-    saleConversionRate: totalCliques > 0 ? totalVendas / totalCliques : null,
-    commissionPerClick: totalCliques > 0 ? totalComissao / totalCliques : null,
+    clicksPerView: null,
+    saleConversionRate: null,
+    commissionPerClick: null,
+    metricasPorCliqueIndisponiveisPorque: 'SEM_ATRIBUICAO_POR_CONTEUDO' as const,
     commissionPerProduct,
     commissionPerChannel,
+    granularidade: 'CONTEUDO' as const,
   }
+}
+
+/**
+ * Métricas por clique de VERDADE, no nível PRODUTO.
+ *
+ * Aqui as duas pontas fecham: venda por `Sale.productId`, clique por
+ * `EventoLink → LinkDinamico → produtoId`. Nenhuma depende de atribuição a
+ * criativo, então a divisão significa alguma coisa.
+ *
+ * O numerador conta SÓ venda aprovada pela autoridade de operação real —
+ * relato não comprovado e fixture de teste não entram.
+ */
+export async function calcularMetricasPorProdutoDoWorkspace(
+  workspaceId: string,
+  antesDe: Date = new Date()
+): Promise<MetricasPorProduto[]> {
+  const produtos = await prisma.produto.findMany({ where: { workspaceId }, select: { id: true } })
+  return calcularMetricasPorProduto(workspaceId, produtos.map((p) => p.id), antesDe)
 }
 
 export async function calcularMetricasFinanceirasDoWorkspace(workspaceId: string): Promise<MetricasFinanceiras> {

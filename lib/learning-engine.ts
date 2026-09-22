@@ -12,14 +12,27 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import type { Granularidade, MotivoCliqueIndisponivel } from '@/lib/metricas-clique'
 
 export interface ResumoPorConteudo {
   contentId: string
   produto: string | null
   canal: string | null
-  cliques: number
+  /**
+   * SEMPRE `null` — e o tipo diz isso, para ninguém somar por engano.
+   *
+   * Não existe atribuição `EventoLink → Conteudo`: o link aponta para
+   * produto, e vários conteúdos divulgam o mesmo produto. Devolver `0`
+   * afirmaria "este conteúdo não teve clique nenhum", que é diferente de
+   * "não sabemos quantos cliques vieram dele". Para clique real por
+   * produto/categoria, ver `lib/metricas-clique.ts`.
+   */
+  cliques: null
+  cliquesIndisponiveisPorque: MotivoCliqueIndisponivel
   vendasConfirmadas: number
   comissaoReconhecida: number
+  /** Nível a que este resumo se refere. */
+  granularidade: Granularidade
 }
 
 /** Resultado por conteúdo — só conta Sale ligada a um Conteudo (Sale.contentId), nunca inventa atribuição. */
@@ -29,7 +42,6 @@ export async function resumoPorConteudo(workspaceId: string): Promise<ResumoPorC
     select: {
       id: true,
       redeSocial: true,
-      cliquesLink: true,
       produto: { select: { nome: true } },
       sales: {
         where: { status: 'CONFIRMED' },
@@ -52,10 +64,11 @@ export async function resumoPorConteudo(workspaceId: string): Promise<ResumoPorC
       contentId: c.id,
       produto: c.produto?.nome ?? null,
       canal: c.redeSocial ?? null,
-      // DEPRECATED_LEGACY (P0.3) — ver lib/metricas-clique.ts.
-      cliques: c.cliquesLink,
+      cliques: null,
+      cliquesIndisponiveisPorque: 'SEM_ATRIBUICAO_POR_CONTEUDO' as const,
       vendasConfirmadas: c.sales.length,
       comissaoReconhecida,
+      granularidade: 'CONTEUDO' as const,
     }
   })
 }
@@ -64,18 +77,26 @@ export interface ResumoPorCanal {
   canal: string
   vendasConfirmadas: number
   comissaoReconhecida: number
-  taxaConversao: number | null // null quando não há cliques suficientes pra calcular (não é 0)
+  /**
+   * SEMPRE `null`. `EventoLink.plataforma` existe, mas é a plataforma do
+   * LINK — onde ele deveria ser divulgado —, e não `Conteudo.redeSocial`,
+   * que é onde o conteúdo foi publicado. Dividir vendas agrupadas por um
+   * pelos cliques agrupados pelo outro trataria dois campos distintos como
+   * se fossem o mesmo, e o resultado pareceria uma taxa correta.
+   */
+  taxaConversao: null
+  taxaIndisponivelPorque: MotivoCliqueIndisponivel
+  granularidade: Granularidade
 }
 
 /** Resultado agregado por canal (redeSocial do Conteudo) — determinístico, sem inferência estatística ainda. */
 export async function resumoPorCanal(workspaceId: string): Promise<ResumoPorCanal[]> {
   const porConteudo = await resumoPorConteudo(workspaceId)
 
-  const porCanal = new Map<string, { cliques: number; vendasConfirmadas: number; comissaoReconhecida: number }>()
+  const porCanal = new Map<string, { vendasConfirmadas: number; comissaoReconhecida: number }>()
   for (const c of porConteudo) {
     const chave = c.canal ?? 'não informado'
-    const atual = porCanal.get(chave) ?? { cliques: 0, vendasConfirmadas: 0, comissaoReconhecida: 0 }
-    atual.cliques += c.cliques
+    const atual = porCanal.get(chave) ?? { vendasConfirmadas: 0, comissaoReconhecida: 0 }
     atual.vendasConfirmadas += c.vendasConfirmadas
     atual.comissaoReconhecida += c.comissaoReconhecida
     porCanal.set(chave, atual)
@@ -85,7 +106,9 @@ export async function resumoPorCanal(workspaceId: string): Promise<ResumoPorCana
     canal,
     vendasConfirmadas: v.vendasConfirmadas,
     comissaoReconhecida: v.comissaoReconhecida,
-    taxaConversao: v.cliques > 0 ? v.vendasConfirmadas / v.cliques : null,
+    taxaConversao: null,
+    taxaIndisponivelPorque: 'SEM_ATRIBUICAO_POR_CANAL' as const,
+    granularidade: 'CANAL' as const,
   }))
 }
 

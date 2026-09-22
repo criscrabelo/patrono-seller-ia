@@ -327,31 +327,49 @@ describe('MLFeatureStore — extração de features e funil real', () => {
 // ── Métricas financeiras (regra 5) ─────────────────────────────────────
 
 describe('Métricas financeiras — objetivo é comissão/receita, nunca só views', () => {
-  test('vídeo com muitas views e zero venda tem saleConversionRate=null (nunca 0 disfarçado de "sabido")', () => {
-    const itens: ResumoFinanceiroPorConteudo[] = [
-      { contentId: 'c1', produtoId: 'p1', canal: 'tiktok', visualizacoes: 100000, cliques: 0, vendasConfirmadas: 0, receitaVendas: 0, comissaoReconhecida: 0 },
-    ]
-    const metricas = calcularMetricasFinanceiras(itens)
+  // AJUSTADO no P0.3.1: as métricas POR CLIQUE deixaram de existir neste
+  // nível. O numerador é de CONTEÚDO e o único denominador de clique
+  // disponível é de PRODUTO — dividir um pelo outro daria um número com
+  // cara de taxa e sem significado. O que continua real aqui é receita e
+  // comissão por publicação/visualização.
+  const item = (over: Partial<ResumoFinanceiroPorConteudo>): ResumoFinanceiroPorConteudo => ({
+    contentId: 'c1',
+    produtoId: 'p1',
+    canal: 'tiktok',
+    visualizacoes: 0,
+    cliques: null,
+    cliquesIndisponiveisPorque: 'SEM_ATRIBUICAO_POR_CONTEUDO',
+    vendasConfirmadas: 0,
+    receitaVendas: 0,
+    comissaoReconhecida: 0,
+    granularidade: 'CONTEUDO',
+    ...over,
+  })
+
+  test('métricas por clique ficam indisponíveis no nível CONTEUDO, com motivo', () => {
+    const metricas = calcularMetricasFinanceiras([item({ visualizacoes: 100000 })])
     assert.equal(metricas.saleConversionRate, null)
+    assert.equal(metricas.clicksPerView, null)
+    assert.equal(metricas.commissionPerClick, null)
+    assert.equal(metricas.metricasPorCliqueIndisponiveisPorque, 'SEM_ATRIBUICAO_POR_CONTEUDO')
+    assert.equal(metricas.granularidade, 'CONTEUDO')
     assert.equal(metricas.revenuePer1000Views, 0)
   })
 
-  test('distingue vídeo com poucas views e alta conversão de vídeo com muitas views e nenhuma venda', () => {
-    const itens: ResumoFinanceiroPorConteudo[] = [
-      { contentId: 'baixo-trafego-alta-conversao', produtoId: 'p1', canal: 'tiktok', visualizacoes: 500, cliques: 100, vendasConfirmadas: 20, receitaVendas: 2000, comissaoReconhecida: 200 },
-      { contentId: 'alto-trafego-zero-venda', produtoId: 'p2', canal: 'tiktok', visualizacoes: 500000, cliques: 50, vendasConfirmadas: 0, receitaVendas: 0, comissaoReconhecida: 0 },
-    ]
-    const m1 = calcularMetricasFinanceiras([itens[0]])
-    const m2 = calcularMetricasFinanceiras([itens[1]])
+  test('distingue vídeo de baixo tráfego e alta receita de vídeo com muitas views e nenhuma venda', () => {
+    const alta = item({ contentId: 'baixo-trafego', visualizacoes: 500, vendasConfirmadas: 20, receitaVendas: 2000, comissaoReconhecida: 200 })
+    const nenhuma = item({ contentId: 'alto-trafego', produtoId: 'p2', visualizacoes: 500000 })
+    const m1 = calcularMetricasFinanceiras([alta])
+    const m2 = calcularMetricasFinanceiras([nenhuma])
     assert.ok(m1.commissionPerPublication! > m2.commissionPerPublication!)
-    assert.ok(m1.saleConversionRate! > (m2.saleConversionRate ?? 0))
+    assert.ok(m1.revenuePer1000Views! > m2.revenuePer1000Views!)
   })
 
   test('resumoFinanceiroPorConteudo lê dados reais do Postgres (Sale.contentId), nunca inventa atribuição', async () => {
     const { user } = await criarUsuarioComWorkspace(prisma, { email: `ml-fin-${randomUUID()}@t.com`, password: 'x' })
     const workspaceId = user.workspaceId
     const produto = await prisma.produto.create({ data: { workspaceId, userId: user.id, nome: 'X', categoria: 'y', origemConteudo: 'manual', tipoVenda: 'afiliado' } })
-    const conteudo = await prisma.conteudo.create({ data: { workspaceId, userId: user.id, produtoId: produto.id, visualizacoes: 1000, cliquesLink: 50 } })
+    const conteudo = await prisma.conteudo.create({ data: { workspaceId, userId: user.id, produtoId: produto.id, visualizacoes: 1000 } })
     await prisma.sale.create({ data: { workspaceId, productId: produto.id, contentId: conteudo.id, amount: 100, status: 'CONFIRMED' } })
 
     const resumo = await resumoFinanceiroPorConteudo(workspaceId)

@@ -133,6 +133,8 @@ describe('LearningEngine — métricas determinísticas reais', () => {
     const produto = await prisma.produto.create({
       data: { workspaceId, userId, nome: 'Produto Learning', categoria: 'Teste', origemConteudo: 'manual', tipoVenda: 'afiliado' },
     })
+    // `cliquesLink: 10` de propósito: o contador legado continua na coluna,
+    // e o teste prova que ele NÃO vaza mais para nenhuma métrica (P0.3.1).
     const conteudo = await prisma.conteudo.create({
       data: { workspaceId, userId, produtoId: produto.id, redeSocial: 'instagram', cliquesLink: 10 },
     })
@@ -147,13 +149,20 @@ describe('LearningEngine — métricas determinísticas reais', () => {
     const linhaConteudo = porConteudo.find((c) => c.contentId === conteudo.id)
     assert.ok(linhaConteudo)
     assert.equal(linhaConteudo.vendasConfirmadas, 1)
-    assert.equal(linhaConteudo.cliques, 10)
     assert.equal(linhaConteudo.comissaoReconhecida, 10)
+    // AJUSTADO no P0.3.1: clique por conteúdo não existe — não há atribuição
+    // EventoLink → Conteudo. Antes isto lia o contador legado e devolvia 10.
+    assert.equal(linhaConteudo.cliques, null)
+    assert.equal(linhaConteudo.cliquesIndisponiveisPorque, 'SEM_ATRIBUICAO_POR_CONTEUDO')
+    assert.equal(linhaConteudo.granularidade, 'CONTEUDO')
 
     const porCanal = await resumoPorCanal(workspaceId)
     const linhaCanal = porCanal.find((c) => c.canal === 'instagram')
     assert.ok(linhaCanal)
     assert.equal(linhaCanal.vendasConfirmadas, 1)
-    assert.equal(linhaCanal.taxaConversao, 1 / 10)
+    // A taxa por canal também caiu: `EventoLink.plataforma` é do LINK, não o
+    // canal de publicação do conteúdo — dividir um pelo outro seria falso.
+    assert.equal(linhaCanal.taxaConversao, null)
+    assert.equal(linhaCanal.taxaIndisponivelPorque, 'SEM_ATRIBUICAO_POR_CANAL')
   })
 })

@@ -11,13 +11,26 @@ import { prisma } from './prisma'
 import { classificarHook, type HookType } from './ml-hook-classifier'
 import { classificarCta, type CtaType } from './ml-cta-classifier'
 import type { MLDecisionType } from './ml-types'
+import type { Granularidade, MotivoCliqueIndisponivel } from './metricas-clique'
 
 export interface DesempenhoPorGrupo<T extends string> {
   grupo: T
   amostras: number
-  cliques: number
+  /**
+   * SEMPRE `null`. Hook e CTA são atributos do CRIATIVO, e não existe
+   * atribuição `EventoLink → Conteudo` — o link aponta para produto. Somar
+   * cliques por hook exigiria saber de qual conteúdo veio cada clique.
+   *
+   * Até o P0.3 isto somava `Conteudo.cliquesLink`, contador que produção
+   * nunca incrementa: na prática somava zeros e a taxa nascia `null` por
+   * acidente. Agora é `null` por decisão, e o tipo diz isso.
+   */
+  cliques: null
   vendasConfirmadas: number
-  taxaConversao: number | null
+  /** SEMPRE `null` pelo mesmo motivo — ver `cliques`. */
+  taxaConversao: null
+  taxaIndisponivelPorque: MotivoCliqueIndisponivel
+  granularidade: Granularidade
   decisionType: MLDecisionType
 }
 
@@ -27,7 +40,6 @@ export const MINIMO_AMOSTRAS_POR_GRUPO = 5
 interface ConteudoParaAprendizado {
   roteiro: string | null
   chamadaAcao: string | null
-  cliquesLink: number
   vendasConfirmadas: number
 }
 
@@ -37,14 +49,12 @@ async function carregarConteudosComVendas(workspaceId: string): Promise<Conteudo
     select: {
       roteiro: true,
       chamadaAcao: true,
-      cliquesLink: true,
       sales: { where: { status: 'CONFIRMED' }, select: { id: true } },
     },
   })
   return conteudos.map((c) => ({
     roteiro: c.roteiro,
     chamadaAcao: c.chamadaAcao,
-    cliquesLink: c.cliquesLink,
     vendasConfirmadas: c.sales.length,
   }))
 }
@@ -53,14 +63,14 @@ function agruparEDescrever<T extends string>(
   itens: ConteudoParaAprendizado[],
   classificar: (item: ConteudoParaAprendizado) => T
 ): DesempenhoPorGrupo<T>[] {
-  const grupos = new Map<T, { amostras: number; cliques: number; vendas: number }>()
+  // O que dá para contar honestamente: quantas publicações caíram em cada
+  // grupo, e quantas vendas confirmadas estão ligadas a elas por
+  // `Sale.contentId`. Taxa POR CLIQUE não entra: faltaria o denominador.
+  const grupos = new Map<T, { amostras: number; vendas: number }>()
   for (const item of itens) {
     const grupo = classificar(item)
-    const atual = grupos.get(grupo) ?? { amostras: 0, cliques: 0, vendas: 0 }
+    const atual = grupos.get(grupo) ?? { amostras: 0, vendas: 0 }
     atual.amostras += 1
-    // DEPRECATED_LEGACY (P0.3): soma um contador que producao nunca
-    // incrementa — na pratica soma zeros. Ver lib/metricas-clique.ts.
-    atual.cliques += item.cliquesLink
     atual.vendas += item.vendasConfirmadas
     grupos.set(grupo, atual)
   }
@@ -68,14 +78,21 @@ function agruparEDescrever<T extends string>(
   return [...grupos.entries()].map(([grupo, v]) => ({
     grupo,
     amostras: v.amostras,
-    cliques: v.cliques,
+    cliques: null,
     vendasConfirmadas: v.vendas,
-    taxaConversao: v.amostras >= MINIMO_AMOSTRAS_POR_GRUPO && v.cliques > 0 ? v.vendas / v.cliques : null,
+    taxaConversao: null,
+    taxaIndisponivelPorque: 'SEM_ATRIBUICAO_POR_CONTEUDO' as const,
+    granularidade: 'CONTEUDO' as const,
     decisionType: 'STATISTICAL_LEARNING' as const,
   }))
 }
 
-/** Nunca inventa taxa para um grupo com poucas amostras — `taxaConversao` fica `null` até `MINIMO_AMOSTRAS_POR_GRUPO`. */
+/**
+ * Desempenho por hook. `amostras` e `vendasConfirmadas` são reais;
+ * `taxaConversao` fica `null` enquanto não houver atribuição por criativo
+ * (`LIMITACAO_DE_ATRIBUICAO` em lib/metricas-clique.ts). `MINIMO_AMOSTRAS_
+ * POR_GRUPO` continua declarado para quando a taxa voltar a ser calculável.
+ */
 export async function correlacionarHookComPerformance(workspaceId: string): Promise<DesempenhoPorGrupo<HookType>[]> {
   const itens = await carregarConteudosComVendas(workspaceId)
   const primeiraFrase = (roteiro: string | null) => roteiro?.split(/[.!?\n]/).find((s) => s.trim().length > 0) ?? null

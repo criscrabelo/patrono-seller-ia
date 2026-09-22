@@ -21,7 +21,18 @@ import {
   calcularMetricasDeClique,
   TIPO_DE_EVENTO_CLIQUE,
   LIMITACAO_DE_ATRIBUICAO,
+  GRANULARIDADES,
+  GRANULARIDADES_COM_CLIQUE_REAL,
+  cliqueSuportaGranularidade,
+  calcularMetricasPorProduto,
 } from '../lib/metricas-clique'
+import { resumoPorConteudo, resumoPorCanal } from '../lib/learning-engine'
+import { correlacionarHookComPerformance, correlacionarCtaComPerformance } from '../lib/ml-creative-learning'
+import {
+  resumoFinanceiroPorConteudo,
+  calcularMetricasFinanceiras,
+  calcularMetricasPorProdutoDoWorkspace,
+} from '../lib/ml-financial-metrics'
 import { calcularConversaoHistoricaPorCategoria, extrairFeaturesDeConteudo } from '../lib/ml-feature-store'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
@@ -93,11 +104,10 @@ describe('Fonte de verdade — EventoLink, não contador', () => {
     assert.match(LIMITACAO_DE_ATRIBUICAO.explicacao, /LinkDinamico aponta para produto/)
   })
 
-  test('cliquesLink está marcado como legado no schema e nos leitores', () => {
+  test('cliquesLink está marcado como legado no schema', () => {
+    // Revisto no P0.3.1: os leitores deixaram de MENCIONAR o legado porque
+    // deixaram de LER. A marca fica onde a coluna vive.
     assert.match(lerFonte('prisma/schema.prisma'), /DEPRECATED_LEGACY \(P0\.3\)[\s\S]{0,400}cliquesLink/)
-    for (const arq of ['lib/ml-financial-metrics.ts', 'lib/ml-creative-learning.ts', 'lib/learning-engine.ts']) {
-      assert.match(lerFonte(arq), /DEPRECATED_LEGACY \(P0\.3\)/, `${arq} precisa declarar o legado`)
-    }
   })
 
   test('a elegibilidade continua sendo decidida pela autoridade única', () => {
@@ -131,6 +141,10 @@ async function limpar(ws: string) {
   await prisma.sale.deleteMany({ where: { workspaceId: ws } })
   await prisma.eventoLink.deleteMany({ where: { workspaceId: ws } })
   await prisma.auditLog.deleteMany({ where: { workspaceId: ws } })
+  // Conteudo entra na limpeza porque os testes do P0.3.1 criam conteúdos
+  // para provar que o contador legado não vaza; sem isso eles se acumulam
+  // entre casos e a leitura do primeiro item vira loteria.
+  await prisma.conteudo.deleteMany({ where: { workspaceId: ws } })
 }
 
 async function clicar(ws: string, linkId: string, quando: Date, tipo = 'clique') {
@@ -482,9 +496,224 @@ describe(
       assert.equal(extraido!.features.historical_conversion_rate, 0.25)
     })
 
+    // ── P0.3.1 — métricas operacionais sem contador legado ──────────
+
+    const agora = () => new Date()
+
+    test('cliquesLink = 999999 numa fixture NÃO altera métrica nenhuma', async () => {
+      await limpar(workspaceA)
+      await prisma.conteudo.create({
+        data: {
+          workspaceId: workspaceA,
+          userId: userA,
+          produtoId: produtoCasa,
+          roteiro: 'Você já viu isso? Resolve tudo.',
+          chamadaAcao: 'Link na bio',
+          redeSocial: 'tiktok',
+          visualizacoes: 1000,
+          // O contador legado, inflado de propósito.
+          cliquesLink: 999999,
+        },
+      })
+
+      const porConteudo = await resumoPorConteudo(workspaceA)
+      assert.equal(porConteudo.length, 1)
+      assert.equal(porConteudo[0].cliques, null, 'o contador legado não pode vazar para a métrica')
+      assert.equal(porConteudo[0].cliquesIndisponiveisPorque, 'SEM_ATRIBUICAO_POR_CONTEUDO')
+      assert.equal(porConteudo[0].granularidade, 'CONTEUDO')
+
+      const financeiro = await resumoFinanceiroPorConteudo(workspaceA)
+      assert.equal(financeiro[0].cliques, null)
+      const m = calcularMetricasFinanceiras(financeiro)
+      assert.equal(m.clicksPerView, null)
+      assert.equal(m.saleConversionRate, null)
+      assert.equal(m.commissionPerClick, null)
+      assert.equal(m.metricasPorCliqueIndisponiveisPorque, 'SEM_ATRIBUICAO_POR_CONTEUDO')
+
+      // E a métrica REAL, no nível que o dado sustenta, ignora o contador.
+      assert.equal(await contarCliquesReais({ workspaceId: workspaceA, antesDe: agora() }), 0)
+    })
+
+    test('clique REAL altera a métrica suportada', async () => {
+      await limpar(workspaceA)
+      await clicar(workspaceA, linkCasa, new Date(Date.now() - DIA))
+      await clicar(workspaceA, linkCasa, new Date(Date.now() - 2 * DIA))
+      assert.equal(await contarCliquesReais({ workspaceId: workspaceA, antesDe: agora() }), 2)
+
+      const [m] = await calcularMetricasPorProduto(workspaceA, [produtoCasa], agora())
+      assert.equal(m.cliques, 2)
+      assert.equal(m.granularidade, 'PRODUTO')
+    })
+
+    test('hook e CTA NÃO recebem taxa falsa', async () => {
+      await limpar(workspaceA)
+      await prisma.conteudo.create({
+        data: {
+          workspaceId: workspaceA,
+          userId: userA,
+          produtoId: produtoCasa,
+          roteiro: 'Você já viu esse produto? Resolve tudo.',
+          chamadaAcao: 'Link na bio',
+          redeSocial: 'tiktok',
+          cliquesLink: 500,
+        },
+      })
+      for (const grupos of [
+        await correlacionarHookComPerformance(workspaceA),
+        await correlacionarCtaComPerformance(workspaceA),
+      ]) {
+        assert.ok(grupos.length > 0)
+        for (const g of grupos) {
+          assert.equal(g.taxaConversao, null, 'sem atribuição por criativo não há taxa')
+          assert.equal(g.cliques, null)
+          assert.equal(g.taxaIndisponivelPorque, 'SEM_ATRIBUICAO_POR_CONTEUDO')
+          // O que é honesto continua sendo reportado.
+          assert.ok(g.amostras >= 1)
+          assert.equal(typeof g.vendasConfirmadas, 'number')
+        }
+      }
+    })
+
+    test('canal sem origem de clique confiável retorna taxa null', async () => {
+      await limpar(workspaceA)
+      await prisma.conteudo.create({
+        data: {
+          workspaceId: workspaceA,
+          userId: userA,
+          produtoId: produtoCasa,
+          roteiro: 'x',
+          redeSocial: 'tiktok',
+          cliquesLink: 777,
+        },
+      })
+      await clicar(workspaceA, linkCasa, new Date(Date.now() - DIA))
+
+      const canais = await resumoPorCanal(workspaceA)
+      assert.ok(canais.length > 0)
+      for (const c of canais) {
+        assert.equal(c.taxaConversao, null)
+        assert.equal(c.taxaIndisponivelPorque, 'SEM_ATRIBUICAO_POR_CANAL')
+        assert.equal(c.granularidade, 'CANAL')
+      }
+    })
+
+    test('produto usa clique real, com venda elegível no mesmo nível', async () => {
+      await limpar(workspaceA)
+      for (let i = 1; i <= 4; i++) await clicar(workspaceA, linkCasa, new Date(Date.now() - i * DIA))
+      await venda({ quando: new Date(Date.now() - DIA), promover: true, recebido: 12 })
+
+      const [m] = await calcularMetricasPorProduto(workspaceA, [produtoCasa], agora())
+      assert.equal(m.cliques, 4)
+      assert.equal(m.vendasElegiveis, 1)
+      assert.equal(m.taxaConversao, 0.25)
+      assert.equal(m.receitaRealizada, 12)
+      assert.equal(m.receitaPorClique, 3)
+      assert.equal(m.granularidade, 'PRODUTO')
+    })
+
+    test('zero clique real → taxa null; clique sem venda → taxa 0', async () => {
+      await limpar(workspaceA)
+      const [semNada] = await calcularMetricasPorProduto(workspaceA, [produtoCasa], agora())
+      assert.equal(semNada.cliques, 0)
+      assert.equal(semNada.taxaConversao, null)
+      assert.equal(semNada.receitaPorClique, null)
+
+      await clicar(workspaceA, linkCasa, new Date(Date.now() - DIA))
+      const [comClique] = await calcularMetricasPorProduto(workspaceA, [produtoCasa], agora())
+      assert.equal(comClique.cliques, 1)
+      assert.equal(comClique.taxaConversao, 0)
+    })
+
+    test('o workspace vizinho continua isolado', async () => {
+      await limpar(workspaceA)
+      await limpar(workspaceB)
+      await clicar(workspaceB, linkB, new Date(Date.now() - DIA))
+
+      const [aCasa] = await calcularMetricasPorProduto(workspaceA, [produtoCasa], agora())
+      assert.equal(aCasa.cliques, 0)
+      const [bCasa] = await calcularMetricasPorProduto(workspaceB, [produtoB], agora())
+      assert.equal(bCasa.cliques, 1)
+      // E pedir o produto de B usando o workspace de A não encontra nada.
+      const [cruzado] = await calcularMetricasPorProduto(workspaceA, [produtoB], agora())
+      assert.equal(cruzado.cliques, 0)
+      assert.equal(cruzado.vendasElegiveis, 0)
+    })
+
+    test('as métricas por produto do workspace cobrem todos os produtos', async () => {
+      await limpar(workspaceA)
+      await clicar(workspaceA, linkCasa, new Date(Date.now() - DIA))
+      const todas = await calcularMetricasPorProdutoDoWorkspace(workspaceA)
+      assert.ok(todas.length >= 2, 'casa e eletronicos')
+      assert.equal(
+        todas.every((m) => m.granularidade === 'PRODUTO'),
+        true
+      )
+      assert.equal(todas.reduce((s, m) => s + m.cliques, 0), 1)
+    })
+
+    test('nenhum data leakage: o corte temporal vale para clique e venda', async () => {
+      await limpar(workspaceA)
+      const corte = new Date(Date.now() - 5 * DIA)
+      await clicar(workspaceA, linkCasa, new Date(corte.getTime() - DIA))
+      await clicar(workspaceA, linkCasa, new Date(corte.getTime() + DIA))
+      await venda({ quando: new Date(corte.getTime() + DIA), promover: true })
+
+      const [m] = await calcularMetricasPorProduto(workspaceA, [produtoCasa], corte)
+      assert.equal(m.cliques, 1, 'só o clique anterior ao corte')
+      assert.equal(m.vendasElegiveis, 0, 'a venda posterior não entra')
+    })
+
     test('nenhum modelo foi treinado, ativado ou promovido', async () => {
       assert.equal(await prisma.mLModel.count({ where: { workspaceId: { in: criados } } }), 0)
       assert.equal(await prisma.mLTrainingRun.count({ where: { workspaceId: { in: criados } } }), 0)
     })
   }
 )
+
+// ── P0.3.1 — nenhum cálculo operacional lê cliquesLink ──────────────────
+
+describe('P0.3.1 — cliquesLink fora dos cálculos operacionais', () => {
+  const OPERACIONAIS = [
+    'lib/learning-engine.ts',
+    'lib/ml-creative-learning.ts',
+    'lib/ml-financial-metrics.ts',
+    'lib/ml-feature-store.ts',
+    'lib/metricas-clique.ts',
+  ]
+
+  test('NENHUM módulo operacional lê cliquesLink', () => {
+    for (const arq of OPERACIONAIS) {
+      assert.ok(
+        !/cliquesLink/.test(lerCodigo(arq)),
+        `${arq} ainda lê cliquesLink — seriam dois sistemas de métrica concorrentes`
+      )
+    }
+  })
+
+  test('a coluna continua no schema, como legado', () => {
+    // Não foi removida: compatibilidade com registros antigos.
+    assert.match(lerFonte('prisma/schema.prisma'), /cliquesLink\s+Int\s+@default\(0\)/)
+    assert.match(lerFonte('prisma/schema.prisma'), /DEPRECATED_LEGACY \(P0\.3\)/)
+  })
+})
+
+describe('P0.3.1 — granularidade explícita', () => {
+  test('os cinco níveis estão declarados', () => {
+    assert.deepEqual([...GRANULARIDADES], ['CONTEUDO', 'PRODUTO', 'CATEGORIA', 'CANAL', 'WORKSPACE'])
+  })
+
+  test('clique real só existe em PRODUTO, CATEGORIA e WORKSPACE', () => {
+    assert.deepEqual([...GRANULARIDADES_COM_CLIQUE_REAL], ['PRODUTO', 'CATEGORIA', 'WORKSPACE'])
+    for (const g of ['PRODUTO', 'CATEGORIA', 'WORKSPACE'] as const) {
+      assert.equal(cliqueSuportaGranularidade(g), true)
+    }
+    for (const g of ['CONTEUDO', 'CANAL'] as const) {
+      assert.equal(cliqueSuportaGranularidade(g), false)
+    }
+  })
+
+  test('a limitação lista o que ficou bloqueado e o que destrava', () => {
+    assert.ok(LIMITACAO_DE_ATRIBUICAO.metricasBloqueadas.length >= 4)
+    assert.equal(LIMITACAO_DE_ATRIBUICAO.destravaCom, 'LINK_POR_CONTEUDO_OU_PARAMETRO_DE_ORIGEM')
+  })
+})

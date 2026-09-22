@@ -34,6 +34,51 @@ import { avaliarVendaParaOperacaoReal } from './real-operation'
 /** Só este tipo de evento é clique. Qualquer outro fica de fora. */
 export const TIPO_DE_EVENTO_CLIQUE = 'clique'
 
+// ── Granularidade ───────────────────────────────────────────────────────
+
+/**
+ * Nível ao qual uma métrica se refere.
+ *
+ * Existe para impedir o erro mais caro deste domínio: dividir numerador e
+ * denominador de níveis diferentes. "Vendas atribuídas a CONTEÚDO dividido
+ * por cliques agregados por PRODUTO" produz um número que parece taxa de
+ * conversão e não é nada.
+ */
+export const GRANULARIDADES = ['CONTEUDO', 'PRODUTO', 'CATEGORIA', 'CANAL', 'WORKSPACE'] as const
+export type Granularidade = (typeof GRANULARIDADES)[number]
+
+/**
+ * Níveis em que o clique REAL consegue ser contado hoje.
+ *
+ * `EventoLink → LinkDinamico → Produto` sustenta PRODUTO, CATEGORIA e o
+ * total do WORKSPACE.
+ *
+ * CONTEUDO fica de fora: o link aponta para produto, e vários conteúdos
+ * divulgam o mesmo produto.
+ *
+ * CANAL também fica de fora, e o motivo é sutil: `EventoLink.plataforma`
+ * existe, mas é a plataforma do LINK — onde ele deveria ser divulgado —, e
+ * não o `Conteudo.redeSocial`, que é onde o conteúdo foi publicado. Somar
+ * vendas por canal-do-conteúdo com cliques por plataforma-do-link seria
+ * tratar dois campos diferentes como se fossem o mesmo, e o número
+ * resultante pareceria correto.
+ */
+export const GRANULARIDADES_COM_CLIQUE_REAL: Granularidade[] = ['PRODUTO', 'CATEGORIA', 'WORKSPACE']
+
+export function cliqueSuportaGranularidade(g: Granularidade): boolean {
+  return GRANULARIDADES_COM_CLIQUE_REAL.includes(g)
+}
+
+/** Por que uma métrica de clique ficou indisponível. Nunca vira 0. */
+export const MOTIVOS_CLIQUE_INDISPONIVEL = [
+  /** Não existe atribuição EventoLink → Conteudo. */
+  'SEM_ATRIBUICAO_POR_CONTEUDO',
+  /** `EventoLink.plataforma` é do link, não o canal de publicação do conteúdo. */
+  'SEM_ATRIBUICAO_POR_CANAL',
+] as const
+
+export type MotivoCliqueIndisponivel = (typeof MOTIVOS_CLIQUE_INDISPONIVEL)[number]
+
 /**
  * Divisão que nunca inventa número.
  *
@@ -66,6 +111,8 @@ export interface JanelaDeMetrica {
   antesDe: Date
   /** Restringe a uma categoria de produto. Omitido = todas. */
   categoria?: string
+  /** Restringe a um produto. Omitido = todos. */
+  produtoId?: string
   /**
    * Conteúdo a EXCLUIR das vendas. Obrigatório quando a métrica vira
    * feature de um conteúdo: sem isso ele vazaria o próprio resultado.
@@ -91,8 +138,14 @@ export async function contarCliquesReais(janela: JanelaDeMetrica): Promise<numbe
       workspaceId: janela.workspaceId,
       tipo: TIPO_DE_EVENTO_CLIQUE,
       createdAt: { lt: janela.antesDe },
-      ...(janela.categoria
-        ? { link: { workspaceId: janela.workspaceId, produto: { categoria: janela.categoria } } }
+      ...(janela.categoria || janela.produtoId
+        ? {
+            link: {
+              workspaceId: janela.workspaceId,
+              ...(janela.produtoId ? { produtoId: janela.produtoId } : {}),
+              ...(janela.categoria ? { produto: { categoria: janela.categoria } } : {}),
+            },
+          }
         : {}),
     },
   })
@@ -121,6 +174,7 @@ export async function listarVendasElegiveis(janela: JanelaDeMetrica): Promise<Ve
       workspaceId: janela.workspaceId,
       dataOrigin: 'REAL_OPERATION',
       date: { lt: janela.antesDe },
+      ...(janela.produtoId ? { productId: janela.produtoId } : {}),
       ...(janela.categoria ? { product: { categoria: janela.categoria } } : {}),
       // O próprio conteúdo nunca entra na sua própria feature histórica.
       //
@@ -174,6 +228,36 @@ export async function calcularMetricasDeClique(janela: JanelaDeMetrica): Promise
   }
 }
 
+export interface MetricasPorProduto extends MetricasDeClique {
+  produtoId: string
+  granularidade: 'PRODUTO'
+}
+
+/**
+ * Métricas por PRODUTO — numerador e denominador no MESMO nível.
+ *
+ * Diferente do resumo por conteúdo, aqui os dois lados fecham: a venda é
+ * ligada ao produto por `Sale.productId` (existe sempre), e o clique pelo
+ * caminho `EventoLink → LinkDinamico → produtoId`. Nenhuma das duas pontas
+ * depende de atribuição a criativo.
+ *
+ * É por isso que `commissionPerClick` faz sentido AQUI e não faz no resumo
+ * por conteúdo: lá o numerador é de conteúdo e o denominador seria de
+ * produto — níveis diferentes, número sem significado.
+ */
+export async function calcularMetricasPorProduto(
+  workspaceId: string,
+  produtoIds: string[],
+  antesDe: Date = new Date()
+): Promise<MetricasPorProduto[]> {
+  const resultados: MetricasPorProduto[] = []
+  for (const produtoId of produtoIds ?? []) {
+    const m = await calcularMetricasDeClique({ workspaceId, produtoId, antesDe })
+    resultados.push({ ...m, produtoId, granularidade: 'PRODUTO' })
+  }
+  return resultados
+}
+
 /**
  * FILA DE AUTOMAÇÃO — limitação declarada, não escondida.
  *
@@ -190,6 +274,16 @@ export const LIMITACAO_DE_ATRIBUICAO = {
   explicacao:
     'Cliques são atribuíveis a produto/categoria, nunca a um conteúdo específico: LinkDinamico aponta para produto e vários conteúdos divulgam o mesmo produto. Medir conversão por criativo exige um link por conteúdo ou um parâmetro de origem no redirect.',
   nivelSustentadoHoje: 'PRODUTO_CATEGORIA',
+  /** O que fica indisponível enquanto a atribuição por criativo não existir. */
+  metricasBloqueadas: [
+    'taxa de conversão por conteúdo',
+    'taxa de conversão por hook',
+    'taxa de conversão por CTA',
+    'taxa de conversão por canal de publicação',
+    'cliques por visualização',
+  ],
+  /** O que destravaria: um link por conteúdo, ou origem no redirect. */
+  destravaCom: 'LINK_POR_CONTEUDO_OU_PARAMETRO_DE_ORIGEM',
 } as const
 
 /**
