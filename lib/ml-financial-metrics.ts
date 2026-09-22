@@ -52,6 +52,10 @@ export async function resumoFinanceiroPorConteudo(workspaceId: string): Promise<
       produtoId: c.produtoId,
       canal: c.redeSocial,
       visualizacoes: c.visualizacoes,
+      // DEPRECATED_LEGACY (P0.3): `cliquesLink` nunca e incrementado em
+      // producao. Mantido para nao quebrar quem ja lia este resumo; a
+      // contagem confiavel vem de `contarCliquesReais()`, que consulta
+      // `EventoLink` e so responde no nivel produto/categoria.
       cliques: c.cliquesLink,
       vendasConfirmadas: c.sales.length,
       receitaVendas,

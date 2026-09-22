@@ -237,8 +237,12 @@ describe('Sem data leakage — o resultado nunca entra como feature', () => {
 
   test('a conversão histórica corta no referenceDate e exclui o próprio conteúdo', () => {
     const codigo = lerCodigo('lib/ml-feature-store.ts')
-    assert.match(codigo, /createdAt: \{ lt: antesDe \}/)
-    assert.match(codigo, /excluirContentId \? \{ id: \{ not: excluirContentId \} \}/)
+    // Desde o P0.3 o corte temporal e a exclusao do proprio conteudo moram
+    // em `lib/metricas-clique.ts`, que passou a ser a fonte de clique.
+    const metricas = lerCodigo('lib/metricas-clique.ts')
+    assert.match(metricas, /createdAt: \{ lt: janela\.antesDe \}/)
+    assert.match(metricas, /date: \{ lt: janela\.antesDe \}/)
+    assert.match(metricas, /contentId: \{ not: janela\.excluirContentId \}/)
   })
 
   test('capturedAt é o instante da DISTRIBUIÇÃO confirmada pelo canal', () => {

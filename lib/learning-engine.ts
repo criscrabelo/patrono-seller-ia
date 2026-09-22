@@ -52,6 +52,7 @@ export async function resumoPorConteudo(workspaceId: string): Promise<ResumoPorC
       contentId: c.id,
       produto: c.produto?.nome ?? null,
       canal: c.redeSocial ?? null,
+      // DEPRECATED_LEGACY (P0.3) — ver lib/metricas-clique.ts.
       cliques: c.cliquesLink,
       vendasConfirmadas: c.sales.length,
       comissaoReconhecida,

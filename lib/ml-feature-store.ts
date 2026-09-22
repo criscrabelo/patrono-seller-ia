@@ -12,9 +12,12 @@
  *
  * Funil preservado (regra 6): Produto → Conteudo (Creative/Publication) →
  * Sale → Commission, usando o vínculo real `Sale.contentId`. Este schema
- * não persiste `Opportunity`/`Impression`/`Click` como eventos individuais
- * — `Conteudo.visualizacoes`/`cliquesLink` são contadores agregados, não
- * um log evento a evento. Documentado como limitação real, não fingido.
+ * não persiste `Opportunity`/`Impression` como eventos individuais.
+ *
+ * CLIQUE, porém, TEM log evento a evento: `EventoLink`. Desde o P0.3 é ele
+ * a fonte de verdade — `Conteudo.cliquesLink` é LEGADO e não deve ser lido
+ * como contagem de clique, porque nenhum código de produção o incrementa
+ * (ver lib/metricas-clique.ts).
  */
 
 import { prisma } from './prisma'
@@ -56,12 +59,36 @@ export interface ContentMLFeatures {
 }
 
 /**
- * Conversão histórica por categoria — só considera Conteudo/Sale
- * criados ANTES de `antesDe` (nunca inclui dados futuros). `excluirContentId`
- * é OBRIGATÓRIO em uso real: sem ele, um conteúdo cujo `createdAt` é (por
- * definição) anterior à sua própria `dataPublicacao` vazaria suas próprias
- * cliques/vendas parciais para dentro da sua própria feature histórica —
- * um vazamento sutil só percebido testando com dados reais (regra 31).
+ * Conversão histórica por categoria (reescrita no P0.3).
+ *
+ * ── O QUE ESTAVA ERRADO ─────────────────────────────────────────────────
+ * A versão anterior somava `Conteudo.cliquesLink`, coluna que NENHUM código
+ * de produção incrementa — vale 0 em operação. Com denominador zero, esta
+ * função devolvia `null` em 100% dos casos reais: a feature existia e nunca
+ * valia nada. E o numerador contava qualquer Sale CONFIRMED, inclusive
+ * relato não comprovado e fixture de teste.
+ *
+ * ── FÓRMULA ATUAL ───────────────────────────────────────────────────────
+ *     vendas REAIS elegíveis da categoria, anteriores ao corte
+ *     ───────────────────────────────────────────────────────
+ *     cliques REAIS do log, da categoria, anteriores ao corte
+ *
+ * Numerador: só venda aprovada pela autoridade única
+ * (`avaliarVendaParaOperacaoReal`) — REAL_OPERATION comprovada, confirmada,
+ * com comissão reconhecida. USER_REPORTED, UNVERIFIED, SEED, TEST_FIXTURE,
+ * DEMO e SYNTHETIC_TEST ficam de fora por construção.
+ *
+ * Denominador: `EventoLink` do tipo `clique`, no mesmo workspace, resolvido
+ * até a categoria pelo caminho real link → produto.
+ *
+ * ── ANTI-VAZAMENTO ──────────────────────────────────────────────────────
+ * Os dois lados cortam em `antesDe`, e `excluirContentId` tira as vendas do
+ * próprio conteúdo. Sem ele, um conteúdo cujo `createdAt` antecede a sua
+ * `dataPublicacao` vazaria o próprio resultado para dentro da própria
+ * feature — vazamento sutil que só aparece testando com dado real.
+ *
+ * Sem clique no período devolve `null`, nunca 0: o modelo trata `0` como
+ * sinal ("mediu e deu zero") e `null` como ausência.
  */
 export async function calcularConversaoHistoricaPorCategoria(
   workspaceId: string,
@@ -69,21 +96,14 @@ export async function calcularConversaoHistoricaPorCategoria(
   antesDe: Date,
   excluirContentId?: string
 ): Promise<number | null> {
-  const conteudos = await prisma.conteudo.findMany({
-    where: {
-      workspaceId,
-      produto: { categoria },
-      createdAt: { lt: antesDe },
-      ...(excluirContentId ? { id: { not: excluirContentId } } : {}),
-    },
-    select: {
-      cliquesLink: true,
-      sales: { where: { status: 'CONFIRMED', createdAt: { lt: antesDe } }, select: { id: true } },
-    },
+  const { calcularMetricasDeClique } = await import('./metricas-clique')
+  const m = await calcularMetricasDeClique({
+    workspaceId,
+    categoria,
+    antesDe,
+    excluirContentId: excluirContentId ?? null,
   })
-  const cliques = conteudos.reduce((s, c) => s + c.cliquesLink, 0)
-  const vendas = conteudos.reduce((s, c) => s + c.sales.length, 0)
-  return cliques > 0 ? vendas / cliques : null
+  return m.taxaConversao
 }
 
 /**

@@ -58,6 +58,8 @@ function agruparEDescrever<T extends string>(
     const grupo = classificar(item)
     const atual = grupos.get(grupo) ?? { amostras: 0, cliques: 0, vendas: 0 }
     atual.amostras += 1
+    // DEPRECATED_LEGACY (P0.3): soma um contador que producao nunca
+    // incrementa — na pratica soma zeros. Ver lib/metricas-clique.ts.
     atual.cliques += item.cliquesLink
     atual.vendas += item.vendasConfirmadas
     grupos.set(grupo, atual)

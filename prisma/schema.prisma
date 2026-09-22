@@ -280,6 +280,10 @@ model Conteudo {
   dataPublicacao      DateTime?
   dataAgendamento     DateTime?
   visualizacoes       Int       @default(0)
+  // DEPRECATED_LEGACY (P0.3): NENHUM codigo de producao incrementa este
+  // contador — em operacao ele vale 0 para sempre. A fonte de verdade de
+  // clique e `EventoLink`, consultada por lib/metricas-clique.ts. A coluna
+  // permanece para nao quebrar registros antigos; nao ler como contagem.
   cliquesLink         Int       @default(0)
   comentarios         Int       @default(0)
   compartilhamentos   Int       @default(0)

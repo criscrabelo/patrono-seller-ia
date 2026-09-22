@@ -31,6 +31,8 @@ import { calcularMetricasFinanceiras, resumoFinanceiroPorConteudo, type ResumoFi
 import { treinarModeloConversao, CONVERSION_MODEL_FAMILY } from '../lib/ml-training-pipeline'
 import { promoverModelo, rollbackModelo, obterModeloAtivo, avaliarPromocaoModelo } from '../lib/ml-model-registry'
 import { preverOportunidades } from '../lib/ml-engine'
+import { registrarResultado } from '../lib/vendas-comissoes'
+import { promoverPorCorrecaoManual } from '../lib/promocao-operacao-real'
 import { nomesDoVetorDeFeatures } from '../lib/ml-model'
 import { runAutopilot, type AutopilotDeps, type AutopilotStore, type WorkspaceAutomationControls, type MLPredictionSource } from '../lib/autopilot'
 import { MLBlendedScorer } from '../lib/opportunity-score-composite'
@@ -153,8 +155,16 @@ describe('MLFeatureStore — extração de features e funil real', () => {
   })
 
   after(async () => {
+    // A ordem segue as chaves estrangeiras. Comissão, evento de clique e
+    // link entraram aqui no P0.3: o teste de vazamento passou a montar o
+    // cenário com clique e venda REAIS, e sem apagá-los o `deleteMany` de
+    // produto esbarra em LinkDinamico_produtoId_fkey.
     await prisma.mLFeatureSnapshot.deleteMany({ where: { workspaceId } })
+    await prisma.commission.deleteMany({ where: { workspaceId } })
     await prisma.sale.deleteMany({ where: { workspaceId } })
+    await prisma.eventoLink.deleteMany({ where: { workspaceId } })
+    await prisma.linkDinamico.deleteMany({ where: { workspaceId } })
+    await prisma.auditLog.deleteMany({ where: { workspaceId } })
     await prisma.conteudo.deleteMany({ where: { workspaceId } })
     await prisma.produto.deleteMany({ where: { workspaceId } })
     await prisma.user.deleteMany({ where: { workspaceId } })
@@ -218,29 +228,99 @@ describe('MLFeatureStore — extração de features e funil real', () => {
   })
 
   test('SEM VAZAMENTO: o conteúdo sendo featurizado nunca contamina sua própria conversão histórica (regra 31)', async () => {
+    // REESCRITO no P0.3. O cenário antigo fabricava `cliquesLink` e uma Sale
+    // crua — dois atalhos que a métrica real não aceita mais: clique vem de
+    // `EventoLink` e venda precisa ser REAL_OPERATION comprovada. A garantia
+    // testada continua a mesma; só o caminho para montá-la ficou honesto.
     const user = await prisma.user.findFirstOrThrow({ where: { workspaceId } })
     const referencia = new Date('2026-05-01T10:00:00Z')
 
-    // Histórico real: 1 conteúdo antigo, 100 cliques, 1 venda => taxa = 0.01
-    const antigo = await prisma.conteudo.create({
-      data: { workspaceId, userId: user.id, produtoId, cliquesLink: 100, createdAt: new Date('2026-04-01T00:00:00Z'), dataPublicacao: new Date('2026-04-01T01:00:00Z') },
+    const link = await prisma.linkDinamico.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        produtoId,
+        slug: `vaz-${randomUUID()}`,
+        plataforma: 'tiktok',
+        urlDestino: 'https://exemplo.invalido/p',
+      },
     })
-    await prisma.sale.create({ data: { workspaceId, productId: produtoId, contentId: antigo.id, amount: 89.9, status: 'CONFIRMED', createdAt: new Date('2026-04-01T02:00:00Z') } })
 
-    // Conteúdo novo, criado ANTES de ser publicado (createdAt < dataPublicacao),
-    // com cliques próprios altos — sem a exclusão de si mesmo, vazaria para dentro da própria feature.
-    const novo = await prisma.conteudo.create({
-      data: { workspaceId, userId: user.id, produtoId, cliquesLink: 500, createdAt: new Date(referencia.getTime() - 60 * 60 * 1000), dataPublicacao: referencia },
+    // 100 cliques REAIS anteriores à referência.
+    for (let i = 1; i <= 100; i++) {
+      await prisma.eventoLink.create({
+        data: {
+          workspaceId,
+          linkId: link.id,
+          tipo: 'clique',
+          createdAt: new Date(referencia.getTime() - i * 60 * 1000),
+        },
+      })
+    }
+
+    const antigo = await prisma.conteudo.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        produtoId,
+        createdAt: new Date('2026-04-01T00:00:00Z'),
+        dataPublicacao: new Date('2026-04-01T01:00:00Z'),
+      },
     })
+
+    // Uma venda COMPROVADA de outro conteúdo, e uma do próprio conteúdo novo.
+    const criarVendaReal = async (contentId: string, quando: Date) => {
+      const { sale, commission } = await registrarResultado({
+        workspaceId,
+        actorUserId: user.id,
+        dataOrigin: 'USER_REPORTED',
+        productId: produtoId,
+        contentId,
+        date: quando,
+        amount: 89.9,
+        status: 'CONFIRMED',
+        expectedCommission: 9,
+        idempotencyKey: `vaz-${randomUUID()}`,
+      })
+      await prisma.commission.update({
+        where: { id: commission!.id },
+        data: { status: 'RECEIVED', confirmedAmount: 9, receivedAmount: 8 },
+      })
+      const r = await promoverPorCorrecaoManual({
+        workspaceId,
+        saleId: sale.id,
+        responsavelUserId: user.id,
+        motivo: 'Repasse conferido no extrato bancário da empresa.',
+        referencia: `extrato-${sale.id}`,
+      })
+      assert.equal(r.promovido, true, r.explicacao)
+      return sale.id
+    }
+    await criarVendaReal(antigo.id, new Date('2026-04-01T02:00:00Z'))
+
+    // Conteúdo novo, criado ANTES de ser publicado — sem a exclusão de si
+    // mesmo, a venda dele vazaria para dentro da própria feature.
+    const novo = await prisma.conteudo.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        produtoId,
+        createdAt: new Date(referencia.getTime() - 60 * 60 * 1000),
+        dataPublicacao: referencia,
+      },
+    })
+    await criarVendaReal(novo.id, new Date(referencia.getTime() - 30 * 60 * 1000))
 
     const semExclusao = await calcularConversaoHistoricaPorCategoria(workspaceId, 'eletronicos', referencia)
     const comExclusao = await calcularConversaoHistoricaPorCategoria(workspaceId, 'eletronicos', referencia, novo.id)
 
-    assert.notEqual(semExclusao, comExclusao) // prova que sem a exclusão o número muda (vazamento real, detectável)
-    assert.equal(comExclusao, 1 / 100) // só o conteúdo antigo conta
+    // Sem a exclusão o número muda — é o vazamento, real e detectável.
+    assert.notEqual(semExclusao, comExclusao)
+    assert.equal(semExclusao, 2 / 100)
+    assert.equal(comExclusao, 1 / 100, 'só a venda do conteúdo antigo conta')
 
     const extracao = await extrairFeaturesDeConteudo(workspaceId, novo.id)
-    assert.equal(extracao!.features.historical_conversion_rate, 1 / 100) // extrairFeaturesDeConteudo já usa a exclusão internamente
+    assert.equal(extracao!.features.historical_conversion_rate, 1 / 100)
   })
 })
 
