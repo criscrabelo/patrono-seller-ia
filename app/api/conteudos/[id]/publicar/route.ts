@@ -14,6 +14,10 @@ import {
   montarLegenda,
 } from '@/lib/instagram'
 import { LINK_COMPRA } from '@/lib/config'
+import {
+  obterLinkRastreavelDaPublicacao,
+  registrarLacunaDeRastreamento,
+} from '@/lib/link-de-publicacao'
 
 // Publicar pode levar até ~50s (processamento do vídeo na Meta).
 export const maxDuration = 60
@@ -73,11 +77,38 @@ export async function POST(
 
   const accessToken = integracao.accessToken
   const igUserId = integracao.accountId
+
+  // P1.0 Etapa 2.a: o que vai ao público é o link RASTREADO do Patrono.
+  // `Produto.linkProduto` continua sendo o destino do redirect — deixa de
+  // ser o que a legenda divulga.
+  //
+  // `chaveDaTentativa` vem do corpo quando quem chama quiser um link
+  // distinto por republicação; sem ela, a chave padrão é estável e o retry
+  // reusa o mesmo link.
+  const rastreado = await obterLinkRastreavelDaPublicacao({
+    workspaceId: session.user.workspaceId,
+    contentId: conteudo.id,
+    canal: 'instagram',
+    chaveDaTentativa: typeof body?.chaveDaTentativa === 'string' ? body.chaveDaTentativa : null,
+  })
+  if (!rastreado.ok) {
+    // Fail-closed no LINK RASTREADO, nunca em silêncio: a publicação segue
+    // com o link direto para não derrubar a receita, e a lacuna fica
+    // nomeada no log e na resposta.
+    registrarLacunaDeRastreamento({
+      contentId: conteudo.id,
+      canal: 'instagram',
+      motivo: rastreado.motivo!,
+      explicacao: rastreado.explicacao,
+    })
+  }
+  const linkParaDivulgar = rastreado.urlPublica ?? conteudo.produto?.linkProduto ?? LINK_COMPRA
+
   const legenda = montarLegenda(
     conteudo.legendaInstagram,
     conteudo.hashtags,
     conteudo.chamadaAcao,
-    conteudo.produto?.linkProduto || LINK_COMPRA
+    linkParaDivulgar
   )
   const ehVideo = tipoMidia === 'video'
 
@@ -167,7 +198,15 @@ export async function POST(
       workspaceId: conteudo.workspaceId,
       contentId: conteudo.id,
     })
-    return NextResponse.json({ ok: true, mediaId })
+    return NextResponse.json({
+      ok: true,
+      mediaId,
+      // A lacuna de rastreamento viaja na resposta, nomeada — assim a tela
+      // consegue avisar que aquele post não terá clique medido.
+      rastreamento: rastreado.ok
+        ? { rastreado: true, slug: rastreado.slug, reutilizado: rastreado.reutilizado }
+        : { rastreado: false, motivo: rastreado.motivo, explicacao: rastreado.explicacao },
+    })
   } catch (e) {
     const raw = e instanceof Error ? e.message : 'Falha ao publicar no Instagram'
     const lower = raw.toLowerCase()

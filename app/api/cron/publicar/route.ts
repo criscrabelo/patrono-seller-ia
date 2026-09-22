@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { publicarReelInstagram, montarLegenda, renovarTokenInstagram } from '@/lib/instagram'
 import { capturarSnapshotDePublicacao } from '@/lib/ml-captura-publicacao'
+import {
+  obterLinkRastreavelDaPublicacao,
+  registrarLacunaDeRastreamento,
+} from '@/lib/link-de-publicacao'
 
 // Endpoint chamado pela Vercel Cron para publicar automaticamente os
 // conteúdos cuja data de agendamento já chegou.
@@ -84,6 +88,34 @@ export async function GET(req: NextRequest) {
     if (r.capturado) amostrasCapturadas++
   }
 
+  // P1.0 Etapa 2.a: o link divulgado passa a ser o RASTREADO do Patrono.
+  // `Produto.linkProduto` vira o destino do redirect, não o que vai ao ar.
+  // A chave da tentativa é derivada do agendamento, então um retry da mesma
+  // publicação reusa o mesmo link em vez de criar outro.
+  let publicacoesSemRastreamento = 0
+  const linkParaDivulgar = async (c: {
+    id: string
+    workspaceId: string
+    produto?: { linkProduto: string | null } | null
+  }): Promise<string | null | undefined> => {
+    const r = await obterLinkRastreavelDaPublicacao({
+      workspaceId: c.workspaceId,
+      contentId: c.id,
+      canal: 'instagram',
+    })
+    if (r.ok) return r.urlPublica
+    // Fail-closed no link rastreado, nunca em silêncio: cai para o link
+    // direto para não derrubar a receita, com a lacuna nomeada no log.
+    registrarLacunaDeRastreamento({
+      contentId: c.id,
+      canal: 'instagram',
+      motivo: r.motivo!,
+      explicacao: r.explicacao,
+    })
+    publicacoesSemRastreamento++
+    return c.produto?.linkProduto
+  }
+
   for (const c of devidos) {
     // Sem vídeo: publicação apenas dentro do app.
     if (!c.videoUrl) {
@@ -122,7 +154,7 @@ export async function GET(req: NextRequest) {
         accessToken: integracao.accessToken,
         igUserId: integracao.accountId,
         videoUrl: c.videoUrl,
-        legenda: montarLegenda(c.legendaInstagram, c.hashtags, c.chamadaAcao, c.produto?.linkProduto),
+        legenda: montarLegenda(c.legendaInstagram, c.hashtags, c.chamadaAcao, await linkParaDivulgar(c)),
       })
       await prisma.conteudo.update({
         where: { id: c.id },
@@ -153,6 +185,7 @@ export async function GET(req: NextRequest) {
     publicadosInstagram,
     falhas,
     amostrasCapturadas,
+    publicacoesSemRastreamento,
     tokensRenovados,
     tokensFalha,
     executadoEm: agora.toISOString(),
