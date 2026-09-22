@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/ml-janela-observacao",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/oportunidades",
+      "schedule": "0 5 * * *"
     }
   ]
 }
