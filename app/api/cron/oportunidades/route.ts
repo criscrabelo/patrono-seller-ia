@@ -5,6 +5,7 @@ import {
   compararFilas,
   MOTOR_NAO_PUBLICA,
 } from '@/lib/motor-de-oportunidades'
+import { montarPlanoDeAcao, PLANO_NAO_EXECUTA } from '@/lib/plano-de-acao'
 
 /**
  * Reavaliação periódica da fila de oportunidades (P1.1).
@@ -39,6 +40,8 @@ export async function GET(req: NextRequest) {
   const porWorkspace: Record<string, unknown> = {}
   let totalPronta = 0
   let totalComercial = 0
+  let itensDePlano = 0
+  let pendenciasDeAutomacao = 0
 
   for (const ws of workspaces) {
     // Canais que conseguem publicar HOJE. Sem integração conectada, nada
@@ -62,7 +65,26 @@ export async function GET(req: NextRequest) {
     totalPronta += pronta.length
     totalComercial += comercial.length
 
+    // P1.2: a fila vira PLANO. Seleção, canal, formato e próxima ação — sem
+    // executar nada. As capacidades técnicas entram declaradas: o que nao
+    // for afirmado como disponivel nao e escolhido.
+    const plano = montarPlanoDeAcao({
+      workspaceId: ws.id,
+      fila,
+      canaisConectados: canaisCapazes,
+      capacidades: { FFMPEG: true },
+      agora,
+    })
+    itensDePlano += plano.itens.length
+    pendenciasDeAutomacao += plano.filaDeAutomacao.length
+
     porWorkspace[ws.id] = {
+      plano: {
+        itens: plano.itens,
+        filaDeAutomacao: plano.filaDeAutomacao,
+        descartados: plano.descartados,
+        custoTotal: plano.custoTotal,
+      },
       total: fila.length,
       prontasParaPublicacao: pronta.length,
       oportunidadesComerciais: comercial.length,
@@ -88,8 +110,11 @@ export async function GET(req: NextRequest) {
     totalPronta,
     totalComercial,
     porWorkspace,
+    itensDePlano,
+    pendenciasDeAutomacao,
     // Declarado na resposta para não restar dúvida sobre o escopo.
     publicacaoAutonoma: MOTOR_NAO_PUBLICA.estado,
+    execucaoAutonoma: PLANO_NAO_EXECUTA.estado,
     executadoEm: agora.toISOString(),
   })
 }
