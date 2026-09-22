@@ -196,20 +196,41 @@ export async function prepararTentativaDePublicacao(params: {
   }
 }
 
-/** Sucesso do provider. O id externo é normalizado dentro do repositório. */
+/**
+ * Sucesso do provider. O id externo é normalizado dentro do repositório.
+ *
+ * GATILHO DO ML (Etapa 2.d): ao chegar em DISTRIBUIDA, a amostra
+ * `publication_v1` é capturada — prospectiva, sem rótulo. A captura é
+ * carregada sob demanda e NUNCA derruba a publicação: se o ML falhar, o
+ * post continua publicado e a lacuna vai para o log.
+ */
 export async function confirmarDistribuicao(params: {
   workspaceId: string
   publicacaoId: string
   publicacaoExternaId?: string | null
   distribuidaEm?: Date | null
 }) {
-  return marcarDistribuida({
+  const r = await marcarDistribuida({
     workspaceId: params.workspaceId,
     publicacaoId: params.publicacaoId,
     publicacaoExternaId: params?.publicacaoExternaId,
     distribuidaEm: params?.distribuidaEm ?? new Date(),
     resultado: 'PUBLICADO',
   })
+
+  if (r.ok && r.publicacao?.estado === 'DISTRIBUIDA') {
+    try {
+      const { capturarSnapshotDaPublicacao } = await import('./ml-geracao-publicacao')
+      await capturarSnapshotDaPublicacao({
+        workspaceId: params.workspaceId,
+        publicacaoId: params.publicacaoId,
+      })
+    } catch (e) {
+      console.error(`[publicacao-fluxo] captura de amostra falhou para ${params.publicacaoId}:`, e)
+    }
+  }
+
+  return r
 }
 
 /** Falha REAL do provider — não "ainda processando". */

@@ -197,6 +197,9 @@ describe(
 
     after(async () => {
       for (const ws of criados) {
+        // A Etapa 2.d faz a confirmacao da distribuicao capturar amostra de
+        // ML. Elas nascem nestes workspaces e precisam sair antes deles.
+        await prisma.mLFeatureSnapshot.deleteMany({ where: { workspaceId: ws } })
         await prisma.linkDinamico.updateMany({ where: { workspaceId: ws }, data: { publicacaoId: null } })
         await prisma.auditLog.deleteMany({ where: { workspaceId: ws } })
         await prisma.eventoLink.deleteMany({ where: { workspaceId: ws } })

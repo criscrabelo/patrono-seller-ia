@@ -591,6 +591,15 @@ export async function rotularAmostraDeOperacaoReal(
     if (!r.registrado) {
       console.warn(`[ml-gatilho] amostra não rotulada (${r.motivo}) venda=${saleId}: ${r.explicacao}`)
     }
+
+    // GERACAO publication_v1 (Etapa 2.d). As duas convivem: a antiga rotula
+    // a amostra do Conteudo, esta rotula a da Publicacao atribuida pelo
+    // clique. Uma nao substitui a outra, e nenhuma reescreve a da outra.
+    const { rotularPositivoDaPublicacao } = await import('./ml-geracao-publicacao')
+    const p = await rotularPositivoDaPublicacao({ workspaceId, saleId })
+    if (!p.rotulado) {
+      console.warn(`[ml-gatilho:publicacao] sem rotulo (${p.motivo}) venda=${saleId}: ${p.explicacao}`)
+    }
   } catch (e) {
     console.error(`[ml-gatilho] falha ao rotular amostra da venda ${saleId} — o registro comercial seguiu normalmente:`, e)
   }

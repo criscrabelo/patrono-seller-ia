@@ -96,10 +96,25 @@ export function avaliarProntidaoML(input: MLReadinessInput, limiares: LimiaresPr
 export async function contarAmostrasRotuladas(
   workspaceId: string,
   entityType: string = 'Conteudo',
-  origens: MLDataOrigin[] = ORIGENS_PRODUCAO
+  origens: MLDataOrigin[] = ORIGENS_PRODUCAO,
+  /**
+   * Geracao a contar. Quando informada, a contagem fica PRESA a ela.
+   *
+   * Existe porque `entityType` sozinho deixou de separar as geracoes com
+   * seguranca: hoje 'Conteudo' e 'Publicacao' ja se distinguem, mas a
+   * proxima troca de features dentro da MESMA entidade somaria duas
+   * geracoes em silencio — e prontidao somada e prontidao falsa.
+   */
+  featureVersion?: string
 ): Promise<{ total: number; positivas: number }> {
   const snapshots = await prisma.mLFeatureSnapshot.findMany({
-    where: { workspaceId, entityType, labeledAt: { not: null }, dataOrigin: { in: origens } },
+    where: {
+      workspaceId,
+      entityType,
+      labeledAt: { not: null },
+      dataOrigin: { in: origens },
+      ...(featureVersion ? { featureVersion } : {}),
+    },
     select: { label: true },
   })
   const total = snapshots.length
@@ -112,12 +127,43 @@ export async function avaliarProntidaoMLDoWorkspace(
   family: string,
   entityType: string = 'Conteudo',
   limiares: LimiaresProntidaoML = LIMIARES_PRONTIDAO_PADRAO,
-  origens: MLDataOrigin[] = ORIGENS_PRODUCAO
+  origens: MLDataOrigin[] = ORIGENS_PRODUCAO,
+  featureVersion?: string
 ): Promise<MLReadinessResultado> {
   // Um modelo ACTIVE só existe se `promoverModelo()` já confirmou
   // dataOrigin=REAL_OPERATION (lib/ml-model-registry.ts) — não precisa
   // refiltrar aqui, mas nunca assume isso sem essa garantia upstream.
   const hasActiveModel = (await prisma.mLModel.count({ where: { workspaceId, family, status: 'ACTIVE' } })) > 0
-  const { total, positivas } = await contarAmostrasRotuladas(workspaceId, entityType, origens)
+  const { total, positivas } = await contarAmostrasRotuladas(workspaceId, entityType, origens, featureVersion)
   return avaliarProntidaoML({ labeledSampleCount: total, positiveSampleCount: positivas, hasActiveModel }, limiares)
+}
+
+/**
+ * Prontidão da geração `publication_v1` (P1.0 — Etapa 2.d).
+ *
+ * Conta SOMENTE positivos e negativos REAL_OPERATION de `Publicacao` nesta
+ * featureVersion. As amostras antigas de `Conteudo` continuam contando na
+ * geração delas e NUNCA entram aqui.
+ *
+ * Os limiares são os mesmos — trocar a unidade de observação não é motivo
+ * para afrouxar o portão. A consequência honesta é que o relógio recomeça:
+ * a geração nova começa do zero e precisa acumular sozinha.
+ *
+ * NÃO ativa treino, NÃO promove modelo, NÃO tira do shadow mode.
+ */
+export async function avaliarProntidaoDaGeracaoPublicacao(
+  workspaceId: string,
+  family: string,
+  limiares: LimiaresProntidaoML = LIMIARES_PRONTIDAO_PADRAO,
+  origens: MLDataOrigin[] = ORIGENS_PRODUCAO
+): Promise<MLReadinessResultado> {
+  const { ENTIDADE_PUBLICACAO, FEATURE_VERSION_PUBLICACAO } = await import('./ml-geracao-publicacao')
+  return avaliarProntidaoMLDoWorkspace(
+    workspaceId,
+    family,
+    ENTIDADE_PUBLICACAO,
+    limiares,
+    origens,
+    FEATURE_VERSION_PUBLICACAO
+  )
 }

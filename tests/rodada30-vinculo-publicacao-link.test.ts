@@ -139,8 +139,10 @@ describe('Por que o guard existe além do contrato', () => {
     // Varredura ampla de propósito: `lib/` e as rotas inteiras, não uma
     // lista que alguém esqueceria de atualizar ao criar arquivo novo.
     //
-    // O padrão procurado é a ESCRITA via Prisma — `data: { ... publicacaoId`
-    // —, não a menção ao nome da coluna, que aparece em tipo e comentário.
+    // O padrão procurado é a ESCRITA via Prisma da COLUNA `publicacaoId`
+    // dentro de um `data: { … }`. O `[^.\w]` antes do nome importa:
+    // `entityId: base.publicacaoId` grava OUTRA coluna a partir de uma
+    // variável homônima, e sem isso acusaria falso positivo.
     const arquivos = [
       ...varrer(join(RAIZ, 'lib')),
       ...varrer(join(RAIZ, 'app')),
@@ -151,7 +153,7 @@ describe('Por que o guard existe além do contrato', () => {
         .split(/\r?\n/)
         .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
         .join('\n')
-      if (/data:\s*\{[^}]*\bpublicacaoId\b/.test(semComentario)) {
+      if (/data:\s*\{[^}]*[^.\w]publicacaoId\s*[:,}]/.test(semComentario)) {
         const rel = abs.slice(RAIZ.length + 1).split('\\').join('/')
         escrevem.push(rel)
         assert.match(

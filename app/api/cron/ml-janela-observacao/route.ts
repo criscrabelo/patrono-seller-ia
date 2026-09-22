@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fecharJanelasDeObservacao, lerPoliticaDeObservacao } from '@/lib/ml-captura-publicacao'
+import { fecharJanelasDePublicacao, FEATURE_VERSION_PUBLICACAO } from '@/lib/ml-geracao-publicacao'
 
 /**
  * GATILHO D (P0.2 Bloco 4.1) — fecha a janela de observação.
@@ -32,7 +33,12 @@ export async function GET(req: NextRequest) {
 
   const agora = new Date()
   const politica = lerPoliticaDeObservacao()
+  // As DUAS geracoes fecham janela, cada uma na sua. A antiga continua
+  // rotulando amostras de Conteudo que ja existem; a nova rotula as de
+  // Publicacao. Os numeros vao separados de proposito — somar as duas
+  // esconderia qual geracao esta de fato aprendendo.
   const resultado = await fecharJanelasDeObservacao({ agora })
+  const daPublicacao = await fecharJanelasDePublicacao({ agora })
 
   return NextResponse.json({
     ok: true,
@@ -42,6 +48,8 @@ export async function GET(req: NextRequest) {
       // Explícito para ninguém confundir política interna com regra oficial.
       oficialDeProvider: politica.oficialDeProvider,
     },
+    geracaoConteudo: resultado,
+    geracaoPublicacao: { featureVersion: FEATURE_VERSION_PUBLICACAO, ...daPublicacao },
     ...resultado,
     executadoEm: agora.toISOString(),
   })
