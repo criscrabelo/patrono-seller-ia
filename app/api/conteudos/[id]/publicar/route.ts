@@ -18,6 +18,7 @@ import {
   obterLinkRastreavelDaPublicacao,
   registrarLacunaDeRastreamento,
 } from '@/lib/link-de-publicacao'
+import { avisoDaPublicacao } from '@/lib/rastreamento-da-publicacao'
 
 // Publicar pode levar até ~50s (processamento do vídeo na Meta).
 export const maxDuration = 60
@@ -201,11 +202,21 @@ export async function POST(
     return NextResponse.json({
       ok: true,
       mediaId,
-      // A lacuna de rastreamento viaja na resposta, nomeada — assim a tela
-      // consegue avisar que aquele post não terá clique medido.
+      // A lacuna viaja na resposta com FRASE PRONTA. `explicacao` fica de
+      // fora de proposito: ela cita o valor de PUBLIC_BASE_URL e o caminho
+      // que falhou — diagnostico de servidor, nao texto de tela.
       rastreamento: rastreado.ok
-        ? { rastreado: true, slug: rastreado.slug, reutilizado: rastreado.reutilizado }
-        : { rastreado: false, motivo: rastreado.motivo, explicacao: rastreado.explicacao },
+        ? { rastreado: true, estado: 'RASTREADA', slug: rastreado.slug, reutilizado: rastreado.reutilizado, aviso: null }
+        : {
+            rastreado: false,
+            estado: 'NAO_RASTREADA_COM_FALLBACK',
+            motivo: rastreado.motivo,
+            aviso: avisoDaPublicacao({
+              rastreado: false,
+              motivo: rastreado.motivo,
+              submotivo: rastreado.submotivo,
+            }),
+          },
     })
   } catch (e) {
     const raw = e instanceof Error ? e.message : 'Falha ao publicar no Instagram'

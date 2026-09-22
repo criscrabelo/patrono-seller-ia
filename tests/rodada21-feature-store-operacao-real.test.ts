@@ -118,27 +118,34 @@ describe('Label — comissão esperada, confirmada e recebida são coisas difere
 // ── Label: atribuição de clique ─────────────────────────────────────────
 
 describe('Label — clique ausente é registrado como ausente', () => {
+  // A contagem de clique só existe quando a publicação foi RASTREADA — fora
+  // disso o clique nunca passou pelo redirect e a contagem vira `null` (ver
+  // o describe seguinte). Estes testes são sobre a CONTAGEM, então declaram
+  // a precondição em vez de depender do padrão fail-closed.
+  const rastreada = (vendas: Parameters<typeof montarLabelDeOperacaoReal>[0]) =>
+    montarLabelDeOperacaoReal(vendas, new Date(), 'RASTREADA')
+
   test('venda com clique atribuído entra em comClique', () => {
-    const l = montarLabelDeOperacaoReal([venda({ clickEventId: 'clique-1' })])
+    const l = rastreada([venda({ clickEventId: 'clique-1' })])
     assert.deepEqual(l.atribuicaoDeClique, { comClique: 1, semClique: 0 })
   })
 
   test('venda SEM clique continua sendo operação real, com ausência registrada', () => {
     // Não inventamos clique. A amostra vale; a atribuição é declarada nula.
-    const l = montarLabelDeOperacaoReal([venda({ clickEventId: null })])
+    const l = rastreada([venda({ clickEventId: null })])
     assert.equal(l.converted, true)
     assert.deepEqual(l.atribuicaoDeClique, { comClique: 0, semClique: 1 })
   })
 
   test('string vazia não conta como clique', () => {
     for (const id of ['', '   ']) {
-      const l = montarLabelDeOperacaoReal([venda({ clickEventId: id })])
-      assert.equal(l.atribuicaoDeClique.semClique, 1)
+      const l = rastreada([venda({ clickEventId: id })])
+      assert.equal(l.atribuicaoDeClique?.semClique, 1)
     }
   })
 
   test('mistura de vendas com e sem clique é contada corretamente', () => {
-    const l = montarLabelDeOperacaoReal([
+    const l = rastreada([
       venda({ saleId: 'a', clickEventId: 'c1' }),
       venda({ saleId: 'b', clickEventId: null }),
       venda({ saleId: 'c', clickEventId: 'c2' }),

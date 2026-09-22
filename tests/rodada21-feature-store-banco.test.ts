@@ -368,7 +368,11 @@ describe(
       const { saleId } = await vendaElegivel(contentId)
       const r = await registrarOperacaoRealNoFeatureStore({ workspaceId: workspaceA, saleId })
 
-      assert.deepEqual(r.label?.atribuicaoDeClique, { comClique: 0, semClique: 1 })
+      // A publicacao desta fixture nao passou pelo link rastreado, entao a
+      // AUSENCIA de clique nao foi medida — e `null`, nao 1. `comClique`
+      // continua sendo zero medido: nenhuma venda tem clique atribuido.
+      assert.deepEqual(r.label?.atribuicaoDeClique, { comClique: 0, semClique: null })
+      assert.equal(r.label?.rastreamentoDeClique, 'NAO_RASTREADA_COM_FALLBACK')
       const venda = await prisma.sale.findUnique({ where: { id: saleId }, select: { clickEventId: true } })
       assert.equal(venda?.clickEventId, null)
     })

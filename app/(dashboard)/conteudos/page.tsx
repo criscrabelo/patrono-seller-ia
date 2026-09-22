@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   Eye, Trash2, Library, Zap, CalendarClock, X, Send, Upload, Copy,
   Instagram, Loader2, ExternalLink, AlertCircle, CheckCircle, Sparkles,
+  LinkIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/shared/StatusBadge'
@@ -35,6 +36,12 @@ interface Conteudo {
   publicacaoExternaId: string | null
   erroPublicacao: string | null
   produto: { nome: string; imagens: string[] }
+  // P1.0 Etapa 2.a: a publicacao pode ter saido sem link rastreado. A
+  // publicacao aconteceu; o que fica incompleto e a atribuicao do clique.
+  rastreamento?: {
+    estado: 'RASTREADA' | 'NAO_RASTREADA_COM_FALLBACK' | 'NAO_PUBLICADA'
+    aviso: { titulo: string; detalhe: string } | null
+  } | null
 }
 
 const STATUS_LIST = Object.keys(STATUS_LABELS) as StatusConteudo[]
@@ -291,7 +298,19 @@ export default function ConteudosPage() {
       fetchConteudos()
       return
     }
-    toast({ title: 'Publicado no Instagram!', variant: 'success' })
+    // A publicacao ACONTECEU nos dois casos. O que muda e se o clique dela
+    // sera medido: sem link rastreado, o post saiu com o link direto do
+    // produto e nenhum clique passa pelo redirect do Patrono.
+    const aviso = data?.rastreamento?.aviso
+    if (data?.rastreamento && data.rastreamento.rastreado === false) {
+      toast({
+        title: aviso?.titulo ?? 'Publicada sem rastreamento de cliques',
+        description: `${aviso?.detalhe ?? ''} A publicação foi feita; apenas a medição de cliques fica indisponível.`.trim(),
+        variant: 'destructive',
+      })
+    } else {
+      toast({ title: 'Publicado no Instagram!', variant: 'success' })
+    }
     setPublicarId(null)
     fetchConteudos()
   }
@@ -374,6 +393,15 @@ export default function ConteudosPage() {
                     <td className="px-4 py-3 text-muted-foreground">{c.estilo}</td>
                     <td className="px-4 py-3">
                       <StatusBadge status={c.status as StatusConteudo} />
+                      {c.rastreamento?.aviso && (
+                        <span
+                          title={`${c.rastreamento.aviso.titulo}. ${c.rastreamento.aviso.detalhe}`}
+                          className="mt-1 flex items-center gap-1 text-[10px] text-amber-400"
+                        >
+                          <LinkIcon className="w-3 h-3 shrink-0" />
+                          Sem rastreamento de cliques
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right text-muted-foreground">{c.visualizacoes.toLocaleString()}</td>
                     <td className="px-4 py-3 text-right text-muted-foreground">{formatDateShort(c.createdAt)}</td>

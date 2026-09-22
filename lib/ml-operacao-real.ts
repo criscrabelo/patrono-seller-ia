@@ -44,6 +44,12 @@
 import { prisma } from './prisma'
 import { FEATURE_VERSION } from './ml-feature-store'
 import { avaliarVendaParaOperacaoReal, type VereditoDeOperacaoReal } from './real-operation'
+// O modulo de rastreamento carrega `avaliarDistribuicaoReal` sob demanda,
+// entao este import estatico nao fecha ciclo.
+import {
+  avaliarRastreamentoDoConteudo,
+  type EstadoDeRastreamento,
+} from './rastreamento-da-publicacao'
 
 export const ENTIDADE_DA_AMOSTRA = 'Conteudo' as const
 
@@ -137,7 +143,28 @@ export interface LabelDeOperacaoReal {
   comissaoRecebida: number
   /** Receita EFETIVA. Igual a `comissaoRecebida`, nunca à esperada. */
   receitaRealizada: number
-  atribuicaoDeClique: { comClique: number; semClique: number }
+  /**
+   * As duas metades NÃO têm o mesmo estatuto, e é por isso que só uma delas
+   * pode virar `null`:
+   *
+   * `comClique` é evidência POSITIVA — a venda tem `clickEventId`, o clique
+   * existiu e foi registrado. Vale sempre, rastreada a publicação ou não.
+   *
+   * `semClique` é uma AUSÊNCIA. Numa publicação rastreada, ausência de
+   * clique é medição: o post levava `/api/l/{slug}` e nada passou por ele.
+   * Numa publicação com link direto, ausência não é medição nenhuma — o
+   * clique pode ter acontecido e simplesmente não ter como ser visto. Aí
+   * vira `null`, nunca `0`.
+   */
+  atribuicaoDeClique: { comClique: number; semClique: number | null }
+  /**
+   * Estado de rastreamento da publicação que originou a amostra.
+   *
+   * REGRA OBRIGATÓRIA (P1.0 Etapa 2.a): só `RASTREADA` autoriza ler ausência
+   * de `EventoLink` como ausência de clique. Fora disso o clique é
+   * DESCONHECIDO, e quem treinar precisa saber disso pelo próprio rótulo.
+   */
+  rastreamentoDeClique: EstadoDeRastreamento
   /** De onde o label veio. Nunca inferência, nunca modelo. */
   origemDoLabel: 'SALE_COMMISSION_COMPROVADA' | 'JANELA_DE_OBSERVACAO_ENCERRADA'
   featureVersion: string
@@ -156,7 +183,13 @@ function numero(v: unknown): number {
  */
 export function montarLabelDeOperacaoReal(
   vendas: VendaElegivelParaLabel[],
-  agora: Date = new Date()
+  agora: Date = new Date(),
+  /**
+   * Fail-closed: sem saber se a publicação foi rastreada, assume que NÃO
+   * foi. Perder a contagem de clique de uma amostra custa menos que
+   * afirmar zero clique num post que ninguém conseguiu medir.
+   */
+  rastreamento: EstadoDeRastreamento = 'NAO_RASTREADA_COM_FALLBACK'
 ): LabelDeOperacaoReal {
   const lista = Array.isArray(vendas) ? vendas : []
   let valorBrutoVendas = 0
@@ -193,7 +226,13 @@ export function montarLabelDeOperacaoReal(
     comissaoConfirmada,
     comissaoRecebida,
     receitaRealizada: comissaoRecebida,
-    atribuicaoDeClique: { comClique, semClique },
+    atribuicaoDeClique: {
+      comClique,
+      // Fora de RASTREADA a ausência de clique não foi medida — foi
+      // impossível de medir.
+      semClique: rastreamento === 'RASTREADA' ? semClique : null,
+    },
+    rastreamentoDeClique: rastreamento,
     origemDoLabel: 'SALE_COMMISSION_COMPROVADA',
     featureVersion: FEATURE_VERSION,
     labeledAt: agora.toISOString(),
@@ -348,7 +387,14 @@ export async function registrarOperacaoRealNoFeatureStore(params: {
 
   // 3) Label a partir SÓ das vendas que a autoridade aprova.
   const elegiveis = await vendasElegiveisDoConteudo(base.workspaceId, contentId)
-  const label = montarLabelDeOperacaoReal(elegiveis, params.agora ?? new Date())
+  // O estado de rastreamento entra no rotulo. Sem ele, uma amostra vinda de
+  // publicacao com link direto afirmaria "nenhuma venda teve clique" quando
+  // o certo e "nao da para saber": o clique nao passou pelo redirect.
+  const rastreamento = await avaliarRastreamentoDoConteudo({
+    workspaceId: base.workspaceId,
+    contentId,
+  })
+  const label = montarLabelDeOperacaoReal(elegiveis, params.agora ?? new Date(), rastreamento.estado)
 
   // 4) Rotulagem da amostra JÁ CAPTURADA na publicação.
   //

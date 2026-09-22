@@ -38,6 +38,10 @@ import {
   type LabelDeOperacaoReal,
 } from './ml-operacao-real'
 import { avaliarVendaParaOperacaoReal } from './real-operation'
+import {
+  avaliarRastreamentoDoConteudo,
+  type EstadoDeRastreamento,
+} from './rastreamento-da-publicacao'
 
 // ── Janela de observação ────────────────────────────────────────────────
 
@@ -362,8 +366,19 @@ export interface ResultadoDoNegativo {
   explicacao: string
 }
 
-/** Label de ausência de conversão. Zeros explícitos, nunca `null` disfarçado. */
-export function montarLabelNegativo(agora: Date = new Date()): LabelDeOperacaoReal {
+/**
+ * Label de ausência de conversão. Zeros explícitos, nunca `null` disfarçado.
+ *
+ * Os zeros de VENDA são medidos: a janela fechou e nenhuma venda apareceu.
+ * A ausência de CLIQUE não: se a publicação saiu com link direto, o clique
+ * dela nunca chegou a ser observável. Por isso `semClique` vira `null` fora
+ * de `RASTREADA`, em vez de `0`.
+ */
+export function montarLabelNegativo(
+  agora: Date = new Date(),
+  /** Fail-closed: sem saber, assume que a publicação NÃO foi rastreada. */
+  rastreamento: EstadoDeRastreamento = 'NAO_RASTREADA_COM_FALLBACK'
+): LabelDeOperacaoReal {
   return {
     converted: false,
     vendasElegiveis: 0,
@@ -372,7 +387,11 @@ export function montarLabelNegativo(agora: Date = new Date()): LabelDeOperacaoRe
     comissaoConfirmada: 0,
     comissaoRecebida: 0,
     receitaRealizada: 0,
-    atribuicaoDeClique: { comClique: 0, semClique: 0 },
+    // Sem venda nenhuma, `comClique` é zero medido. `semClique` segue a
+    // mesma regra do label positivo: só é zero quando o clique era
+    // observável.
+    atribuicaoDeClique: { comClique: 0, semClique: rastreamento === 'RASTREADA' ? 0 : null },
+    rastreamentoDeClique: rastreamento,
     origemDoLabel: 'JANELA_DE_OBSERVACAO_ENCERRADA',
     featureVersion: FEATURE_VERSION,
     labeledAt: agora.toISOString(),
@@ -465,7 +484,14 @@ export async function rotularNegativoSeJanelaEncerrada(params: {
     )
   }
 
-  const label = montarLabelNegativo(agora)
+  // O rótulo negativo continua sendo de VENDA — nasce da ausência de venda
+  // depois da janela, nunca da ausência de `EventoLink`. O estado entra só
+  // para que ninguém leia a contagem de clique como medida.
+  const rastreamento = await avaliarRastreamentoDoConteudo({
+    workspaceId: base.workspaceId,
+    contentId: base.contentId,
+  })
+  const label = montarLabelNegativo(agora, rastreamento.estado)
   await prisma.mLFeatureSnapshot.update({
     where: { id: amostra.id },
     // SÓ o rótulo. As features capturadas na publicação nunca são tocadas.

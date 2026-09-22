@@ -75,6 +75,13 @@ export const MOTIVOS_CLIQUE_INDISPONIVEL = [
   'SEM_ATRIBUICAO_POR_CONTEUDO',
   /** `EventoLink.plataforma` é do link, não o canal de publicação do conteúdo. */
   'SEM_ATRIBUICAO_POR_CANAL',
+  /**
+   * A publicação saiu com o link direto do produto (fallback da Etapa 2.a):
+   * o clique não passou pelo redirect e por isso não existe em `EventoLink`.
+   * Zero evento aqui NÃO é zero clique — é clique desconhecido. Ver
+   * `lib/rastreamento-da-publicacao.ts`.
+   */
+  'INDISPONIVEL_POR_FALTA_DE_RASTREAMENTO',
 ] as const
 
 export type MotivoCliqueIndisponivel = (typeof MOTIVOS_CLIQUE_INDISPONIVEL)[number]

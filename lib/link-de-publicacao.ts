@@ -139,11 +139,26 @@ export function slugDaPublicacao(p: {
     .replace(/^-+|-+$/g, '')
     .substring(0, 30)
 
+  return `${base || 'produto'}-${sufixoDoSlugDaPublicacao(p)}`
+}
+
+/**
+ * A metade IDENTIFICADORA do slug — 12 caracteres base36 de SHA-256.
+ *
+ * Separada de proposito: o nome do produto entra so no prefixo legivel, e
+ * nome e MUTAVEL. Quem precisa reencontrar a publicacao depois (a derivacao
+ * do estado de rastreamento) casa por este sufixo, e nao pelo slug inteiro
+ * — assim renomear o produto nao faz uma publicacao rastreada desaparecer.
+ */
+export function sufixoDoSlugDaPublicacao(p: {
+  workspaceId: string
+  contentId: string
+  chaveDaTentativa: string
+  canal: string
+}): string {
   const material = [p.workspaceId, p.contentId, p.canal, p.chaveDaTentativa].join('|')
   const hash = createHash('sha256').update(material).digest('hex')
-  const curto = BigInt(`0x${hash.slice(0, 16)}`).toString(36).padStart(12, '0').slice(0, 12)
-
-  return `${base || 'produto'}-${curto}`
+  return BigInt(`0x${hash.slice(0, 16)}`).toString(36).padStart(12, '0').slice(0, 12)
 }
 
 /**
@@ -189,6 +204,12 @@ export interface ResultadoDoLinkRastreavel {
   /** `true` quando o link já existia — retry, não duplicata. */
   reutilizado: boolean
   motivo: MotivoSemLinkRastreavel | null
+  /**
+   * Detalha `SEM_BASE_PUBLICA`. A interface precisa distinguir "domínio nao
+   * configurado" de "URL invalida", e `explicacao` nao serve para isso: ela
+   * cita o valor configurado. O submotivo e um codigo, nunca um valor.
+   */
+  submotivo: MotivoSemBasePublica | null
   explicacao: string
   /** Destino final do redirect, para quem precisar do fallback. */
   urlDestino: string | null
@@ -219,7 +240,8 @@ export async function obterLinkRastreavelDaPublicacao(params: {
   const vazio = (
     motivo: MotivoSemLinkRastreavel,
     explicacao: string,
-    urlDestino: string | null = null
+    urlDestino: string | null = null,
+    submotivo: MotivoSemBasePublica | null = null
   ): ResultadoDoLinkRastreavel => ({
     ok: false,
     urlPublica: null,
@@ -227,6 +249,7 @@ export async function obterLinkRastreavelDaPublicacao(params: {
     slug: null,
     reutilizado: false,
     motivo,
+    submotivo,
     explicacao,
     urlDestino,
   })
@@ -262,7 +285,7 @@ export async function obterLinkRastreavelDaPublicacao(params: {
 
     const base = lerBasePublica(params.env ?? process.env)
     if (!base.ok) {
-      return vazio('SEM_BASE_PUBLICA', base.explicacao, urlDestino)
+      return vazio('SEM_BASE_PUBLICA', base.explicacao, urlDestino, base.motivo)
     }
 
     const chaveDaTentativa =
@@ -299,6 +322,7 @@ export async function obterLinkRastreavelDaPublicacao(params: {
         slug,
         reutilizado: true,
         motivo: null,
+        submotivo: null,
         explicacao: 'Link desta tentativa já existia — retry reusa, nunca duplica.',
         urlDestino: existente.urlDestino,
       }
@@ -325,6 +349,7 @@ export async function obterLinkRastreavelDaPublicacao(params: {
       slug,
       reutilizado: false,
       motivo: null,
+      submotivo: null,
       explicacao: `Link rastreado criado sob demanda para a publicação do conteúdo ${conteudo.id} em ${params.canal}.`,
       urlDestino: criado.urlDestino,
     }

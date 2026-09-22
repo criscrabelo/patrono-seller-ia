@@ -231,7 +231,12 @@ describe(
       assert.equal(label.receitaRealizada, 15)
       assert.equal(label.comissaoEsperada, 20)
       assert.equal(label.comissaoConfirmada, 18)
-      assert.deepEqual(label.atribuicaoDeClique, { comClique: 1, semClique: 0 })
+      // O clique DESTA venda existe e esta atribuido — evidencia positiva,
+      // vale sempre. Ja `semClique` fica `null`: a publicacao do E2E usa um
+      // link criado a mao, nao o rastreado da publicacao, entao ausencia de
+      // clique aqui nao teria como ser medida.
+      assert.deepEqual(label.atribuicaoDeClique, { comClique: 1, semClique: null })
+      assert.equal(label.rastreamentoDeClique, 'NAO_RASTREADA_COM_FALLBACK')
 
       // 10. Uma amostra, uma linha, contada no readiness DESTE workspace.
       const conta = await contarAmostrasRotuladas(workspaceA)

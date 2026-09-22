@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { avaliarRastreamentoDosConteudos } from '@/lib/rastreamento-da-publicacao'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -56,5 +57,17 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  return NextResponse.json(conteudos)
+  // Estado de rastreamento por publicacao (P1.0 Etapa 2.a — microcorrecao).
+  // Uma publicacao que caiu no fallback saiu com o link direto do produto:
+  // o clique dela nunca passa pelo redirect e por isso nao e medido. Isso
+  // precisa aparecer na tela, senao a unica forma de descobrir seria olhar
+  // log de servidor. Uma consulta so para a listagem inteira.
+  const rastreamento = await avaliarRastreamentoDosConteudos(session.user.workspaceId, conteudos)
+
+  return NextResponse.json(
+    conteudos.map((c) => ({
+      ...c,
+      rastreamento: rastreamento.get(c.id) ?? null,
+    }))
+  )
 }
