@@ -241,11 +241,12 @@ describe('Sem data leakage — o resultado nunca entra como feature', () => {
     assert.match(codigo, /excluirContentId \? \{ id: \{ not: excluirContentId \} \}/)
   })
 
-  test('capturedAt é o instante da PUBLICAÇÃO, gravado na captura', () => {
-    // Revisto no Bloco 4.1: a amostra nasce quando o conteúdo vai ao ar, e
-    // não quando a venda chega. As features descrevem aquele momento; o
-    // label descreve o que veio depois.
-    assert.match(lerCodigo('lib/ml-captura-publicacao.ts'), /capturedAt: agora/)
+  test('capturedAt é o instante da DISTRIBUIÇÃO confirmada pelo canal', () => {
+    // Revisto duas vezes: a amostra nasce quando o conteúdo REALMENTE
+    // circula, e `capturedAt` guarda esse instante — não o de agora, nem o
+    // de quando alguém abriu uma tela.
+    assert.match(lerCodigo('lib/ml-captura-publicacao.ts'), /capturedAt: distribuidoEm/)
+    assert.match(lerCodigo('lib/ml-captura-publicacao.ts'), /evidencia\.distribuidoEm/)
   })
 })
 

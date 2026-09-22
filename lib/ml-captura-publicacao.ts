@@ -91,15 +91,96 @@ export function janelaEncerrada(
 
 // ── Captura na publicação ───────────────────────────────────────────────
 
+/**
+ * DISTRIBUIÇÃO REAL — o núcleo desta revisão.
+ *
+ * ── O PROBLEMA ──────────────────────────────────────────────────────────
+ * `Conteudo.status = 'publicado'` NÃO prova que alguém viu o conteúdo. O
+ * sistema marca como publicado em situações puramente internas: conteúdo
+ * agendado sem vídeo ao abrir a listagem, ou conteúdo cujo Instagram não
+ * está conectado. Nesses casos nada saiu do Patrono.
+ *
+ * Se uma dessas amostras entrasse no dataset, trinta dias depois ela viraria
+ * um NEGATIVO — ensinando ao modelo que aquele criativo não converteu,
+ * quando na verdade ele nunca chegou a existir para o público. É o pior tipo
+ * de erro de rótulo: parece dado e é ruído.
+ *
+ * ── A REGRA, NO CORE ────────────────────────────────────────────────────
+ * O que caracteriza distribuição real é um IDENTIFICADOR EXTERNO devolvido
+ * pelo canal — `Conteudo.publicacaoExternaId`. É o recibo: o provider
+ * aceitou a publicação e deu um id para ela.
+ *
+ * A regra fica AQUI, no core, não no adaptador do Instagram. Hoje quem
+ * preenche esse campo é o Instagram (`publicarContainer() → mediaId`), mas
+ * TikTok, Shopee, Amazon e qualquer canal futuro usam o mesmo contrato:
+ * devolveu id, houve distribuição. O provider fornece a evidência; quem
+ * decide o que conta como evidência é o core.
+ */
 export const MOTIVOS_CAPTURA = [
   'CAPTURADO',
   /** Já havia amostra desta versão de features para este conteúdo. */
   'JA_CAPTURADO',
   'CONTEUDO_NAO_ENCONTRADO',
+  /**
+   * Marcado como publicado DENTRO do app, sem recibo de nenhum canal.
+   * Não é erro: é o estado normal de conteúdo que ainda não circulou.
+   */
+  'SEM_DISTRIBUICAO_COMPROVADA',
   'FEATURES_INDISPONIVEIS',
 ] as const
 
 export type MotivoCaptura = (typeof MOTIVOS_CAPTURA)[number]
+
+export interface EvidenciaDeDistribuicao {
+  distribuida: boolean
+  /** Id devolvido pelo canal. `null` quando não houve distribuição. */
+  identificadorExterno: string | null
+  /**
+   * Instante em que o conteúdo entrou em circulação. É ESTE o marco da
+   * amostra e o início da janela de observação — não o instante em que
+   * alguém abriu uma tela ou o cron passou.
+   */
+  distribuidoEm: Date | null
+  explicacao: string
+}
+
+/**
+ * FUNÇÃO PURA. Decide se um conteúdo foi realmente distribuído.
+ *
+ * `status === 'publicado'` de propósito NÃO entra na conta: é justamente o
+ * sinal ambíguo que esta revisão veio separar.
+ */
+export function avaliarDistribuicaoReal(conteudo: {
+  publicacaoExternaId?: string | null
+  dataPublicacao?: Date | null
+}): EvidenciaDeDistribuicao {
+  const id = typeof conteudo?.publicacaoExternaId === 'string' ? conteudo.publicacaoExternaId.trim() : ''
+  if (!id) {
+    return {
+      distribuida: false,
+      identificadorExterno: null,
+      distribuidoEm: null,
+      explicacao:
+        'Nenhum canal devolveu identificador de publicação. O conteúdo pode estar marcado como publicado dentro do app, mas não há prova de que circulou.',
+    }
+  }
+  const quando = conteudo?.dataPublicacao
+  if (!(quando instanceof Date) || !Number.isFinite(quando.getTime())) {
+    return {
+      distribuida: false,
+      identificadorExterno: id,
+      distribuidoEm: null,
+      explicacao:
+        'Há identificador externo, mas não há data de publicação — sem o instante da distribuição não dá para datar a amostra nem contar a janela.',
+    }
+  }
+  return {
+    distribuida: true,
+    identificadorExterno: id,
+    distribuidoEm: quando,
+    explicacao: `Distribuição confirmada pelo canal (id externo ${id}).`,
+  }
+}
 
 export interface ResultadoDaCaptura {
   capturado: boolean
@@ -142,6 +223,23 @@ export async function capturarSnapshotDePublicacao(params: {
   }
 
   try {
+    // ── PORTÃO: sem distribuição comprovada, nenhuma amostra de produção.
+    const conteudo = await prisma.conteudo.findFirst({
+      where: { id: base.contentId, workspaceId: base.workspaceId },
+      select: { publicacaoExternaId: true, dataPublicacao: true },
+    })
+    if (!conteudo) {
+      return falhar('CONTEUDO_NAO_ENCONTRADO', 'Conteúdo não encontrado neste workspace.')
+    }
+
+    const evidencia = avaliarDistribuicaoReal(conteudo)
+    if (!evidencia.distribuida) {
+      // Estado normal, não erro: conteúdo que ainda não circulou simplesmente
+      // não entra no dataset. Vira negativo daqui a 30 dias seria ensinar ao
+      // modelo que um criativo falhou sem que ninguém o tenha visto.
+      return falhar('SEM_DISTRIBUICAO_COMPROVADA', evidencia.explicacao)
+    }
+
     const extraido = await extrairFeaturesDeConteudo(base.workspaceId, base.contentId)
     if (!extraido) {
       return falhar('CONTEUDO_NAO_ENCONTRADO', 'Conteúdo não encontrado neste workspace.')
@@ -152,7 +250,10 @@ export async function capturarSnapshotDePublicacao(params: {
     verificarSemVazamentoDeResultado(asRecord)
 
     const chave = chaveDaAmostra({ workspaceId: base.workspaceId, entityId: base.contentId })
-    const agora = params.agora ?? new Date()
+    // O marco da amostra é o instante da DISTRIBUIÇÃO, não o instante em que
+    // alguém abriu uma tela ou o cron passou. `params.agora` só existe para
+    // teste poder fixar o relógio, e mesmo assim perde para a evidência.
+    const distribuidoEm = evidencia.distribuidoEm ?? params.agora ?? new Date()
 
     return await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 AS ok FROM (SELECT pg_advisory_xact_lock(hashtext(${chave}))) AS trava`
@@ -189,7 +290,7 @@ export async function capturarSnapshotDePublicacao(params: {
           // LABEL, que só chega depois e só pela autoridade.
           dataOrigin: 'REAL_OPERATION',
           features: extraido.features as never,
-          capturedAt: agora,
+          capturedAt: distribuidoEm,
           // O resultado ainda não existe. Rotular agora seria inventá-lo.
           label: undefined,
           labeledAt: null,
@@ -202,7 +303,7 @@ export async function capturarSnapshotDePublicacao(params: {
         motivo: 'CAPTURADO' as const,
         snapshotId: novo.id,
         ...base,
-        explicacao: `Amostra capturada na publicação do conteúdo ${base.contentId}, sem rótulo.`,
+        explicacao: `Amostra capturada na distribuição do conteúdo ${base.contentId} (${evidencia.explicacao}), sem rótulo.`,
       }
     })
   } catch (e) {
@@ -233,8 +334,11 @@ export const MOTIVOS_NEGATIVO = [
   'ROTULADO_NEGATIVO',
   /** A janela de observação ainda não terminou. */
   'JANELA_ABERTA',
-  /** Sem data de publicação não há janela a contar. */
-  'SEM_DATA_DE_PUBLICACAO',
+  /**
+   * Sem prova de que o conteúdo circulou. NUNCA vira negativo: declarar que
+   * um criativo não converteu exige antes que ele tenha sido exposto.
+   */
+  'SEM_DISTRIBUICAO_COMPROVADA',
   /** Não há amostra capturada — conteúdo legado. Nunca criada retroativamente. */
   'SEM_AMOSTRA_CAPTURADA',
   /** A amostra já tem rótulo. */
@@ -302,13 +406,18 @@ export async function rotularNegativoSeJanelaEncerrada(params: {
 
   const conteudo = await prisma.conteudo.findFirst({
     where: { id: base.contentId, workspaceId: base.workspaceId },
-    select: { dataPublicacao: true },
+    select: { publicacaoExternaId: true, dataPublicacao: true },
   })
-  if (!conteudo?.dataPublicacao) {
-    return negar('SEM_DATA_DE_PUBLICACAO', 'Conteúdo sem data de publicação — não há janela a contar.')
+  if (!conteudo) {
+    return negar('SEM_DISTRIBUICAO_COMPROVADA', 'Conteúdo não encontrado neste workspace.')
   }
-  if (!janelaEncerrada(conteudo.dataPublicacao, agora, politica.dias)) {
-    return negar('JANELA_ABERTA', `A janela de ${politica.dias} dias ainda não terminou.`)
+
+  // Conteúdo que nunca circulou NUNCA vira negativo de produção. É a trava
+  // central desta revisão: rotular "não converteu" algo que ninguém viu
+  // ensinaria ao modelo uma falha que nunca aconteceu.
+  const evidencia = avaliarDistribuicaoReal(conteudo)
+  if (!evidencia.distribuida) {
+    return negar('SEM_DISTRIBUICAO_COMPROVADA', evidencia.explicacao)
   }
 
   const amostra = await prisma.mLFeatureSnapshot.findFirst({
@@ -318,17 +427,27 @@ export async function rotularNegativoSeJanelaEncerrada(params: {
       entityId: base.contentId,
       featureVersion: FEATURE_VERSION,
     },
-    select: { id: true, labeledAt: true },
+    select: { id: true, labeledAt: true, capturedAt: true },
   })
   if (!amostra) {
     // Conteúdo legado: nunca criamos a amostra retroativamente.
     return negar(
       'SEM_AMOSTRA_CAPTURADA',
-      'Não há amostra capturada na publicação deste conteúdo. Criar uma agora usaria campos possivelmente editados — a lacuna fica registrada em vez de preenchida com palpite.'
+      'Não há amostra capturada na distribuição deste conteúdo. Criar uma agora usaria campos possivelmente editados — a lacuna fica registrada em vez de preenchida com palpite.'
     )
   }
   if (amostra.labeledAt) {
     return negar('JA_ROTULADO', 'Esta amostra já tem rótulo.', amostra.id)
+  }
+
+  // A janela conta a partir da DISTRIBUIÇÃO — que é o que `capturedAt`
+  // guarda —, nunca de quando o registro foi marcado internamente.
+  if (!janelaEncerrada(amostra.capturedAt, agora, politica.dias)) {
+    return negar(
+      'JANELA_ABERTA',
+      `A janela de ${politica.dias} dias contados da distribuição ainda não terminou.`,
+      amostra.id
+    )
   }
 
   // Qualquer venda não cancelada ligada ao conteúdo cria dúvida: ou já é

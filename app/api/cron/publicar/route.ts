@@ -72,9 +72,12 @@ export async function GET(req: NextRequest) {
   let publicadosApp = 0
   let publicadosInstagram = 0
   let falhas = 0
-  // GATILHO A (P0.2 Bloco 4.1): cada publicação real captura a amostra de
-  // ML no mesmo instante, sem rótulo. Nunca lança — a publicação é o fato
-  // principal e não pode falhar porque a observação falhou.
+  // GATILHO A (P0.2 Bloco 4.1): a amostra de ML nasce quando um CANAL
+  // confirma a distribuição — nunca quando o conteúdo é marcado como
+  // publicado só dentro do app. `capturarSnapshotDePublicacao` recusa
+  // sozinha quando não há identificador externo, então os dois caminhos
+  // internos abaixo (sem vídeo, sem Instagram conectado) não produzem
+  // amostra. Nunca lança: a publicação é o fato principal.
   let amostrasCapturadas = 0
   const capturar = async (workspaceId: string, contentId: string) => {
     const r = await capturarSnapshotDePublicacao({ workspaceId, contentId, agora })
@@ -84,11 +87,12 @@ export async function GET(req: NextRequest) {
   for (const c of devidos) {
     // Sem vídeo: publicação apenas dentro do app.
     if (!c.videoUrl) {
+      // PUBLICAÇÃO INTERNA: sem vídeo não há nada a distribuir. Nenhuma
+      // amostra de ML nasce daqui.
       await prisma.conteudo.update({
         where: { id: c.id },
         data: { status: 'publicado', dataPublicacao: agora },
       })
-      await capturar(c.workspaceId, c.id)
       publicadosApp++
       continue
     }
@@ -103,11 +107,12 @@ export async function GET(req: NextRequest) {
       !integracao.accessToken ||
       !integracao.accountId
     ) {
+      // PUBLICAÇÃO INTERNA: sem canal conectado o conteúdo não circulou.
+      // Nenhuma amostra de ML nasce daqui.
       await prisma.conteudo.update({
         where: { id: c.id },
         data: { status: 'publicado', dataPublicacao: agora },
       })
-      await capturar(c.workspaceId, c.id)
       publicadosApp++
       continue
     }
@@ -128,6 +133,8 @@ export async function GET(req: NextRequest) {
           erroPublicacao: null,
         },
       })
+      // DISTRIBUIÇÃO REAL: o canal devolveu `mediaId`. É aqui — e só aqui,
+      // neste cron — que a amostra de produção nasce.
       await capturar(c.workspaceId, c.id)
       publicadosInstagram++
     } catch (e) {

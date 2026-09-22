@@ -70,6 +70,9 @@ async function criarConteudoSemCaptura(ws = workspaceA) {
         duracao: 30,
         redeSocial: 'tiktok',
         dataPublicacao: new Date('2026-09-01T19:00:00.000Z'),
+        // Evidência de distribuição real: sem identificador externo o core
+        // recusa a captura (revisão do Bloco 4.1).
+        publicacaoExternaId: `media-${Math.random().toString(36).slice(2, 10)}`,
       },
       select: { id: true },
     })

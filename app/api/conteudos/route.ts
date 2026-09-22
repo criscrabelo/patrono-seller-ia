@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { capturarSnapshotsDePublicacao } from '@/lib/ml-captura-publicacao'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -12,32 +11,26 @@ export async function GET(req: NextRequest) {
   // cuja data já passou são marcados como publicados (complementa o cron).
   // Conteúdos com vídeo são publicados no Instagram pelo cron ou pelo botão
   // "Publicar agora" — não aqui, para não travar a listagem com chamadas à API.
-  // Os ids são coletados ANTES do update porque `updateMany` não os
-  // devolve — e sem eles não há como capturar a amostra de ML de cada
-  // conteúdo publicado (GATILHO A do P0.2 Bloco 4.1).
-  const aPublicar = await prisma.conteudo.findMany({
+  // NENHUMA amostra de ML nasce aqui, e isso é deliberado.
+  //
+  // Este caminho marca como "publicado" um conteúdo agendado SEM vídeo, ao
+  // abrir a listagem. É publicação INTERNA: nada saiu do Patrono, nenhum
+  // canal devolveu identificador, ninguém viu o conteúdo. Capturar amostra
+  // daqui faria com que, trinta dias depois, o cron da janela a rotulasse
+  // como "não converteu" — ensinando ao modelo uma falha de um criativo que
+  // nunca chegou a existir para o público.
+  //
+  // A amostra nasce quando um canal confirma a distribuição — ver
+  // `avaliarDistribuicaoReal()` em lib/ml-captura-publicacao.ts.
+  await prisma.conteudo.updateMany({
     where: {
       workspaceId: session.user.workspaceId,
       status: 'agendado',
       dataAgendamento: { lte: new Date() },
       videoUrl: null,
     },
-    select: { id: true },
+    data: { status: 'publicado', dataPublicacao: new Date() },
   })
-  if (aPublicar.length > 0) {
-    await prisma.conteudo.updateMany({
-      where: { id: { in: aPublicar.map((c) => c.id) } },
-      data: { status: 'publicado', dataPublicacao: new Date() },
-    })
-    // Captura prospectiva: as features são observadas AGORA, no instante da
-    // publicação, e nunca reconstruídas depois a partir do conteúdo atual.
-    // `capturarSnapshotsDePublicacao` nunca lança — listar conteúdo não pode
-    // falhar porque o ML não conseguiu observar.
-    await capturarSnapshotsDePublicacao(
-      session.user.workspaceId,
-      aPublicar.map((c) => c.id)
-    )
-  }
 
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status')

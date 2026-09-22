@@ -21,6 +21,7 @@ import {
   listarLacunasDeCaptura,
   lerPoliticaDeObservacao,
   janelaEncerrada,
+  avaliarDistribuicaoReal,
   montarLabelNegativo,
   JANELA_OBSERVACAO_PADRAO_DIAS,
   LIMITACAO_DE_REVISAO,
@@ -100,15 +101,68 @@ describe('Label negativo — zeros explícitos', () => {
   })
 })
 
-describe('Gatilhos ligados no código', () => {
-  test('A — as três rotas de publicação capturam a amostra', () => {
-    for (const rota of [
-      'app/api/conteudos/route.ts',
-      'app/api/conteudos/[id]/publicar/route.ts',
-      'app/api/cron/publicar/route.ts',
-    ]) {
-      assert.match(lerFonte(rota), /capturarSnapshot(s)?DePublicacao/, `${rota} precisa capturar na publicação`)
+describe('Distribuição real — status "publicado" NÃO é prova', () => {
+  test('identificador externo do canal prova distribuição', () => {
+    const e = avaliarDistribuicaoReal({
+      publicacaoExternaId: 'media-123',
+      dataPublicacao: new Date('2026-09-01T19:00:00.000Z'),
+    })
+    assert.equal(e.distribuida, true)
+    assert.equal(e.identificadorExterno, 'media-123')
+    assert.equal(e.distribuidoEm?.toISOString(), '2026-09-01T19:00:00.000Z')
+  })
+
+  test('sem identificador externo NÃO há distribuição', () => {
+    for (const id of [null, undefined, '', '   ']) {
+      const e = avaliarDistribuicaoReal({ publicacaoExternaId: id, dataPublicacao: new Date() })
+      assert.equal(e.distribuida, false, `id ${JSON.stringify(id)} não podia contar como distribuição`)
+      assert.equal(e.distribuidoEm, null)
     }
+  })
+
+  test('identificador sem data de publicação também não basta', () => {
+    // Sem o instante não dá para datar a amostra nem contar a janela.
+    for (const d of [null, undefined, new Date('xx')]) {
+      assert.equal(avaliarDistribuicaoReal({ publicacaoExternaId: 'media-1', dataPublicacao: d }).distribuida, false)
+    }
+  })
+
+  test('a regra NÃO olha `status` — é o sinal ambíguo que ela veio separar', () => {
+    const fonte = lerFonte('lib/ml-captura-publicacao.ts')
+    const trecho = fonte.slice(
+      fonte.indexOf('export function avaliarDistribuicaoReal'),
+      fonte.indexOf('export interface ResultadoDaCaptura')
+    )
+    assert.ok(!/status/.test(trecho), 'status publicado não pode entrar na decisão')
+  })
+
+  test('a regra fica no CORE, não acoplada ao Instagram', () => {
+    const fonte = lerFonte('lib/ml-captura-publicacao.ts')
+    assert.ok(!/instagram|mediaId|publicarContainer/i.test(fonte.replace(/\/\*[\s\S]*?\*\//g, '')),
+      'o core não pode citar um provider específico no código')
+  })
+})
+
+describe('Gatilhos ligados no código', () => {
+  test('A — só os caminhos de DISTRIBUIÇÃO REAL capturam a amostra', () => {
+    // Revisão: publicação interna deixou de gerar amostra.
+    for (const rota of ['app/api/conteudos/[id]/publicar/route.ts', 'app/api/cron/publicar/route.ts']) {
+      assert.match(lerFonte(rota), /capturarSnapshotDePublicacao/, `${rota} distribui de verdade e precisa capturar`)
+    }
+    // A listagem marca como publicado DENTRO do app: nada circulou.
+    assert.ok(
+      !/capturarSnapshot/.test(lerFonte('app/api/conteudos/route.ts')),
+      'a listagem não pode gerar amostra: é publicação interna'
+    )
+  })
+
+  test('no cron, só o caminho com mediaId captura', () => {
+    const cron = lerFonte('app/api/cron/publicar/route.ts')
+    const chamadas = cron.match(/await capturar\(/g) ?? []
+    assert.equal(chamadas.length, 1, 'os dois caminhos internos não podem capturar')
+    // E a única chamada vem depois do identificador externo ser gravado.
+    const posMediaId = cron.indexOf('publicacaoExternaId: mediaId')
+    assert.ok(posMediaId > 0 && cron.indexOf('await capturar(') > posMediaId)
   })
 
   test('B — a promoção tenta rotular quando fica elegível', () => {
@@ -165,8 +219,16 @@ async function limpar(ws: string) {
   await prisma.auditLog.deleteMany({ where: { workspaceId: ws } })
 }
 
-async function criarConteudo(opcoes: { roteiro?: string; publicadoEm?: Date | null; ws?: string } = {}) {
+/**
+ * `distribuido: true` simula o canal tendo devolvido um identificador —
+ * `publicacaoExternaId` é a evidência que o core exige. Sem ele o conteúdo
+ * está apenas marcado como publicado DENTRO do app.
+ */
+async function criarConteudo(
+  opcoes: { roteiro?: string; publicadoEm?: Date | null; ws?: string; distribuido?: boolean } = {}
+) {
   const ws = opcoes.ws ?? workspaceA
+  const distribuido = opcoes.distribuido !== false
   return (
     await prisma.conteudo.create({
       data: {
@@ -179,6 +241,7 @@ async function criarConteudo(opcoes: { roteiro?: string; publicadoEm?: Date | nu
         redeSocial: 'tiktok',
         status: 'publicado',
         dataPublicacao: opcoes.publicadoEm === undefined ? new Date() : opcoes.publicadoEm,
+        publicacaoExternaId: distribuido ? `media-${Math.random().toString(36).slice(2, 10)}` : null,
       },
       select: { id: true },
     })
@@ -603,6 +666,131 @@ describe(
         await prisma.mLModel.count({ where: { workspaceId: { in: criados }, status: 'ACTIVE' } }),
         0
       )
+    })
+    // ── DISTRIBUIÇÃO REAL vs PUBLICAÇÃO INTERNA ──────────────────────
+
+    test('conteúdo apenas marcado publicado INTERNAMENTE → NÃO cria amostra', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo({ distribuido: false })
+      const r = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      assert.equal(r.capturado, false)
+      assert.equal(r.motivo, 'SEM_DISTRIBUICAO_COMPROVADA')
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+    })
+
+    test('conteúdo sem provider conectado → NÃO cria amostra', async () => {
+      // Mesmo cenário do cron quando o Instagram não está conectado: marca
+      // como publicado, mas nenhum canal devolveu identificador.
+      await limpar(workspaceA)
+      const contentId = await criarConteudo({ distribuido: false })
+      await prisma.conteudo.update({ where: { id: contentId }, data: { status: 'publicado' } })
+      const r = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      assert.equal(r.capturado, false)
+      assert.equal(r.motivo, 'SEM_DISTRIBUICAO_COMPROVADA')
+    })
+
+    test('agendado vencido mas não distribuído → NÃO cria amostra', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo({ distribuido: false, publicadoEm: new Date(Date.now() - 5 * DIA) })
+      await prisma.conteudo.update({
+        where: { id: contentId },
+        data: { status: 'agendado', dataAgendamento: new Date(Date.now() - 6 * DIA) },
+      })
+      const r = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      assert.equal(r.capturado, false)
+      assert.equal(r.motivo, 'SEM_DISTRIBUICAO_COMPROVADA')
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+    })
+
+    test('canal confirmou com identificador → CRIA amostra', async () => {
+      await limpar(workspaceA)
+      const distribuidoEm = new Date(Date.now() - 2 * DIA)
+      const contentId = await criarConteudo({ publicadoEm: distribuidoEm })
+      const r = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      assert.equal(r.capturado, true, r.explicacao)
+
+      const snap = await prisma.mLFeatureSnapshot.findUnique({ where: { id: r.snapshotId! } })
+      // capturedAt é o instante da DISTRIBUIÇÃO, não o de agora.
+      assert.equal(snap?.capturedAt.toISOString(), distribuidoEm.toISOString())
+      assert.equal(snap?.labeledAt, null)
+    })
+
+    test('repetir a confirmação da mesma publicação é idempotente', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo()
+      const a = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const b = await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      assert.equal(a.capturado, true)
+      assert.equal(b.motivo, 'JA_CAPTURADO')
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 1)
+    })
+
+    // ── Conteúdo não distribuído NUNCA vira negativo ─────────────────
+
+    test('conteúdo NÃO distribuído nunca vira negativo, nem depois de 30 dias', async () => {
+      // A trava central desta revisão.
+      await limpar(workspaceA)
+      const contentId = await criarConteudo({ distribuido: false, publicadoEm: new Date(Date.now() - 90 * DIA) })
+
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, false)
+      // Sem amostra capturada, nem chega a olhar a janela.
+      assert.ok(['SEM_DISTRIBUICAO_COMPROVADA', 'SEM_AMOSTRA_CAPTURADA'].includes(r.motivo))
+
+      const varredura = await fecharJanelasDeObservacao({ workspaceId: workspaceA })
+      assert.equal(varredura.rotulados, 0)
+      assert.equal(await prisma.mLFeatureSnapshot.count({ where: { workspaceId: workspaceA } }), 0)
+    })
+
+    test('perder a evidência depois impede o negativo', async () => {
+      // Cenário defensivo: a amostra existe, mas o identificador sumiu. Sem
+      // prova de exposição, não se declara que não converteu.
+      await limpar(workspaceA)
+      const distribuidoEm = new Date(Date.now() - 40 * DIA)
+      const contentId = await criarConteudo({ publicadoEm: distribuidoEm })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      await prisma.conteudo.update({ where: { id: contentId }, data: { publicacaoExternaId: null } })
+
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, false)
+      assert.equal(r.motivo, 'SEM_DISTRIBUICAO_COMPROVADA')
+    })
+
+    test('conteúdo DISTRIBUÍDO e sem venda vira negativo após a janela', async () => {
+      await limpar(workspaceA)
+      const distribuidoEm = new Date(Date.now() - 40 * DIA)
+      const contentId = await criarConteudo({ publicadoEm: distribuidoEm })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, true, r.explicacao)
+      const snap = await prisma.mLFeatureSnapshot.findFirst({ where: { workspaceId: workspaceA } })
+      assert.equal((snap?.label as Record<string, unknown>).converted, false)
+    })
+
+    test('conteúdo DISTRIBUÍDO + venda elegível vira positivo', async () => {
+      await limpar(workspaceA)
+      const contentId = await criarConteudo({ publicadoEm: new Date(Date.now() - 2 * DIA) })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+      const { saleId } = await criarVenda({ contentId, statusComissao: 'RECEIVED' })
+      const p = await promover(saleId)
+      assert.equal(p.promovido, true, p.explicacao)
+
+      const conta = await contarAmostrasRotuladas(workspaceA)
+      assert.equal(conta.total, 1)
+      assert.equal(conta.positivas, 1)
+    })
+
+    test('a janela conta da DISTRIBUIÇÃO, não de quando o registro foi marcado', async () => {
+      await limpar(workspaceA)
+      // Distribuído há 10 dias: a janela de 30 ainda está aberta, mesmo que
+      // o cron rode hoje.
+      const contentId = await criarConteudo({ publicadoEm: new Date(Date.now() - 10 * DIA) })
+      await capturarSnapshotDePublicacao({ workspaceId: workspaceA, contentId })
+
+      const r = await rotularNegativoSeJanelaEncerrada({ workspaceId: workspaceA, contentId })
+      assert.equal(r.rotulado, false)
+      assert.equal(r.motivo, 'JANELA_ABERTA')
     })
   }
 )
