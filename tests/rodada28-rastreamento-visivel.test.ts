@@ -358,11 +358,19 @@ describe('A lacuna aparece na interface, não só no log', () => {
     }
   })
 
-  test('o schema continua intocado', () => {
+  test('o estado de rastreamento NUNCA virou coluna', () => {
+    // Nasceu como "o schema continua intocado". A Etapa 2.b mexeu no schema
+    // — mas a regra que esta asserção realmente protege sobreviveu: o estado
+    // de rastreamento e DERIVADO, nunca guardado. Um cache aqui poderia
+    // contradizer a fonte e envenenar o ML.
     const schema = lerFonte('prisma/schema.prisma')
-    assert.ok(!/^model Publicacao/m.test(schema))
+      .split(/\r?\n/)
+      .filter((l) => !l.trimStart().startsWith('//'))
+      .join('\n')
     assert.ok(!/rastreamentoDeClique/.test(schema))
-    assert.ok(!/publicacaoId/.test(schema))
+    assert.ok(!/NAO_RASTREADA_COM_FALLBACK/.test(schema))
+    const publicacao = schema.match(/model Publicacao \{[\s\S]*?\n\}/)
+    if (publicacao) assert.ok(!/rastread/i.test(publicacao[0]))
   })
 })
 

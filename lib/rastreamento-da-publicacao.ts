@@ -67,6 +67,67 @@ export function derivarEstadoDaPublicacao(p: {
   return p.rastreada ? 'RASTREADA' : 'NAO_RASTREADA_COM_FALLBACK'
 }
 
+/**
+ * FUNÇÃO PURA. O estado derivado da PUBLICAÇÃO PERSISTIDA (Etapa 2.b).
+ *
+ * Ainda não é chamada por ninguém: a tabela `Publicacao` não existe no banco
+ * enquanto a migration não for aprovada. Está aqui para que a regra de
+ * derivação seja testável ANTES de virar dado, e não uma promessa de
+ * documento.
+ *
+ * ── DISTRIBUÍDA ≠ RASTREADA ─────────────────────────────────────────────
+ * Só `DISTRIBUIDA` habilita medição. Uma publicação `DISTRIBUIDA` que saiu
+ * com o link direto do produto é `NAO_RASTREADA_COM_FALLBACK` — o caso que
+ * a Etapa 2.a mantém vivo de propósito.
+ *
+ * ── A CONDIÇÃO TEMPORAL, E POR QUE ELA É OBRIGATÓRIA ────────────────────
+ * Não basta "existe link". O link precisa ter existido ANTES da
+ * distribuição, porque é ele que vai na legenda: um link criado depois não
+ * esteve em post nenhum.
+ *
+ * Sem `criadoEm <= distribuidaEm`, anexar um link a uma publicação antiga
+ * faria um post que saiu por fallback passar a ler como rastreado — e o ML
+ * leria ausência de `EventoLink` como zero clique medido. Seria reescrever
+ * história em favor do número bonito, exatamente o que a microcorreção da
+ * 2.a bloqueou.
+ *
+ * Na operação normal a condição é sempre verdadeira, porque a legenda
+ * precisa da URL antes de publicar. Ela só morde no caso patológico — que é
+ * quando precisa morder.
+ *
+ * Fail-closed em toda dúvida: data ilegível, ausente ou fora de ordem
+ * resulta em `NAO_RASTREADA_COM_FALLBACK`, nunca em `RASTREADA`.
+ */
+export function derivarEstadoDaPublicacaoPersistida(p: {
+  estado: string
+  distribuidaEm?: Date | string | null
+  /** O link rastreado da publicação, quando existe. */
+  link?: { criadoEm?: Date | string | null } | null
+}): EstadoDeRastreamento {
+  if (p?.estado !== 'DISTRIBUIDA') return 'NAO_PUBLICADA'
+
+  const distribuidaEm = comoData(p?.distribuidaEm)
+  // `DISTRIBUIDA` sem instante de distribuição é contradição no próprio
+  // registro. Não é publicação comprovada.
+  if (!distribuidaEm) return 'NAO_PUBLICADA'
+
+  const criadoEm = comoData(p?.link?.criadoEm)
+  if (!criadoEm) return 'NAO_RASTREADA_COM_FALLBACK'
+
+  return criadoEm.getTime() <= distribuidaEm.getTime()
+    ? 'RASTREADA'
+    : 'NAO_RASTREADA_COM_FALLBACK'
+}
+
+function comoData(v: unknown): Date | null {
+  if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : null
+  if (typeof v === 'string' && v.trim()) {
+    const d = new Date(v)
+    return Number.isFinite(d.getTime()) ? d : null
+  }
+  return null
+}
+
 // ── Mensagem para a interface ───────────────────────────────────────────
 
 /** O título do aviso. Curto, e o mesmo em qualquer motivo. */

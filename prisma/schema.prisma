@@ -57,6 +57,7 @@ model Workspace {
   commissions       Commission[]
   auditLogs         AuditLog[]
   eventosLink       EventoLink[]
+  publicacoes       Publicacao[]
 
   // ── Digital Twin (Rodada 7) ────────────────────────────────────────
   digitalTwinProfiles DigitalTwinProfile[]
@@ -141,6 +142,31 @@ model LinkDinamico {
   updatedAt         DateTime     @updatedAt
   eventos           EventoLink[]
   sales             Sale[]
+
+  // P1.0 Etapa 2.b — a origem do clique.
+  //
+  // A FK fica DESTE lado, e nao em Publicacao.linkId, por dois motivos: e
+  // aqui que a opcionalidade mora (uma publicacao pode ir ao ar sem link
+  // rastreado, e um link pode existir sem publicacao — os 18 links por
+  // produto da tela "Meus Links"), e evita FK circular entre as duas
+  // tabelas.
+  publicacaoId String?
+  publicacao   Publicacao? @relation(fields: [publicacaoId, workspaceId], references: [id, workspaceId])
+
+  // UM INDICE SO, e ele basta — houve uma versao com dois.
+  //
+  // O composto sozinho garante "no maximo um link por publicacao", e a prova
+  // se apoia na FK acima: se L1 e L2 apontassem para a mesma Publicacao P, a
+  // FK obrigaria os dois a terem o workspaceId de P; entao o par
+  // (publicacaoId, workspaceId) seria identico e o segundo e recusado.
+  //
+  // Com publicacaoId NULL a FK nao e checada, o Postgres trata NULLs como
+  // distintos (NULLS DISTINCT, o padrao) e quantos links sem publicacao
+  // convivem — que e o necessario para os 18 por produto.
+  //
+  // Um `@unique` simples em publicacaoId seria redundante com este, e nao o
+  // contrario. Retry reusa o link; republicacao cria outra Publicacao.
+  @@unique([publicacaoId, workspaceId])
 
   @@index([workspaceId])
 }
@@ -297,7 +323,9 @@ model Conteudo {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   sales               Sale[]
+  publicacoes         Publicacao[]
 
+  @@unique([id, workspaceId])
   @@index([workspaceId])
 }
 
@@ -864,4 +892,133 @@ model CreativeExperiment {
   concludedAt DateTime?
 
   @@index([workspaceId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// P1.0 Etapa 2.b — a PUBLICACAO como entidade propria de distribuicao real.
+//
+// O mesmo conteudo pode ir ao ar mais de uma vez, em canais diferentes, com
+// resultados diferentes. Enquanto a unidade de observacao era `Conteudo`, a
+// segunda publicacao sobrescrevia a primeira e o historico se perdia.
+//
+// A cadeia que isto fecha:
+//   Conteudo -> Publicacao -> LinkDinamico -> EventoLink
+//   LinkDinamico -> Produto          (o destino continua sendo o produto)
+//
+// A partir daqui um clique responde: qual produto, qual publicacao, qual
+// conteudo, qual canal, qual tentativa.
+//
+// ── O QUE NAO VIRA COLUNA ───────────────────────────────────────────────
+// `produtoId`: derivado de `Conteudo.produtoId`. Duplicar criaria duas
+// verdades que podem divergir.
+//
+// `estadoDeRastreamento` (RASTREADA | NAO_RASTREADA_COM_FALLBACK |
+// NAO_PUBLICADA): inteiramente derivavel de `estado` + existencia do link.
+// Persistir seria manter um cache que pode contradizer as duas colunas de
+// onde ele sai. Ver `lib/rastreamento-da-publicacao.ts`.
+//
+// `publicacaoId` em Sale / EventoLink / Commission: derivavel por
+// Sale.clickEventId -> EventoLink.linkId -> LinkDinamico.publicacaoId.
+// Ver PROPOSTA_DE_ATRIBUICAO_DE_VENDA em lib/publicacao-contrato.ts.
+//
+// ── SEM BACKFILL ────────────────────────────────────────────────────────
+// Nenhuma Publicacao nasce retroativamente. O banco atual nao consegue
+// provar quantas vezes um conteudo foi publicado, em que canal de cada vez,
+// nem qual link pertenceu a qual publicacao. Inventar isso por slug seria
+// fabricar historico. Conteudo antigo fica sem Publicacao, e isso e o
+// registro honesto de que a informacao nao existe.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Vocabulario da maquina de estados, no BANCO.
+//
+// Vira um tipo nativo do Postgres, e o Prisma o gerencia — entao nao e a
+// constraint manual que desapareceria num `migrate reset`. Aqui vale porque
+// a tabela e NOVA: nenhuma linha precisa ser convertida.
+//
+// O que o enum garante e o VOCABULARIO, nao a maquina de estados. Gravar
+// 'PUBLICADA' passa a ser impossivel; gravar DISTRIBUIDA vindo de REMOVIDA
+// continua sendo trabalho de `validarTransicao()`, no contrato.
+//
+// O preco: o vocabulario passa a existir em dois lugares — aqui e em
+// ESTADOS_DA_PUBLICACAO, em lib/publicacao-contrato.ts. Ha teste que exige
+// que os dois sejam identicos, para que nao se afastem em silencio.
+//
+// `dataOrigin` deliberadamente NAO virou enum: ela compartilha vocabulario
+// com Sale.dataOrigin e Commission, que sao String. Converter uma so
+// fragmentaria o vocabulario da proveniencia em dois tipos.
+enum EstadoDaPublicacao {
+  PREPARADA
+  DISTRIBUINDO
+  DISTRIBUIDA
+  FALHOU
+  REMOVIDA
+}
+
+model Publicacao {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  // FK COMPOSTA: o conteudo tem de ser do MESMO workspace. Sem isto, uma
+  // Publicacao do workspace A poderia apontar para Conteudo do B, e o
+  // isolamento dependeria de todo caminho de escrita lembrar de conferir.
+  contentId String
+  content   Conteudo @relation(fields: [contentId, workspaceId], references: [id, workspaceId])
+
+  // O destino, achatado em duas colunas (contrato: `destino`).
+  // `provider` e a plataforma (TIKTOK_SHOP, META, ...); `canal` e onde o
+  // post saiu (instagram, tiktok, ...). Sao coisas diferentes: um provider
+  // pode servir varios canais.
+  provider String
+  canal    String
+
+  // Idempotencia da TENTATIVA. Gerada por quem inicia e reenviada em cada
+  // retry — por isso ela distingue retry de republicacao, e nao depende de
+  // um campo do provider que as vezes nao existe.
+  chaveDaTentativa String
+
+  // Maquina de estados do contrato (Etapa 1):
+  // PREPARADA -> DISTRIBUINDO -> DISTRIBUIDA, mais FALHOU e REMOVIDA.
+  // DISTRIBUIDA NAO significa rastreada: uma publicacao pode estar
+  // DISTRIBUIDA e mesmo assim ter saido com o link direto do produto.
+  estado EstadoDaPublicacao @default(PREPARADA)
+
+  // Id no provider. NULL e estado normal: publicacao manual, provider que
+  // nao devolve id, ou processamento ainda em curso.
+  publicacaoExternaId String?
+
+  // Instante REAL da distribuicao, nunca o de "marcamos como publicado".
+  // NULL enquanto nao houver evidencia. E o marco de toda janela do ML.
+  distribuidaEm DateTime?
+
+  // Como se sabe que a publicacao aconteceu. Estado interno e afirmacao
+  // nossa; evidencia e recibo de alguem de fora. Ver
+  // TIPOS_DE_EVIDENCIA_DE_PUBLICACAO no contrato.
+  evidencia Json?
+
+  // Proveniencia do REGISTRO, mesmo vocabulario do P0.2.
+  dataOrigin String @default("UNVERIFIED")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  link LinkDinamico?
+
+  // Alvo da FK composta de LinkDinamico — o link tem de ser do mesmo
+  // workspace da publicacao.
+  @@unique([id, workspaceId])
+
+  // IDEMPOTENCIA PRIMARIA. Sempre existe, porque a chave e gerada por quem
+  // publica. Retry reenvia a mesma linha; republicacao gera outra.
+  @@unique([workspaceId, chaveDaTentativa])
+
+  // IDEMPOTENCIA EXTERNA, so quando o id do provider existe. No Postgres,
+  // UNIQUE trata NULLs como distintos (NULLS DISTINCT, o padrao), entao
+  // esta constraint ja vale SOMENTE quando `publicacaoExternaId` nao e
+  // nulo — varias publicacoes sem id externo convivem sem conflito. E o
+  // efeito de um indice parcial, sem precisar de SQL fora do schema.
+  @@unique([workspaceId, provider, publicacaoExternaId])
+
+  @@index([workspaceId, estado])
+  @@index([workspaceId, contentId, createdAt])
 }

@@ -599,8 +599,14 @@ describe('Multi-provider — nenhum nome de plataforma em regra', () => {
     }
   })
 
-  test('o schema NÃO foi alterado nesta etapa', () => {
-    // Publicacao ainda não existe como model — é só contrato.
-    assert.ok(!/^model Publicacao/m.test(lerFonte('prisma/schema.prisma')))
+  test('o contrato continua PURO — nenhuma dependência de banco', () => {
+    // Esta asserção nasceu como "Publicacao nao existe no schema", o que
+    // valia enquanto a Etapa 1 era so contrato. A Etapa 2.b criou a tabela,
+    // entao a trava mudou de alvo: o que precisa continuar verdadeiro e que
+    // o CONTRATO nao dependa dela. Regra de dominio nao consulta banco.
+    const fonte = lerFonte('lib/publicacao-contrato.ts')
+    assert.ok(!/from '\.\/prisma'/.test(fonte), 'o contrato nao importa prisma')
+    assert.ok(!/prisma\./.test(fonte), 'o contrato nao consulta o banco')
+    assert.ok(!/@prisma\/client/.test(fonte), 'nem os tipos gerados')
   })
 })

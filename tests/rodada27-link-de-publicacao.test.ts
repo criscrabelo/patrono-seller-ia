@@ -199,10 +199,14 @@ describe('Publicação divulga o link RASTREADO, não o do produto', () => {
     }
   })
 
-  test('o schema NÃO foi alterado e Publicacao continua sem existir', () => {
-    const schema = lerFonte('prisma/schema.prisma')
-    assert.ok(!/^model Publicacao/m.test(schema))
-    assert.ok(!/publicacaoId/.test(schema))
+  test('a Etapa 2.a nao passou a depender da tabela Publicacao', () => {
+    // Nasceu como "Publicacao nao existe no schema". A Etapa 2.b criou a
+    // tabela, entao a trava mudou de alvo: o link por slug precisa continuar
+    // funcionando sozinho, senao publicacao antiga deixa de ter link no dia
+    // da migration.
+    const modulo = lerCodigo('lib/link-de-publicacao.ts')
+    assert.ok(!/prisma\.publicacao/.test(modulo), 'o link e criado sem depender da tabela')
+    assert.match(modulo, /sufixoDoSlugDaPublicacao/, 'a derivacao por slug continua de pe')
   })
 })
 

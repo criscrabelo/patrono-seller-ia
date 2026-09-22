@@ -178,13 +178,35 @@ export function chaveDeIdempotencia(p: { workspaceId: string; chaveDaTentativa: 
   return [p.workspaceId, p.chaveDaTentativa.trim()].join('|')
 }
 
+/**
+ * FUNÇÃO PURA. `''` e espaço em branco viram `null` ANTES de gravar.
+ *
+ * ── POR QUE ISTO NÃO É FRESCURA ─────────────────────────────────────────
+ * A constraint `(workspaceId, provider, publicacaoExternaId)` só vale
+ * "somente quando há id" porque o Postgres trata NULLs como distintos. Uma
+ * string vazia NÃO é NULL: ela é um valor comum, igual a si mesma.
+ *
+ * Gravar `''` faria a segunda publicação sem id do mesmo provider colidir
+ * com a primeira — duas publicações legítimas, ambas sem id externo, e a
+ * segunda recusada por engano. Pior: `chaveExternaDaPublicacao()` devolve
+ * `null` para `''`, então o código concordaria que "não há id" enquanto o
+ * banco trataria `''` como identidade. Duas leituras da mesma coluna.
+ *
+ * Toda escrita passa por aqui. Ausência de id é `null`, um valor só.
+ */
+export function normalizarPublicacaoExternaId(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const limpo = v.trim()
+  return limpo === '' ? null : limpo
+}
+
 /** `null` quando ainda não há id externo — e isso é estado normal. */
 export function chaveExternaDaPublicacao(p: {
   workspaceId: string
   provider: string
   publicacaoExternaId?: string | null
 }): string | null {
-  const id = typeof p?.publicacaoExternaId === 'string' ? p.publicacaoExternaId.trim() : ''
+  const id = normalizarPublicacaoExternaId(p?.publicacaoExternaId)
   if (!id || !p?.workspaceId?.trim() || !p?.provider?.trim()) return null
   return [p.workspaceId, p.provider.trim(), id].join('|')
 }
