@@ -7,6 +7,9 @@ import { toast } from '@/hooks/use-toast'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
 import { ComprovarOperacaoReal } from '@/components/comprovar-operacao-real'
+// Fonte ÚNICA de quais origens podem ser comprovadas. A tela não tem uma
+// cópia da lista — duas cópias da mesma regra divergem no dia seguinte.
+import { podeComprovarManualmente } from '@/lib/proveniencia'
 
 interface Produto { id: string; nome: string }
 interface Programa { id: string; platform: string }
@@ -16,6 +19,9 @@ interface Venda {
   amount: number | null
   date: string
   notes: string | null
+  // Já vem no payload de /api/vendas. É só o que a tela precisa para saber
+  // se faz sentido OFERECER a comprovação — quem autoriza é o servidor.
+  dataOrigin?: string | null
   product: { nome: string } | null
   affiliateProgram: { platform: string } | null
   commissions: Array<{ id: string; status: string; expectedAmount: number | null; confirmedAmount: number | null; receivedAmount: number | null }>
@@ -224,14 +230,27 @@ export default function VendasComissoesPage() {
                         <td className="px-4 py-3 text-right text-muted-foreground">{v.amount != null ? formatCurrency(v.amount) : '—'}</td>
                         <td className="px-4 py-3 text-right text-muted-foreground hidden sm:table-cell">{formatDateShort(v.date)}</td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => setComprovando(comprovando === v.id ? null : v.id)}
-                            className="inline-flex items-center gap-1.5 text-xs text-warning hover:underline"
-                            title="Ação excepcional e auditada"
-                          >
-                            <ShieldCheck className="w-3.5 h-3.5" />
-                            {comprovando === v.id ? 'Fechar' : 'Comprovar operação real'}
-                          </button>
+                          {v.dataOrigin === 'REAL_OPERATION' ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs text-accent" title="Operação real já comprovada">
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              Comprovada
+                            </span>
+                          ) : podeComprovarManualmente(v.dataOrigin) ? (
+                            <button
+                              onClick={() => setComprovando(comprovando === v.id ? null : v.id)}
+                              className="inline-flex items-center gap-1.5 text-xs text-warning hover:underline"
+                              title="Ação excepcional e auditada"
+                            >
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              {comprovando === v.id ? 'Fechar' : 'Comprovar operação real'}
+                            </button>
+                          ) : (
+                            // Origem sintética (SEED/TEST_FIXTURE/DEMO/
+                            // SYNTHETIC_TEST) ou desconhecida: nada é
+                            // oferecido. Mostrar o botão convidaria a uma
+                            // ação que o servidor recusaria de qualquer jeito.
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
                       </tr>
                       {comprovando === v.id && (

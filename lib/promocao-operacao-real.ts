@@ -46,7 +46,7 @@
  */
 
 import { prisma } from './prisma'
-import { normalizarOrigemDeRegistro, type OrigemDeRegistro } from './proveniencia'
+import { ORIGENS_PROMOVIVEIS, normalizarOrigemDeRegistro, type OrigemDeRegistro } from './proveniencia'
 import { ehFonteVerificada, type FonteVerificada } from './evidencia-verificada'
 import {
   ACAO_AUDIT_EVIDENCIA,
@@ -68,8 +68,12 @@ export const ACAO_AUDIT_PROMOCAO = 'venda.promovida_para_operacao_real'
  * fabricou. Nenhuma evidência externa pode tornar real o que nasceu
  * sintético — promover um deles seria falsificar a procedência, não
  * comprová-la.
+ *
+ * A constante foi movida para `lib/proveniencia.ts` — módulo puro, que a
+ * interface também consegue importar — e é reexportada aqui para manter
+ * esta API pública igual. A REGRA continua inteiramente neste arquivo.
  */
-export const ORIGENS_PROMOVIVEIS = ['USER_REPORTED', 'UNVERIFIED'] as const
+export { ORIGENS_PROMOVIVEIS }
 
 export const MOTIVOS_RECUSA_PROMOCAO = [
   'VENDA_NAO_ENCONTRADA',

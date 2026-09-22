@@ -16,6 +16,8 @@ import { registrarResultado } from '../lib/vendas-comissoes'
 import { promoverPorCorrecaoManual } from '../lib/promocao-operacao-real'
 import { respostaHttpDaComprovacao } from '../lib/comprovacao-manual-http'
 import { obterDossieDaOperacao } from '../lib/dossie-operacao'
+import { ORIGENS_PROMOVIVEIS, podeComprovarManualmente } from '../lib/proveniencia'
+import { ORIGENS_PROMOVIVEIS as REEXPORTADA } from '../lib/promocao-operacao-real'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
 const RAIZ = join(__dirname, '..')
@@ -210,6 +212,50 @@ describe('Tela — ação excepcional, não fluxo normal', () => {
     for (const proibido of ['TAMANHO_MINIMO', 'REAL_OPERATION =', 'USER_REPORTED =', 'motivo.length <']) {
       assert.ok(!tela.includes(proibido), `${proibido} não pode estar na tela`)
     }
+  })
+
+  test('a ação NÃO aparece quando a venda já é REAL_OPERATION', () => {
+    assert.match(pagina, /v\.dataOrigin === 'REAL_OPERATION' \? \(/)
+    assert.match(pagina, /Comprovada/)
+  })
+
+  test('a ação só aparece para origem promovível — sem lista copiada na tela', () => {
+    assert.match(pagina, /podeComprovarManualmente\(v\.dataOrigin\)/)
+    // A tela NÃO pode ter a própria cópia das origens.
+    assert.ok(!/'USER_REPORTED'|'UNVERIFIED'/.test(lerCodigo('app/(dashboard)/vendas-comissoes/page.tsx')))
+  })
+
+  test('origem sintética ou desconhecida não oferece nada', () => {
+    for (const origem of ['SEED', 'TEST_FIXTURE', 'DEMO', 'SYNTHETIC_TEST', 'REAL_OPERATION']) {
+      assert.equal(podeComprovarManualmente(origem), false, `${origem} não pode oferecer a ação`)
+    }
+  })
+
+  test('na dúvida, esconde', () => {
+    // Valor ausente, nulo ou ilegível NÃO oferece a ação. É o oposto de
+    // `normalizarOrigemDeRegistro`, de propósito: o pior caso é esconder uma
+    // ação possível, nunca oferecer uma impossível.
+    for (const v of [undefined, null, '', '  ', 42, {}, 'user_reported', 'PRODUCAO']) {
+      assert.equal(podeComprovarManualmente(v), false, `${JSON.stringify(v)} não podia oferecer a ação`)
+    }
+  })
+
+  test('as duas origens promovíveis oferecem a ação', () => {
+    assert.equal(podeComprovarManualmente('USER_REPORTED'), true)
+    assert.equal(podeComprovarManualmente('UNVERIFIED'), true)
+    assert.deepEqual([...ORIGENS_PROMOVIVEIS], ['USER_REPORTED', 'UNVERIFIED'])
+  })
+
+  test('a lista é a MESMA que o core usa — uma fonte só', () => {
+    // O módulo de promoção reexporta a constante; se alguém criar uma
+    // segunda lista, este teste falha.
+    assert.deepEqual([...REEXPORTADA], [...ORIGENS_PROMOVIVEIS])
+  })
+
+  test('esconder é UX, não segurança: o servidor continua decidindo', () => {
+    // A rota não consulta nada da tela e recusa do mesmo jeito.
+    assert.match(lerCodigo(ROTA_COMPROVAR), /promoverPorCorrecaoManual\(\{/)
+    assert.ok(!/podeComprovarManualmente/.test(lerCodigo(ROTA_COMPROVAR)))
   })
 
   test('a ação aparece na listagem de vendas, fechada por padrão', () => {

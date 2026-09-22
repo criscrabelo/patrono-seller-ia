@@ -126,6 +126,37 @@ export function podeSerDeclaradaPorRota(valor: unknown): boolean {
   return (ORIGENS_DECLARAVEIS_POR_ROTA as readonly string[]).includes(String(valor))
 }
 
+/**
+ * Origens que PODEM ser promovidas a `REAL_OPERATION` mediante evidência.
+ *
+ * Mora aqui, no vocabulário, e não no módulo de promoção, por um motivo
+ * prático: este arquivo é puro (só importa tipos) e pode ser usado também
+ * na interface. Sem isso, a tela precisaria de uma cópia da lista — e duas
+ * cópias da mesma regra divergem no dia seguinte.
+ *
+ * `lib/promocao-operacao-real.ts` reexporta esta constante; a regra em si
+ * continua inteiramente lá.
+ */
+export const ORIGENS_PROMOVIVEIS = [ORIGEM_RELATADA_PELA_USUARIA, ORIGEM_NAO_VERIFICADA] as const
+
+/**
+ * A interface deve oferecer a comprovação manual para esta venda?
+ *
+ * ── SÓ UX, NUNCA SEGURANÇA ──────────────────────────────────────────────
+ * Esconder o botão não autoriza nada: quem decide é o servidor, e a rota
+ * recusa do mesmo jeito se alguém chamar direto. Isto existe para não
+ * oferecer uma ação que não pode dar certo.
+ *
+ * ── NA DÚVIDA, ESCONDE ──────────────────────────────────────────────────
+ * Diferente de `normalizarOrigemDeRegistro()`, que trata valor ilegível
+ * como `UNVERIFIED`, aqui valor ausente ou desconhecido devolve `false`.
+ * A assimetria é deliberada e conservadora: o pior caso é esconder uma
+ * ação possível num registro corrompido, nunca oferecer uma impossível.
+ */
+export function podeComprovarManualmente(dataOrigin: unknown): boolean {
+  return typeof dataOrigin === 'string' && (ORIGENS_PROMOVIVEIS as readonly string[]).includes(dataOrigin)
+}
+
 /** Só para relatório/UI — nunca para decisão. */
 export const DESCRICAO_DA_ORIGEM: Record<OrigemDeRegistro, string> = {
   REAL_OPERATION: 'Operação comercial real COMPROVADA por evidência externa (provider, conciliação ou correção auditada). Nenhuma rota pode declarar esta origem — ela só é atingida por promoção com evidência.',
