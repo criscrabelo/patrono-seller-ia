@@ -49,6 +49,28 @@ export function publicacaoRealHabilitada(
   return (env?.[nome] ?? '').trim().toLowerCase() === 'true'
 }
 
+/**
+ * A rede caiu, ou a Meta respondeu?
+ *
+ * A distinção decide se o retry é seguro. Uma resposta da Graph API — 400,
+ * mídia rejeitada, token inválido — significa que o post NÃO foi criado:
+ * repetir é seguro. Uma falha de transporte não significa nada: o container
+ * pode ter sido publicado e a resposta ter se perdido no caminho.
+ *
+ * Fail-closed no que não dá para classificar: erro sem mensagem legível é
+ * tratado como incerto, porque supor "não saiu" é a suposição que duplica.
+ */
+export function falhaDeRede(e: unknown): boolean {
+  if (e instanceof TypeError) return true
+  // `fbFetch` sempre lança `Error`. O que chega aqui sem ser `Error` não
+  // veio da API: é inclassificável, e inclassificável é incerto.
+  if (!(e instanceof Error)) return true
+  const msg = e.message
+  if (!msg.trim()) return true
+  // `fbFetch` só lança com mensagem da própria API quando houve resposta.
+  return /fetch failed|network|socket|ECONN|ETIMEDOUT|EAI_AGAIN|aborted|timeout/i.test(msg)
+}
+
 // ── O adapter real do Instagram ─────────────────────────────────────────
 
 /**
@@ -100,6 +122,7 @@ export const adaptadorInstagram: AdaptadorDeCanal = {
         ok: false,
         publicacaoExternaId: null,
         erro: higienizar(e instanceof Error ? e.message : String(e)),
+        envioIncerto: falhaDeRede(e),
       }
     }
   },

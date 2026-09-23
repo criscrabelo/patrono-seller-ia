@@ -73,6 +73,16 @@ export interface RespostaDoAdaptador {
   erro: string | null
   /** `true` quando repetir não adianta (peça recusada, por exemplo). */
   fatal?: boolean
+  /**
+   * `true` quando a requisição PODE ter chegado ao canal e não sabemos o
+   * que aconteceu depois — timeout, conexão cortada, resposta ilegível.
+   *
+   * Isto NÃO é o mesmo que falha. Uma recusa do canal (400, mídia
+   * rejeitada) é resposta: o post não existe, e repetir é seguro. Um
+   * timeout não é resposta: o post pode estar no ar. Repetir aí publicaria
+   * duas vezes — e um post duplicado não se desfaz sozinho.
+   */
+  envioIncerto?: boolean
 }
 
 /**
@@ -295,6 +305,13 @@ export interface ResultadoDaDistribuicao {
   ok: boolean
   /** `true` quando não é falha: falta condição, e ela pode chegar. */
   aguardar: boolean
+  /**
+   * `true` quando o envio pode ter acontecido sem confirmação.
+   *
+   * Bloqueia o retry automático de propósito: é melhor uma publicação
+   * pendente de conferência do que duas publicações no perfil da dona.
+   */
+  envioIncerto: boolean
   estado: EstadoDeDistribuicao | null
   acao: 'PUBLICAR' | 'DRAFT' | null
   publicacaoId: string | null
@@ -322,6 +339,7 @@ const espera = (
 ): ResultadoDaDistribuicao => ({
   ok: false,
   aguardar: true,
+  envioIncerto: false,
   estado: estado ?? veredito?.estado ?? null,
   acao: null,
   publicacaoId: null,
@@ -435,10 +453,14 @@ export async function distribuirConteudo(params: {
       assetUrl: conteudo.assetUrl,
     })
   } catch (e) {
+    // A exceção escapou do adapter: ele não nos disse se a requisição
+    // chegou a sair. Fail-closed — assumir "não saiu" é a suposição que
+    // duplica post, e duplicar é o único erro aqui que não se desfaz.
     await registrarFalhaDaTentativa({ workspaceId: params.workspaceId, publicacaoId })
     return {
       ok: false,
       aguardar: false,
+      envioIncerto: true,
       estado: veredito.estado,
       acao,
       publicacaoId,
@@ -446,17 +468,23 @@ export async function distribuirConteudo(params: {
       rastreada: tentativa.rastreada,
       registroConfirmado: false,
       motivoDaEspera: null,
-      erroFatal: false,
-      explicacao: higienizar(e instanceof Error ? e.message : String(e)),
+      // Fatal NÃO significa "deu erro grave": significa "não repita
+      // sozinho". Uma pessoa confere o perfil e decide.
+      erroFatal: true,
+      explicacao:
+        `ENVIO INCERTO — o adapter falhou sem dizer se a requisição saiu. Confira o perfil antes de tentar de novo. ` +
+        higienizar(e instanceof Error ? e.message : String(e)),
       veredito,
     }
   }
 
   if (!resposta.ok) {
     await registrarFalhaDaTentativa({ workspaceId: params.workspaceId, publicacaoId })
+    const incerto = resposta.envioIncerto === true
     return {
       ok: false,
       aguardar: false,
+      envioIncerto: incerto,
       estado: veredito.estado,
       acao,
       publicacaoId,
@@ -464,8 +492,12 @@ export async function distribuirConteudo(params: {
       rastreada: tentativa.rastreada,
       registroConfirmado: false,
       motivoDaEspera: null,
-      erroFatal: resposta.fatal === true,
-      explicacao: higienizar(resposta.erro) || 'O canal recusou a distribuição.',
+      // Recusa do canal é resposta, e repetir é seguro. Envio incerto não
+      // é resposta: repetir pode publicar duas vezes.
+      erroFatal: incerto || resposta.fatal === true,
+      explicacao: incerto
+        ? `ENVIO INCERTO — confira o perfil antes de tentar de novo. ${higienizar(resposta.erro)}`.trim()
+        : higienizar(resposta.erro) || 'O canal recusou a distribuição.',
       veredito,
     }
   }
@@ -493,6 +525,7 @@ export async function distribuirConteudo(params: {
     publicacaoId,
     publicacaoExternaId: resposta.publicacaoExternaId,
     rastreada: tentativa.rastreada,
+    envioIncerto: false,
     registroConfirmado: confirmacao.ok,
     motivoDaEspera: null,
     erroFatal: false,
@@ -585,6 +618,7 @@ export function acaoDeDistribuir(ctx: {
       publicacaoExternaId: r.publicacaoExternaId,
       rastreada: r.rastreada,
       registroConfirmado: r.registroConfirmado,
+      envioIncerto: r.envioIncerto,
       bloqueadoPor: r.veredito?.bloqueios ?? [],
       custo: 0,
       // O executor do P1.4.1 já sabe reavaliar quem marcou isto.
