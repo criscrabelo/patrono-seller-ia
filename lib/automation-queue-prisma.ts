@@ -106,6 +106,7 @@ export function portaPrisma(staleMs: number = TIMEOUT_DE_HEARTBEAT_MS): PortaDaF
           where: { id },
           data: {
             ...(dados.estado !== undefined ? { estado: dados.estado as never } : {}),
+            ...(dados.contexto !== undefined ? { contexto: (dados.contexto ?? undefined) as never } : {}),
             ...(dados.classe !== undefined ? { classe: dados.classe } : {}),
             ...(dados.tentativas !== undefined ? { tentativas: dados.tentativas } : {}),
             ...(dados.proximaTentativaEm !== undefined ? { proximaTentativaEm: dados.proximaTentativaEm } : {}),

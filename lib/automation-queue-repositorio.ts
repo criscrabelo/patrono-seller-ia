@@ -290,8 +290,28 @@ export async function executarProximoJob(params: {
   workspaceId: string
   workerId: string
   agora: Date
-  /** A ação de verdade. Ausente = nada a fazer, o job volta para PENDING. */
-  acoes?: Record<string, () => Promise<{ ok: boolean; erroFatal?: boolean; erro?: string }>>
+  /**
+   * A ação de verdade, por tipo de job.
+   *
+   * `aguardar: true` é diferente de `ok: false`: significa "não deu para
+   * fazer agora, e isso não é falha" — falta de memória, de FFmpeg, de
+   * capacidade. O job volta para WAITING SEM consumir tentativa, porque
+   * gastar tentativa por falta de máquina esgotaria o retry de um trabalho
+   * que nunca chegou a ser tentado.
+   *
+   * `resultado` é gravado no contexto do job: é ali que o `contentId` da
+   * peça gerada fica, e é o que torna o retry idempotente.
+   */
+  acoes?: Record<
+    string,
+    (job: LinhaDaFila) => Promise<{
+      ok: boolean
+      aguardar?: boolean
+      erroFatal?: boolean
+      erro?: string
+      resultado?: Record<string, unknown>
+    }>
+  >
 }): Promise<ResultadoDaExecucao> {
   const { porta, workspaceId, workerId, agora } = params
   const job = await porta.reivindicar(workspaceId, workerId, agora)
@@ -332,11 +352,36 @@ export async function executarProximoJob(params: {
     }
   }
 
-  const r = await acao().catch((e) => ({
+  const r = await acao(job).catch((e) => ({
     ok: false,
+    aguardar: false,
     erroFatal: false,
     erro: e instanceof Error ? e.message : 'falha desconhecida',
+    resultado: undefined as Record<string, unknown> | undefined,
   }))
+
+  // O resultado entra no contexto SEMPRE que existir — inclusive quando a
+  // ação falhou depois de já ter criado a peça. É isso que faz o retry
+  // reencontrar o que ficou pela metade em vez de gerar outra.
+  const contextoAtualizado = r.resultado
+    ? { ...(job.contexto ?? {}), ...r.resultado }
+    : job.contexto
+
+  if (r.aguardar) {
+    const atualizado = await porta.atualizar(job.id, {
+      estado: 'WAITING',
+      workerId: null,
+      claimedAt: null,
+      contexto: contextoAtualizado,
+      ultimoErro: r.erro ?? 'Capacidade indisponível — aguardando.',
+    })
+    return {
+      executado: false,
+      job: atualizado,
+      estadoFinal: 'WAITING',
+      explicacao: r.erro ?? 'Capacidade indisponível; o job espera sem gastar tentativa.',
+    }
+  }
 
   if (r.ok) {
     const atualizado = await porta.atualizar(job.id, {
@@ -344,6 +389,7 @@ export async function executarProximoJob(params: {
       resolvidoEm: agora,
       workerId: null,
       ultimoErro: null,
+      contexto: contextoAtualizado,
     })
     return { executado: true, job: atualizado, estadoFinal: 'SUCCEEDED', explicacao: 'Resolvido pelo sistema.' }
   }
@@ -361,6 +407,7 @@ export async function executarProximoJob(params: {
     ultimoErro: r.erro ?? decisao.explicacao,
     workerId: null,
     claimedAt: null,
+    contexto: contextoAtualizado,
   })
   return { executado: false, job: atualizado, estadoFinal: decisao.estado, explicacao: decisao.explicacao }
 }

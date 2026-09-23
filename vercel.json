@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/oportunidades",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/executar-fila",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
