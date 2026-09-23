@@ -31,6 +31,7 @@ import { sincronizarFilaComPlano } from '../lib/automation-queue-repositorio'
 import { sincronizar, perfilDaDependencia } from '../lib/automation-queue-contrato'
 import { portaPrisma } from '../lib/automation-queue-prisma'
 import { rodarFilaDoWorkspace } from '../lib/executor-da-fila'
+import { renovarAcessoDaConta, type RenovadorDeAcesso } from '../lib/renovacao-de-acesso'
 import { textoDisclosure } from '../lib/creative-factory'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
@@ -641,6 +642,65 @@ describe(
       assert.equal(pf.disclosurePresente, true)
       assert.equal(pf.midiaAutorizada, true, 'TEXTO_COM_LINK não usa a mídia bloqueada')
       assert.equal(pf.custoZero, true)
+    })
+  }
+)
+
+describe(
+  'O update da renovação é protegido por workspace, não só por id',
+  { skip: !TEM_BANCO ? 'exige Postgres' : false },
+  () => {
+    test('integração de OUTRO workspace não é escrita, mesmo com o canal conectado aqui', async () => {
+      // O caminho perigoso: `prisma.integracao.update` recebe só o `id`,
+      // porque `id` é a chave única. Quem protege é a leitura anterior,
+      // escopada por workspace. Este teste existe para que ninguém reordene
+      // as duas linhas sem quebrar algo.
+      const outro = await prisma.workspace.create({
+        data: { name: 'R44-OUTRO', ownerId: `${marca}-outro` },
+        select: { id: true },
+      })
+      criados.push(outro.id)
+      const userOutro = await prisma.user.create({
+        data: { email: `${marca}-o@teste.local`, name: 'U', password: 'x', workspaceId: outro.id },
+        select: { id: true },
+      })
+      const alheia = await prisma.integracao.create({
+        data: {
+          workspaceId: outro.id, userId: userOutro.id, plataforma: 'instagram', status: 'conectado',
+          accessToken: 'TOKEN-DO-OUTRO', refreshToken: 'REFRESH-DO-OUTRO',
+          tokenExpiry: new Date(Date.now() - 1000), accountId: 'outro',
+          extraData: { scope: 'instagram_content_publish' } as never,
+        },
+        select: { id: true, tokenExpiry: true },
+      })
+
+      // wsA TEM instagram conectado, mas o id pertence ao outro workspace.
+      const chamadas: string[] = []
+      const renovador: RenovadorDeAcesso = {
+        canal: 'instagram',
+        renovar: async () => {
+          chamadas.push('renovou')
+          return { ok: true, expiraEm: AMANHA, scopes: ['instagram_content_publish'], erro: null }
+        },
+      }
+      // O acesso de wsA está válido, então nem chega ao renovador.
+      const r = await renovarAcessoDaConta({
+        workspaceId: wsA, integracaoId: alheia.id, canal: 'instagram',
+        renovadores: { instagram: renovador }, env: ENV,
+      })
+      assert.equal(r.ok, false)
+      assert.equal(chamadas.length, 0, 'nem chega ao renovador')
+
+      const depois = await prisma.integracao.findUniqueOrThrow({
+        where: { id: alheia.id },
+        select: { tokenExpiry: true, extraData: true },
+      })
+      assert.equal(
+        depois.tokenExpiry!.getTime(),
+        alheia.tokenExpiry!.getTime(),
+        'a validade da linha alheia não mudou'
+      )
+      assert.deepEqual(depois.extraData, { scope: 'instagram_content_publish' }, 'nem o extraData')
     })
   }
 )
