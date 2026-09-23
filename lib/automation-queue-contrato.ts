@@ -88,6 +88,22 @@ export const PERFIS_DE_DEPENDENCIA: Record<string, PerfilDaDependencia> = {
     explicacao:
       'O dado pode chegar do provider numa sincronização futura. Se não chegar, vira pedido à proprietária — não fica tentando para sempre.',
   },
+  /**
+   * P1.4: a geracao vira job operacional proprio.
+   *
+   * No P1.2 `GERAR_CONTEUDO` era EXECUCAO, e por isso `jobsDesejadosDoPlano`
+   * o filtra — ele nao e uma dependencia que falta. O que mudou e que agora
+   * ele tem caminho proprio: `jobsDeGeracaoDoPlano`, em
+   * lib/fabrica-de-conteudo.ts. As duas rotas usam a MESMA tabela e a mesma
+   * porta de escrita; nao ha fila concorrente.
+   */
+  GERAR_CONTEUDO: {
+    tipo: 'GERAR_CONTEUDO',
+    classe: 'AUTOMATIZAVEL',
+    motivoHumano: null,
+    maxTentativas: 3,
+    explicacao: 'Geracao local e gratuita: copy deterministica, voz Chatterbox e render FFmpeg.',
+  },
   HABILITAR_CAPACIDADE: {
     tipo: 'HABILITAR_CAPACIDADE',
     classe: 'AGUARDA_CONDICAO',
