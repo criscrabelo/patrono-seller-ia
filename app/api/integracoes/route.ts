@@ -11,6 +11,7 @@ import {
   CAMPO_DOS_SCOPES,
   CAMPO_DA_COMPROVACAO,
 } from '@/lib/autorizacao-da-conta'
+import { preflightDePublicacao } from '@/lib/preflight-de-publicacao'
 
 /**
  * P1.5.1 — nenhuma destas respostas carrega segredo.
@@ -39,6 +40,8 @@ async function resumoDoWorkspace(workspaceId: string) {
         tokenExpiry: i.tokenExpiry,
         // O que a P1.5.1 acrescenta: o que esta conta REALMENTE autorizou.
         autorizacao: resumoPublicoDaIntegracao(autorizacao),
+        // O que a P1.5.2 acrescenta: por que ainda não publica, em uma frase.
+        preflight: await preflightDePublicacao({ workspaceId, canal: i.plataforma }),
       }
     })
   )

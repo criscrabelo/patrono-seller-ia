@@ -52,6 +52,11 @@ export const TIPO_JOB_DISTRIBUICAO = 'DISTRIBUIR_CONTEUDO'
 
 export interface PedidoDeDistribuicao {
   canal: string
+  /**
+   * De quem é a conta. O adapter busca a credencial por aqui, em vez de
+   * recebê-la pronta — é o que mantém o token fora da orquestração.
+   */
+  workspaceId: string
   /** Identidade da tentativa. O adapter NÃO cria publicação. */
   publicacaoId: string
   legenda: string
@@ -423,6 +428,7 @@ export async function distribuirConteudo(params: {
   try {
     resposta = await executar({
       canal,
+      workspaceId: params.workspaceId,
       publicacaoId,
       legenda,
       urlParaDivulgar: tentativa.urlParaDivulgar ?? '',

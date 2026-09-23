@@ -14,6 +14,21 @@ interface Integracao {
   accountName?: string
   accountId?: string
   tokenExpiry?: string
+  /** P1.5.1 — o que a conta comprovadamente autorizou. Nunca traz token. */
+  autorizacao?: {
+    estado: string
+    scopes: string[] | null
+    scopesFaltando: string[]
+    scopesComprovadosEm: string | null
+  }
+  /** P1.5.2 — por que este canal ainda nao publica. */
+  preflight?: {
+    pronto: boolean
+    executavelAgora: boolean
+    bloqueio: string | null
+    oQueFalta: string | null
+    adapterLigado: boolean
+  }
 }
 
 interface Plataforma {
@@ -141,6 +156,7 @@ export default function IntegracoesPage() {
   const [saving, setSaving] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [renovando, setRenovando] = useState(false)
+  const [revalidando, setRevalidando] = useState(false)
   const [campos, setCampos] = useState<Record<string, Record<string, string>>>({})
 
   async function fetchIntegracoes() {
@@ -218,6 +234,24 @@ export default function IntegracoesPage() {
       toast({ title: 'Erro ao renovar token', description: data.error, variant: 'destructive' })
     }
     setRenovando(false)
+  }
+
+  async function revalidarInstagram() {
+    setRevalidando(true)
+    const res = await fetch('/api/integracoes/instagram/revalidar', { method: 'POST' })
+    const data = await res.json()
+    if (res.ok) {
+      const quantos = data.autorizacao?.scopes?.length ?? 0
+      toast({
+        title: quantos > 0 ? 'Permissoes comprovadas' : 'Nao foi possivel comprovar as permissoes',
+        description: quantos > 0 ? `${quantos} permissao(oes) confirmada(s) pela Meta.` : data.motivo,
+        variant: quantos > 0 ? 'success' : 'destructive',
+      })
+      fetchIntegracoes()
+    } else {
+      toast({ title: 'Erro ao revalidar', description: data.error, variant: 'destructive' })
+    }
+    setRevalidando(false)
   }
 
   function tokenExpiryBadge(tokenExpiry?: string) {
@@ -312,6 +346,79 @@ export default function IntegracoesPage() {
                 <div className="rounded-lg bg-accent/10 border border-accent/20 px-3 py-2">
                   <p className="text-xs text-accent font-medium">{status.accountName}</p>
                   {status.accountId && <p className="text-[10px] text-muted-foreground">ID: {status.accountId}</p>}
+                </div>
+              )}
+
+              {/* P1.5.2 — a pergunta que a tela precisa responder sozinha:
+                  "por que este canal ainda nao esta publicando?" */}
+              {conectado && status?.preflight && (
+                <div
+                  className={cn(
+                    'rounded-lg border px-3 py-2 space-y-1',
+                    status.preflight.executavelAgora
+                      ? 'border-accent/30 bg-accent/10'
+                      : 'border-warning/40 bg-warning/10'
+                  )}
+                >
+                  <div className="flex items-center gap-1.5">
+                    {status.preflight.executavelAgora ? (
+                      <CheckCircle className="w-3.5 h-3.5 text-accent shrink-0" />
+                    ) : (
+                      <XCircle className="w-3.5 h-3.5 text-warning shrink-0" />
+                    )}
+                    <span
+                      className={cn(
+                        'text-xs font-medium',
+                        status.preflight.executavelAgora ? 'text-accent' : 'text-warning'
+                      )}
+                    >
+                      {status.preflight.executavelAgora
+                        ? 'Publicacao liberada'
+                        : status.preflight.pronto
+                          ? 'Conta pronta, canal desligado'
+                          : 'Publicacao bloqueada'}
+                    </span>
+                  </div>
+
+                  <p className="text-[10px] text-muted-foreground">
+                    Autorizacao: {status.autorizacao?.estado ?? 'desconhecida'}
+                  </p>
+
+                  {status.autorizacao?.scopes && status.autorizacao.scopes.length > 0 && (
+                    <p className="text-[10px] text-muted-foreground break-words">
+                      Permissoes: {status.autorizacao.scopes.join(', ')}
+                    </p>
+                  )}
+                  {status.autorizacao?.scopesFaltando?.length ? (
+                    <p className="text-[10px] text-warning break-words">
+                      Falta conceder: {status.autorizacao.scopesFaltando.join(', ')}
+                    </p>
+                  ) : null}
+                  {status.autorizacao?.scopesComprovadosEm && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Comprovado em{' '}
+                      {new Date(status.autorizacao.scopesComprovadosEm).toLocaleDateString('pt-BR')}
+                    </p>
+                  )}
+
+                  {!status.preflight.executavelAgora && status.preflight.oQueFalta && (
+                    <p className="text-[10px] text-warning break-words">{status.preflight.oQueFalta}</p>
+                  )}
+
+                  {plat.id === 'instagram' && (
+                    <button
+                      onClick={revalidarInstagram}
+                      disabled={revalidando}
+                      className="flex items-center gap-1 text-[10px] font-semibold text-accent opacity-80 hover:opacity-100 transition-opacity disabled:opacity-40"
+                    >
+                      {revalidando ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3 h-3" />
+                      )}
+                      Recomprovar permissoes
+                    </button>
+                  )}
                 </div>
               )}
 

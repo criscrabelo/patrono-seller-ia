@@ -6,6 +6,8 @@ import {
   detectarCapacidades,
   PUBLICACAO_DO_EXECUTOR,
 } from '@/lib/executor-da-fila'
+import { adaptadoresHabilitados } from '@/lib/adaptadores-reais'
+import { RENOVADORES_LIGADOS } from '@/lib/renovacao-de-acesso'
 
 /**
  * Executor da Automation Queue (P1.4.1).
@@ -50,6 +52,11 @@ export async function GET(req: NextRequest) {
     chatterbox: process.env.CHATTERBOX_DISPONIVEL === 'true',
   })
 
+  // P1.5.2: o ÚNICO caminho por onde um canal real entra no executor.
+  // Fail-closed: sem `PUBLICACAO_REAL_<CANAL>=true` e sem adapter escrito,
+  // isto vem vazio — a fila decide, registra o motivo e espera.
+  const adaptadores = adaptadoresHabilitados(process.env)
+
   const workspaces = await prisma.workspace.findMany({ select: { id: true } })
   const porWorkspace: Record<string, unknown> = {}
   let totalExecutados = 0
@@ -63,6 +70,8 @@ export async function GET(req: NextRequest) {
       workspaceId: ws.id,
       workerId,
       capacidades,
+      adaptadores,
+      renovadores: RENOVADORES_LIGADOS,
       agora,
       limite: JOBS_POR_WORKSPACE,
     })
@@ -90,7 +99,7 @@ export async function GET(req: NextRequest) {
     porWorkspace,
     custoTotal: 0,
     publicacaoAutomatica: PUBLICACAO_DO_EXECUTOR.estado,
-    canaisLigados: PUBLICACAO_DO_EXECUTOR.adaptadoresLigados(),
+    canaisLigados: Object.keys(adaptadores),
     executadoEm: agora.toISOString(),
   })
 }

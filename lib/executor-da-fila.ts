@@ -296,6 +296,10 @@ export async function rodarFilaDoWorkspace(params: {
   capacidades: CapacidadesDeGeracao
   agora: Date
   env?: FonteDeEnv
+  /** P1.5: canais ligados. Ausente = nenhum, e nada é publicado. */
+  adaptadores?: Record<string, AdaptadorDeCanal>
+  /** P1.5.1: renovadores ligados. Ausente = nenhum. */
+  renovadores?: Record<string, RenovadorDeAcesso>
   limite?: number
   intervaloDeHeartbeatMs?: number
   renovarHeartbeat?: (id: string, worker: string, agora: Date) => Promise<boolean>
@@ -321,6 +325,8 @@ export async function rodarFilaDoWorkspace(params: {
     capacidades: params.capacidades,
     agora: params.agora,
     env: params.env,
+    adaptadores: params.adaptadores,
+    renovadores: params.renovadores,
     intervaloDeHeartbeatMs: params.intervaloDeHeartbeatMs,
     renovarHeartbeat: params.renovarHeartbeat,
   }

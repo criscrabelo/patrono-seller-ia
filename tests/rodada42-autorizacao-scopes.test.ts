@@ -315,6 +315,9 @@ describe('Nenhum segredo sai', () => {
       'motivo',
       'provider',
       'scopes',
+      // P1.5.2: o instante da comprovacao passou a aparecer — e continua
+      // sendo um fato publico, nao um segredo.
+      'scopesComprovadosEm',
       'scopesFaltando',
       'validade',
     ])

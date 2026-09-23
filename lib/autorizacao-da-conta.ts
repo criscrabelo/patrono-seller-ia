@@ -130,6 +130,8 @@ export interface AutorizacaoDaConta {
   contaId: string | null
   contaNome: string | null
   scopesComprovados: string[] | null
+  /** Quando a plataforma confirmou esses escopos. `null` = nunca confirmou. */
+  scopesComprovadosEm: Date | null
   scopesExigidosPelaImplementacao: string[]
   /** Exigidos que não foram comprovados. Vazio quando nada falta. */
   scopesFaltando: string[]
@@ -176,6 +178,7 @@ export function derivarAutorizacao(
     contaId: registro?.contaId ?? null,
     contaNome: registro?.contaNome ?? null,
     scopesComprovados: registro?.scopesComprovados ?? null,
+    scopesComprovadosEm: registro?.scopesComprovadosEm ?? null,
     scopesExigidosPelaImplementacao: exigidos,
     expiraEm: registro?.expiraEm ?? null,
     aprovacaoDoApp: aprovacao,
@@ -484,6 +487,7 @@ export interface ResumoPublicoDaIntegracao {
   conta: { id: string | null; nome: string | null }
   estado: EstadoDaAutorizacao
   scopes: string[] | null
+  scopesComprovadosEm: string | null
   scopesFaltando: string[]
   validade: { expiraEm: string | null; expirado: boolean; podeRenovarSozinho: boolean }
   capabilities: { publicar: boolean; draft: boolean }
@@ -508,6 +512,9 @@ export function resumoPublicoDaIntegracao(
     conta: { id: autorizacao.contaId, nome: autorizacao.contaNome },
     estado: autorizacao.estado,
     scopes: autorizacao.scopesComprovados,
+    scopesComprovadosEm: autorizacao.scopesComprovadosEm
+      ? autorizacao.scopesComprovadosEm.toISOString()
+      : null,
     scopesFaltando: autorizacao.scopesFaltando,
     validade: {
       expiraEm: autorizacao.expiraEm ? autorizacao.expiraEm.toISOString() : null,
