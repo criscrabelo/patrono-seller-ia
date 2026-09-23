@@ -430,7 +430,17 @@ describe(
 
     test('nenhuma Publicacao existe fora desta fixture', async () => {
       // Sem backfill: a migration não criou nada, e nenhum fluxo cria.
-      const fora = await prisma.publicacao.count({ where: { workspaceId: { notIn: criados } } })
+      // A pergunta e de ISOLAMENTO, nao de banco vazio: as suites rodam em
+      // paralelo no mesmo Postgres e outras criam Publicacao legitimamente.
+      // O que nao pode acontecer e uma Publicacao de FORA apontar para um
+      // Conteudo DESTA fixture.
+      const meus = await prisma.conteudo.findMany({
+        where: { workspaceId: { in: criados } },
+        select: { id: true },
+      })
+      const fora = await prisma.publicacao.count({
+        where: { workspaceId: { notIn: criados }, contentId: { in: meus.map((c) => c.id) } },
+      })
       assert.equal(fora, 0)
     })
   }

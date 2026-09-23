@@ -154,6 +154,8 @@ export interface CapacidadesTecnicas {
 
 export const PROXIMAS_ACOES = [
   'GERAR_CONTEUDO',
+  /** P1.5. Como GERAR_CONTEUDO, é execução — não dependência que falta. */
+  'DISTRIBUIR_CONTEUDO',
   'SINCRONIZAR_MIDIA_AUTORIZADA',
   'CONECTAR_CANAL',
   'COMPLETAR_DADO_DO_PRODUTO',

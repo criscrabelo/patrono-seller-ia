@@ -4,7 +4,7 @@ import { portaPrisma } from '@/lib/automation-queue-prisma'
 import {
   rodarFilaDoWorkspace,
   detectarCapacidades,
-  EXECUTOR_NAO_PUBLICA,
+  PUBLICACAO_DO_EXECUTOR,
 } from '@/lib/executor-da-fila'
 
 /**
@@ -89,7 +89,8 @@ export async function GET(req: NextRequest) {
     totalDestravados,
     porWorkspace,
     custoTotal: 0,
-    publicacaoAutomatica: EXECUTOR_NAO_PUBLICA.estado,
+    publicacaoAutomatica: PUBLICACAO_DO_EXECUTOR.estado,
+    canaisLigados: PUBLICACAO_DO_EXECUTOR.adaptadoresLigados(),
     executadoEm: agora.toISOString(),
   })
 }

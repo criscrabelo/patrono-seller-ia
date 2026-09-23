@@ -22,7 +22,7 @@ import {
   reavaliarAguardando,
   comHeartbeat,
   acoesDoExecutor,
-  EXECUTOR_NAO_PUBLICA,
+  PUBLICACAO_DO_EXECUTOR,
 } from '../lib/executor-da-fila'
 import type { ItemDoPlano } from '../lib/plano-de-acao'
 
@@ -106,8 +106,11 @@ describe('O executor liga a fila à fábrica', () => {
   })
 
   test('o executor NÃO publica', () => {
-    assert.equal(EXECUTOR_NAO_PUBLICA.estado, 'DELIBERADAMENTE_FORA_DE_ESCOPO')
-    assert.deepEqual([...EXECUTOR_NAO_PUBLICA.tiposExecutados], ['GERAR_CONTEUDO'])
+    assert.equal(PUBLICACAO_DO_EXECUTOR.estado, 'SOMENTE_COM_DECISAO_APROVADA_E_ADAPTER_LIGADO')
+    assert.deepEqual([...PUBLICACAO_DO_EXECUTOR.tiposExecutados], ['GERAR_CONTEUDO', 'DISTRIBUIR_CONTEUDO'])
+    // O portao do P1.4.1 nao afrouxou: ele mudou de lugar. Nenhum canal
+    // esta ligado, entao distribuir continua nao publicando nada.
+    assert.deepEqual(PUBLICACAO_DO_EXECUTOR.adaptadoresLigados(), [])
 
     const codigo = readFileSync(join(RAIZ, 'lib/executor-da-fila.ts'), 'utf8')
       .split(/\r?\n/)

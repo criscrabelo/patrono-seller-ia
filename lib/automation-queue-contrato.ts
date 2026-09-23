@@ -104,6 +104,22 @@ export const PERFIS_DE_DEPENDENCIA: Record<string, PerfilDaDependencia> = {
     maxTentativas: 3,
     explicacao: 'Geracao local e gratuita: copy deterministica, voz Chatterbox e render FFmpeg.',
   },
+  /**
+   * P1.5: distribuir é automatizável, mas quase nunca por falta de tentativa.
+   *
+   * O que costuma faltar é escopo, adapter ligado ou aprovação da
+   * plataforma — e nada disso melhora repetindo. Por isso o orquestrador
+   * devolve `aguardar` nesses casos, que NÃO consome tentativa. As três
+   * tentativas existem para o que de fato é transitório: rede e 5xx.
+   */
+  DISTRIBUIR_CONTEUDO: {
+    tipo: 'DISTRIBUIR_CONTEUDO',
+    classe: 'AUTOMATIZAVEL',
+    motivoHumano: null,
+    maxTentativas: 3,
+    explicacao:
+      'Distribuição pelo caminho que a decisão permitir: publicação, rascunho, ou espera explicando o que falta.',
+  },
   HABILITAR_CAPACIDADE: {
     tipo: 'HABILITAR_CAPACIDADE',
     classe: 'AGUARDA_CONDICAO',
@@ -255,7 +271,14 @@ export function jobsDesejadosDoPlano(
 ): JobDesejado[] {
   const saida: JobDesejado[] = []
   for (const item of itens) {
-    if (item.dependencia === 'GERAR_CONTEUDO' || item.dependencia === 'NENHUMA') continue
+    // Execução não é dependência: as duas têm caminho próprio
+    // (`jobsDeGeracaoDoPlano`, `jobDeDistribuicao`), na mesma tabela.
+    if (
+      item.dependencia === 'GERAR_CONTEUDO' ||
+      item.dependencia === 'DISTRIBUIR_CONTEUDO' ||
+      item.dependencia === 'NENHUMA'
+    )
+      continue
     const perfil = perfilDaDependencia(item.dependencia)
     const contexto = { dependencia: item.dependencia, ...contextoExtra(item) }
     // `PRODUTO` em maiuscula: e o vocabulario de TIPOS_DE_ENTIDADE, e a

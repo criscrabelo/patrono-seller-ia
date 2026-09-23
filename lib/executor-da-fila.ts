@@ -37,6 +37,13 @@ import {
   TIPO_JOB_GERACAO,
   type CapacidadesDeGeracao,
 } from './fabrica-de-conteudo'
+import {
+  acaoDeDistribuir,
+  adaptadorDoCanal,
+  ADAPTADORES_LIGADOS,
+  TIPO_JOB_DISTRIBUICAO,
+  type AdaptadorDeCanal,
+} from './distribuicao-orquestrador'
 import type { FonteDeEnv } from './cost-safety-gate'
 
 /** De quanto em quanto tempo o heartbeat é renovado durante o trabalho. */
@@ -99,6 +106,11 @@ export interface ContextoDoExecutor {
   capacidades: CapacidadesDeGeracao
   agora: Date
   env?: FonteDeEnv
+  /**
+   * Adapters de canal LIGADOS (P1.5). Ausente = `ADAPTADORES_LIGADOS`, que
+   * está vazio — então o executor decide, registra e espera, sem publicar.
+   */
+  adaptadores?: Record<string, AdaptadorDeCanal>
   /** Trocável em teste, para não esperar o intervalo real. */
   intervaloDeHeartbeatMs?: number
   renovarHeartbeat?: (id: string, worker: string, agora: Date) => Promise<boolean>
@@ -169,7 +181,14 @@ export function acaoDeGerarConteudo(ctx: ContextoDoExecutor) {
 
 /** Todas as ações que este executor sabe fazer. */
 export function acoesDoExecutor(ctx: ContextoDoExecutor) {
-  return { [TIPO_JOB_GERACAO]: acaoDeGerarConteudo(ctx) }
+  return {
+    [TIPO_JOB_GERACAO]: acaoDeGerarConteudo(ctx),
+    [TIPO_JOB_DISTRIBUICAO]: acaoDeDistribuir({
+      workspaceId: ctx.workspaceId,
+      adaptadores: ctx.adaptadores ?? ADAPTADORES_LIGADOS,
+      env: ctx.env as Record<string, string | undefined> | undefined,
+    }),
+  }
 }
 
 // ── Destravar quem esperava ─────────────────────────────────────────────
@@ -322,16 +341,22 @@ export async function rodarFilaDoWorkspace(params: {
 }
 
 /**
- * O que este executor NÃO faz.
+ * Em que condição este executor publica — e em que condição não publica.
  *
- * Termina com a peça pronta. Distribuir continua sendo outra decisão, com
- * outro portão — e `Publicacao` continua significando distribuição real.
+ * Mudou no P1.5: ele passou a executar distribuição. O que NÃO mudou é a
+ * regra. Distribuir exige a decisão aprovar E um adapter ligado, e o
+ * registro de adapters está vazio: hoje o executor decide, registra o
+ * motivo e espera. `Publicacao` continua significando distribuição real.
  */
-export const EXECUTOR_NAO_PUBLICA = {
+export const PUBLICACAO_DO_EXECUTOR = {
   chave: 'executor-da-fila:publicacao',
-  estado: 'DELIBERADAMENTE_FORA_DE_ESCOPO',
-  tiposExecutados: [TIPO_JOB_GERACAO],
-  porque: 'O executor gera. Publicar depende do Revenue Autopilot e do consentimento da dona.',
+  estado: 'SOMENTE_COM_DECISAO_APROVADA_E_ADAPTER_LIGADO',
+  tiposExecutados: [TIPO_JOB_GERACAO, TIPO_JOB_DISTRIBUICAO],
+  porque:
+    'Peça pronta não é autorização. Entre a peça e o post estão a decisão de distribuição e um adapter que alguém ligou.',
+  /** Quantos canais estão de fato ligados agora. Zero é a resposta honesta. */
+  adaptadoresLigados: () => Object.keys(ADAPTADORES_LIGADOS),
+  canalLigado: (canal: string) => adaptadorDoCanal(canal) !== null,
 } as const
 
 /** Reexportado para quem monta o contexto do worker. */
