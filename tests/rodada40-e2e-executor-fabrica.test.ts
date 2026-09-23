@@ -107,7 +107,12 @@ describe('O executor liga a fila à fábrica', () => {
 
   test('o executor NÃO publica', () => {
     assert.equal(PUBLICACAO_DO_EXECUTOR.estado, 'SOMENTE_COM_DECISAO_APROVADA_E_ADAPTER_LIGADO')
-    assert.deepEqual([...PUBLICACAO_DO_EXECUTOR.tiposExecutados], ['GERAR_CONTEUDO', 'DISTRIBUIR_CONTEUDO'])
+    assert.deepEqual([...PUBLICACAO_DO_EXECUTOR.tiposExecutados], [
+      'GERAR_CONTEUDO',
+      'DISTRIBUIR_CONTEUDO',
+      // P1.5.1: renovar acesso e o oposto de publicar — nao poe nada no ar.
+      'RENOVAR_TOKEN',
+    ])
     // O portao do P1.4.1 nao afrouxou: ele mudou de lugar. Nenhum canal
     // esta ligado, entao distribuir continua nao publicando nada.
     assert.deepEqual(PUBLICACAO_DO_EXECUTOR.adaptadoresLigados(), [])

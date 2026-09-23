@@ -44,6 +44,12 @@ import {
   TIPO_JOB_DISTRIBUICAO,
   type AdaptadorDeCanal,
 } from './distribuicao-orquestrador'
+import {
+  acaoDeRenovarToken,
+  RENOVADORES_LIGADOS,
+  TIPO_JOB_RENOVAR_TOKEN,
+  type RenovadorDeAcesso,
+} from './renovacao-de-acesso'
 import type { FonteDeEnv } from './cost-safety-gate'
 
 /** De quanto em quanto tempo o heartbeat é renovado durante o trabalho. */
@@ -111,6 +117,11 @@ export interface ContextoDoExecutor {
    * está vazio — então o executor decide, registra e espera, sem publicar.
    */
   adaptadores?: Record<string, AdaptadorDeCanal>
+  /**
+   * Renovadores de acesso LIGADOS (P1.5.1). Ausente = `RENOVADORES_LIGADOS`,
+   * que está vazio — então o job de renovação espera em vez de chamar nada.
+   */
+  renovadores?: Record<string, RenovadorDeAcesso>
   /** Trocável em teste, para não esperar o intervalo real. */
   intervaloDeHeartbeatMs?: number
   renovarHeartbeat?: (id: string, worker: string, agora: Date) => Promise<boolean>
@@ -186,6 +197,12 @@ export function acoesDoExecutor(ctx: ContextoDoExecutor) {
     [TIPO_JOB_DISTRIBUICAO]: acaoDeDistribuir({
       workspaceId: ctx.workspaceId,
       adaptadores: ctx.adaptadores ?? ADAPTADORES_LIGADOS,
+      env: ctx.env as Record<string, string | undefined> | undefined,
+    }),
+    [TIPO_JOB_RENOVAR_TOKEN]: acaoDeRenovarToken({
+      workspaceId: ctx.workspaceId,
+      renovadores: ctx.renovadores ?? RENOVADORES_LIGADOS,
+      agora: ctx.agora,
       env: ctx.env as Record<string, string | undefined> | undefined,
     }),
   }
@@ -351,7 +368,7 @@ export async function rodarFilaDoWorkspace(params: {
 export const PUBLICACAO_DO_EXECUTOR = {
   chave: 'executor-da-fila:publicacao',
   estado: 'SOMENTE_COM_DECISAO_APROVADA_E_ADAPTER_LIGADO',
-  tiposExecutados: [TIPO_JOB_GERACAO, TIPO_JOB_DISTRIBUICAO],
+  tiposExecutados: [TIPO_JOB_GERACAO, TIPO_JOB_DISTRIBUICAO, TIPO_JOB_RENOVAR_TOKEN],
   porque:
     'Peça pronta não é autorização. Entre a peça e o post estão a decisão de distribuição e um adapter que alguém ligou.',
   /** Quantos canais estão de fato ligados agora. Zero é a resposta honesta. */

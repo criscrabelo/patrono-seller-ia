@@ -73,6 +73,22 @@ export const PERFIS_DE_DEPENDENCIA: Record<string, PerfilDaDependencia> = {
     explicacao:
       'Conectar a conta exige OAuth da proprietária. O sistema observa e avisa; tentar sozinho não destrava.',
   },
+  /**
+   * P1.5.1: renovar token e o oposto de CONECTAR_CANAL.
+   *
+   * Conectar exige a proprietaria porque so ela concede consentimento.
+   * Renovar nao: o refresh token JA e o consentimento dela, guardado. Pedir
+   * de novo a cada 60 dias seria trabalho manual recorrente — exatamente o
+   * que a regra de Automation First proibe.
+   */
+  RENOVAR_TOKEN: {
+    tipo: 'RENOVAR_TOKEN',
+    classe: 'AUTOMATIZAVEL',
+    motivoHumano: null,
+    maxTentativas: 3,
+    explicacao:
+      'Renovacao pelo refresh token ja guardado: gratuita, idempotente e sem novo consentimento.',
+  },
   SINCRONIZAR_MIDIA_AUTORIZADA: {
     tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
     classe: 'AUTOMATIZAVEL',

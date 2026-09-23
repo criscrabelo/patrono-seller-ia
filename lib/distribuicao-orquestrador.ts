@@ -42,6 +42,7 @@ import {
   registrarFalhaDaTentativa,
 } from './publicacao-fluxo'
 import { chaveDoJob, type JobDesejado } from './automation-queue-contrato'
+import { lerAutorizacao } from './autorizacao-da-conta'
 import type { LinhaDaFila } from './automation-queue-repositorio'
 
 /** Tipo de job desta rodada. Vocabulário único, na fila que já existe. */
@@ -133,23 +134,14 @@ export function higienizar(texto: string | null | undefined): string {
 
 // ── O contexto, lido do banco ───────────────────────────────────────────
 
-/** Escopos concedidos. `null` quando a conexão não registra nenhum. */
-export function lerScopesDaIntegracao(extraData: unknown): string[] | null {
-  const extra = (extraData ?? null) as Record<string, unknown> | null
-  if (!extra) return null
-
-  const bruto = extra.scope ?? extra.scopes
-  if (Array.isArray(bruto)) return bruto.map((s) => String(s).trim()).filter(Boolean)
-  if (typeof bruto === 'string') {
-    const lista = bruto
-      .split(/[,\s]+/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-    // String presente e vazia é "nenhum escopo", não "ilegível".
-    return lista
-  }
-  return null
-}
+/**
+ * Escopos concedidos. `null` quando a conexão não registra nenhum.
+ *
+ * A autoridade é `autorizacao-da-conta` (P1.5.1). Isto aqui é só o nome
+ * antigo, mantido para quem já o importava — duas leituras diferentes do
+ * mesmo `extraData` seria a receita para divergirem.
+ */
+export { lerScopesComprovados as lerScopesDaIntegracao } from './autorizacao-da-conta'
 
 /** O formato desta peça é aceito por este canal? Autoridade: FORMATOS. */
 export function formatoAceitoPeloCanal(formato: string | null, canal: string): boolean {
@@ -230,12 +222,10 @@ export async function montarContextoDaDistribuicao(params: {
 
   const formato = conteudo.videoUrl ? 'VIDEO_9X16_FFMPEG_NARRADO' : 'TEXTO_COM_LINK'
 
-  const integracao = await prisma.integracao.findFirst({
-    where: { workspaceId: params.workspaceId, plataforma: canal },
-    select: { status: true, accessToken: true, extraData: true },
-  })
-
-  const conectado = integracao?.status === 'conectado' && !!integracao.accessToken
+  // Autoridade única do que esta conta autorizou (P1.5.1). O orquestrador
+  // não lê token nem extraData: ele pergunta, e o que volta já é público.
+  const autorizacao = await lerAutorizacao({ workspaceId: params.workspaceId, canal })
+  const conectado = autorizacao.estado !== 'DESCONECTADA' && !autorizacao.expirado
 
   // Direitos: a autoridade é media-rights-produto. Aqui só se pergunta.
   const direitos = resolverDireitosDoProduto({
@@ -265,9 +255,9 @@ export async function montarContextoDaDistribuicao(params: {
     contexto: {
       canal,
       canalConectado: conectado,
-      scopesConcedidos: conectado ? lerScopesDaIntegracao(integracao?.extraData) : null,
+      scopesConcedidos: conectado ? autorizacao.scopesComprovados : null,
       // Nunca afirmado a partir do nosso lado: é a plataforma quem aprova.
-      appAprovadoPeloProvider: null,
+      appAprovadoPeloProvider: autorizacao.aprovacaoDoApp,
       midiaAutorizada,
       formatoCompativel: formatoAceitoPeloCanal(formato, canal),
       disclosurePresente,

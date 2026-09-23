@@ -158,6 +158,8 @@ export const PROXIMAS_ACOES = [
   'DISTRIBUIR_CONTEUDO',
   'SINCRONIZAR_MIDIA_AUTORIZADA',
   'CONECTAR_CANAL',
+  /** P1.5.1. Renovar acesso vencido e trabalho de maquina, nao de pessoa. */
+  'RENOVAR_TOKEN',
   'COMPLETAR_DADO_DO_PRODUTO',
   'HABILITAR_CAPACIDADE',
   'NENHUMA',

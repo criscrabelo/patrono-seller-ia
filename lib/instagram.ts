@@ -320,8 +320,47 @@ export async function descobrirExpiracaoToken(params: {
   appId?: string
   appSecret?: string
 }): Promise<Date | null> {
-  if (isTokenInstagram(params.accessToken)) return null
-  if (!params.appId || !params.appSecret) return null
+  return (await inspecionarTokenMeta(params)).expiraEm
+}
+
+/**
+ * O que a Meta afirma sobre ESTE token: validade e permissões concedidas.
+ *
+ * Mesma chamada oficial de sempre (`debug_token`) — a resposta já traz
+ * `scopes` ao lado de `expires_at`, e até agora só líamos metade dela. Não
+ * há endpoint novo aqui, e nenhuma permission é inventada: o que volta é o
+ * que a própria Meta diz que a conta concedeu.
+ *
+ * `scopes: null` significa NÃO VERIFICÁVEL, nunca "nenhum". Token do fluxo
+ * "Instagram login" (IGAA…) não passa por `debug_token`, e sem App
+ * ID/Secret não há como perguntar — nos dois casos a resposta honesta é
+ * "não sei", que fail-closed trata como bloqueio.
+ */
+export interface InspecaoDeTokenMeta {
+  expiraEm: Date | null
+  scopes: string[] | null
+  motivo: string
+}
+
+export async function inspecionarTokenMeta(params: {
+  accessToken: string
+  appId?: string
+  appSecret?: string
+}): Promise<InspecaoDeTokenMeta> {
+  if (isTokenInstagram(params.accessToken)) {
+    return {
+      expiraEm: null,
+      scopes: null,
+      motivo: 'Token do fluxo "Instagram login": a Meta nao expoe debug_token para ele.',
+    }
+  }
+  if (!params.appId || !params.appSecret) {
+    return {
+      expiraEm: null,
+      scopes: null,
+      motivo: 'Sem Meta App ID e App Secret nao ha como perguntar a Meta o que foi concedido.',
+    }
+  }
 
   try {
     const data = await fbFetch(
@@ -329,12 +368,29 @@ export async function descobrirExpiracaoToken(params: {
         `?input_token=${encodeURIComponent(params.accessToken)}` +
         `&access_token=${encodeURIComponent(`${params.appId}|${params.appSecret}`)}`
     )
-    const expiresAt = (data?.data as { expires_at?: number } | undefined)?.expires_at
+    const corpo = (data?.data ?? {}) as { expires_at?: number; scopes?: unknown; is_valid?: boolean }
+    const expiresAt = corpo.expires_at
     // expires_at 0 (ou ausente) = token sem prazo de validade.
-    if (typeof expiresAt !== 'number' || expiresAt === 0) return null
-    return new Date(expiresAt * 1000)
+    const expiraEm =
+      typeof expiresAt !== 'number' || expiresAt === 0 ? null : new Date(expiresAt * 1000)
+
+    // Um token que a Meta diz ser invalido nao comprova permissao nenhuma.
+    if (corpo.is_valid === false) {
+      return { expiraEm, scopes: null, motivo: 'A Meta respondeu que este token nao e valido.' }
+    }
+
+    const scopes = Array.isArray(corpo.scopes)
+      ? corpo.scopes.map((s) => String(s).trim()).filter(Boolean)
+      : null
+
+    return {
+      expiraEm,
+      scopes,
+      motivo: scopes ? 'Permissoes confirmadas pela Meta via debug_token.' : 'A Meta nao devolveu a lista de permissoes.',
+    }
   } catch {
-    // debug_token é um extra: se falhar, não impede a conexão.
-    return null
+    // debug_token é um extra: se falhar, não impede a conexão — mas também
+    // não passa a comprovar nada.
+    return { expiraEm: null, scopes: null, motivo: 'A consulta a debug_token falhou.' }
   }
 }
