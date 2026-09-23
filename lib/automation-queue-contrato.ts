@@ -213,6 +213,8 @@ export interface JobExistente {
   id: string
   chave: string
   estado: EstadoDoJob
+  /** Necessário para o sincronizador saber se o job é dele. */
+  tipo?: string
 }
 
 export interface JobDesejado {
@@ -246,9 +248,20 @@ export interface PlanoDeSincronizacao {
  */
 export function sincronizar(
   desejados: JobDesejado[],
-  existentes: JobExistente[]
+  existentes: JobExistente[],
+  /**
+   * Tipos que ESTE sincronizador manda. Ausente = manda em todos.
+   *
+   * Sem isto, um sincronizador que cuida de geração cancelaria os jobs de
+   * autorização que outro criou, só porque eles não estão na SUA lista de
+   * desejados. A fila é uma só e tem vários donos; cada um responde pelo
+   * que criou.
+   */
+  tiposGerenciados?: readonly string[]
 ): PlanoDeSincronizacao {
-  const ativos = existentes.filter((j) => (ESTADOS_ATIVOS as string[]).includes(j.estado))
+  const ativos = existentes
+    .filter((j) => (ESTADOS_ATIVOS as string[]).includes(j.estado))
+    .filter((j) => !tiposGerenciados || !j.tipo || tiposGerenciados.includes(j.tipo))
   const porChave = new Map(ativos.map((j) => [j.chave, j]))
   const chavesDesejadas = new Set(desejados.map((d) => d.chave))
 

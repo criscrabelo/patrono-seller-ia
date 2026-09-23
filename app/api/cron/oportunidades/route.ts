@@ -6,6 +6,10 @@ import {
   MOTOR_NAO_PUBLICA,
 } from '@/lib/motor-de-oportunidades'
 import { montarPlanoDeAcao, PLANO_NAO_EXECUTA } from '@/lib/plano-de-acao'
+import { jobsDeGeracaoDoPlano, jobsDeLacunaDeFormato, TIPO_JOB_GERACAO } from '@/lib/fabrica-de-conteudo'
+import { jobsDesejadosDoPlano } from '@/lib/automation-queue-contrato'
+import { sincronizarFilaComPlano } from '@/lib/automation-queue-repositorio'
+import { portaPrisma } from '@/lib/automation-queue-prisma'
 
 /**
  * Reavaliação periódica da fila de oportunidades (P1.1).
@@ -14,15 +18,56 @@ import { montarPlanoDeAcao, PLANO_NAO_EXECUTA } from '@/lib/plano-de-acao'
  * pode depender de alguém abrir a tela e comparar de cabeça. O cron
  * recalcula, compara com a execução anterior e devolve só o que mudou.
  *
+ * ── O ELO QUE FALTAVA ───────────────────────────────────────────────────
+ * Até aqui este cron calculava o plano e o DESCARTAVA: ele voltava no JSON
+ * e ninguém o enfileirava. Do outro lado, `/api/cron/executar-fila` rodava
+ * a cada 30 minutos sobre uma fila que nada alimentava. A cadeia tinha
+ * executor sem produtor.
+ *
+ * Agora o plano vira job na MESMA tabela do P1.3. É a peça que faltava
+ * para a fábrica funcionar sem ninguém chamar função à mão.
+ *
  * ── O QUE ESTE CRON NÃO FAZ ─────────────────────────────────────────────
- * Não publica, não gera conteúdo, não cria link, não chama provider pago e
- * não toca no ML. Ele LÊ o catálogo e devolve a fila. Publicação autônoma
- * depende do Revenue Autopilot — ver `MOTOR_NAO_PUBLICA`.
+ * Não publica, não cria `Publicacao`, não cria link, não chama provider
+ * pago e não toca no ML. Ele lê o catálogo, planeja e enfileira trabalho
+ * INTERNO e gratuito. Publicação autônoma depende do Revenue Autopilot —
+ * ver `MOTOR_NAO_PUBLICA`.
  */
 export const dynamic = 'force-dynamic'
 
 /** Quantas oportunidades devolver por workspace. A fila inteira é ruído. */
 const TOPO_DA_FILA = 20
+
+/**
+ * Os tipos de job que ESTE cron administra.
+ *
+ * A sincronização cancela o que saiu do plano — e precisa cancelar só o que
+ * é dela. Sem esta lista, ela apagaria um `CONECTAR_CANAL` criado pela
+ * autorização da conta só porque ele não nasceu aqui.
+ */
+const TIPOS_DESTE_CRON = [
+  TIPO_JOB_GERACAO,
+  'SINCRONIZAR_MIDIA_AUTORIZADA',
+  'CONECTAR_CANAL',
+  'COMPLETAR_DADO_DO_PRODUTO',
+  'HABILITAR_CAPACIDADE',
+] as const
+
+/**
+ * A capacidade da máquina, lida do MESMO lugar que o executor lê.
+ *
+ * Antes daqui saía `{ FFMPEG: true }` fixo, enquanto o executor perguntava
+ * a `FFMPEG_DISPONIVEL`. As duas autoridades discordavam: o plano escolhia
+ * vídeo e o executor recusava por falta de capacidade. Fail-closed e uma
+ * fonte só — o que não for afirmado como disponível não é escolhido.
+ */
+function capacidadesDeclaradas() {
+  return {
+    FFMPEG: process.env.FFMPEG_DISPONIVEL === 'true',
+    DIGITAL_TWIN_GPU: process.env.DIGITAL_TWIN_GPU_DISPONIVEL === 'true',
+    PROVEDOR_PAGO_AUTORIZADO: false,
+  }
+}
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET
@@ -37,7 +82,13 @@ export async function GET(req: NextRequest) {
   const agora = new Date()
   const workspaces = await prisma.workspace.findMany({ select: { id: true } })
 
+  const porta = portaPrisma()
+  const capacidades = capacidadesDeclaradas()
   const porWorkspace: Record<string, unknown> = {}
+  let jobsCriados = 0
+  let jobsMantidos = 0
+  let jobsCancelados = 0
+  let lacunasDeFormato = 0
   let totalPronta = 0
   let totalComercial = 0
   let itensDePlano = 0
@@ -72,11 +123,33 @@ export async function GET(req: NextRequest) {
       workspaceId: ws.id,
       fila,
       canaisConectados: canaisCapazes,
-      capacidades: { FFMPEG: true },
+      capacidades,
       agora,
     })
     itensDePlano += plano.itens.length
     pendenciasDeAutomacao += plano.filaDeAutomacao.length
+
+    // O plano vira fila. Três origens, uma tabela, uma sincronização:
+    //   dependências que faltam        -> jobsDesejadosDoPlano
+    //   geração que dá para fazer      -> jobsDeGeracaoDoPlano
+    //   formato que a fábrica não faz  -> jobsDeLacunaDeFormato
+    const lacunas = jobsDeLacunaDeFormato(ws.id, plano.itens)
+    lacunasDeFormato += lacunas.length
+    const desejados = [
+      ...jobsDesejadosDoPlano(ws.id, plano.filaDeAutomacao),
+      ...jobsDeGeracaoDoPlano(ws.id, plano.itens),
+      ...lacunas,
+    ]
+    const sinc = await sincronizarFilaComPlano({
+      porta,
+      workspaceId: ws.id,
+      desejados,
+      agora,
+      tiposGerenciados: TIPOS_DESTE_CRON,
+    })
+    jobsCriados += sinc.criados
+    jobsMantidos += sinc.mantidos
+    jobsCancelados += sinc.cancelados
 
     porWorkspace[ws.id] = {
       plano: {
@@ -112,6 +185,13 @@ export async function GET(req: NextRequest) {
     porWorkspace,
     itensDePlano,
     pendenciasDeAutomacao,
+    capacidades,
+    fila: {
+      criados: jobsCriados,
+      mantidos: jobsMantidos,
+      cancelados: jobsCancelados,
+      lacunasDeFormato,
+    },
     // Declarado na resposta para não restar dúvida sobre o escopo.
     publicacaoAutonoma: MOTOR_NAO_PUBLICA.estado,
     execucaoAutonoma: PLANO_NAO_EXECUTA.estado,

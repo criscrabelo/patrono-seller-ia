@@ -25,9 +25,10 @@ import { adaptadorInstagram, falhaDeRede } from '../lib/adaptadores-reais'
 import { preflightDePublicacao, simularDistribuicao } from '../lib/preflight-de-publicacao'
 import { CAMPO_DOS_SCOPES, CAMPO_DA_COMPROVACAO } from '../lib/autorizacao-da-conta'
 import { montarFilaDeOportunidades } from '../lib/motor-de-oportunidades'
-import { montarPlanoDeAcao } from '../lib/plano-de-acao'
-import { jobsDeGeracaoDoPlano } from '../lib/fabrica-de-conteudo'
+import { montarPlanoDeAcao, type ItemDoPlano } from '../lib/plano-de-acao'
+import { jobsDeGeracaoDoPlano, jobsDeLacunaDeFormato } from '../lib/fabrica-de-conteudo'
 import { sincronizarFilaComPlano } from '../lib/automation-queue-repositorio'
+import { sincronizar, perfilDaDependencia } from '../lib/automation-queue-contrato'
 import { portaPrisma } from '../lib/automation-queue-prisma'
 import { rodarFilaDoWorkspace } from '../lib/executor-da-fila'
 import { textoDisclosure } from '../lib/creative-factory'
@@ -469,6 +470,177 @@ describe(
         where: { workspaceId: wsA, tipo: 'DISTRIBUIR_CONTEUDO' },
       })
       assert.equal(publicar, 0, 'o ciclo prepara; distribuir continua sendo outra decisão')
+    })
+  }
+)
+
+// ── O elo que faltava: plano → fila ─────────────────────────────────────
+
+describe('A lacuna de formato deixa de ser silêncio', () => {
+  const item = (over: Partial<ItemDoPlano> = {}): ItemDoPlano => ({
+    workspaceId: 'ws-1',
+    produtoId: 'p-1',
+    produtoNome: 'Produto',
+    categoria: 'casa',
+    scoreDaOportunidade: 50,
+    prioridadeOperacional: 50,
+    posicao: 1,
+    canalRecomendado: 'instagram',
+    formatoRecomendado: 'CARROSSEL',
+    estado: 'PRONTO_PARA_GERAR_CONTEUDO',
+    proximaAcao: 'GERAR_CONTEUDO',
+    podeExecutarAutomaticamente: true,
+    dependenciaExterna: null,
+    confianca: 'SEM_HISTORICO_REAL',
+    bloqueios: [],
+    motivo: [],
+    custoEstimado: 0,
+    ...over,
+  })
+
+  test('formato que a fábrica não produz vira job visível', () => {
+    const jobs = jobsDeLacunaDeFormato('ws-1', [item()])
+    assert.equal(jobs.length, 1)
+    assert.equal(jobs[0].tipo, 'HABILITAR_CAPACIDADE')
+    assert.equal(jobs[0].classe, 'AGUARDA_CONDICAO')
+    assert.equal(jobs[0].entityType, 'PRODUTO')
+    assert.equal(jobs[0].contexto.custoEstimado, 0)
+    // A explicação diz o formato E o motivo, para ninguém precisar caçar.
+    assert.match(jobs[0].explicacao, /CARROSSEL/)
+    assert.match(jobs[0].explicacao, /carrossel ainda não tem caminho local/i)
+  })
+
+  test('nunca gasta tentativa: é capacidade a implementar, não falha', () => {
+    const jobs = jobsDeLacunaDeFormato('ws-1', [item()])
+    assert.equal(perfilDaDependencia(jobs[0].tipo).maxTentativas, 0)
+  })
+
+  test('formato que a fábrica PRODUZ não gera lacuna nenhuma', () => {
+    for (const formato of ['VIDEO_9X16_FFMPEG_NARRADO', 'TEXTO_COM_LINK']) {
+      assert.deepEqual(jobsDeLacunaDeFormato('ws-1', [item({ formatoRecomendado: formato })]), [])
+    }
+  })
+
+  test('item que não está pronto não vira lacuna', () => {
+    assert.deepEqual(
+      jobsDeLacunaDeFormato('ws-1', [item({ estado: 'AGUARDANDO_MIDIA_AUTORIZADA' })]),
+      []
+    )
+  })
+
+  test('item de outro workspace nunca entra', () => {
+    assert.deepEqual(jobsDeLacunaDeFormato('ws-1', [item({ workspaceId: 'ws-2' })]), [])
+  })
+
+  test('a chave é determinística: dois crons seguidos não duplicam', () => {
+    const a = jobsDeLacunaDeFormato('ws-1', [item()])
+    const b = jobsDeLacunaDeFormato('ws-1', [item()])
+    assert.equal(a[0].chave, b[0].chave)
+  })
+
+  test('geração e lacuna são mutuamente exclusivas para o mesmo item', () => {
+    const itens = [item(), item({ produtoId: 'p-2', formatoRecomendado: 'TEXTO_COM_LINK' })]
+    const geracao = jobsDeGeracaoDoPlano('ws-1', itens)
+    const lacunas = jobsDeLacunaDeFormato('ws-1', itens)
+    assert.deepEqual(geracao.map((j) => j.entityId), ['p-2'])
+    assert.deepEqual(lacunas.map((j) => j.entityId), ['p-1'])
+  })
+})
+
+describe('A fila tem vários donos, e cada um cancela só o que é dele', () => {
+  const existente = (chave: string, tipo: string) => ({
+    id: `id-${chave}`,
+    chave,
+    estado: 'PENDING' as const,
+    tipo,
+  })
+
+  test('sem escopo declarado, o comportamento antigo continua', () => {
+    const plano = sincronizar([], [existente('a', 'GERAR_CONTEUDO'), existente('b', 'CONECTAR_CANAL')])
+    assert.equal(plano.cancelar.length, 2)
+  })
+
+  test('com escopo, o job de outro dono é preservado', () => {
+    const plano = sincronizar(
+      [],
+      [existente('a', 'GERAR_CONTEUDO'), existente('b', 'RENOVAR_TOKEN')],
+      ['GERAR_CONTEUDO']
+    )
+    assert.deepEqual(plano.cancelar.map((c) => c.chave), ['a'])
+  })
+
+  test('o cron do plano não cancela a pendência de autorização', () => {
+    // O caso concreto: RENOVAR_TOKEN nasce da autorizacao-da-conta e não
+    // aparece no plano. Sem escopo, o cron diário o apagaria todo dia.
+    const plano = sincronizar(
+      [],
+      [existente('token', 'RENOVAR_TOKEN')],
+      ['GERAR_CONTEUDO', 'SINCRONIZAR_MIDIA_AUTORIZADA', 'CONECTAR_CANAL', 'COMPLETAR_DADO_DO_PRODUTO', 'HABILITAR_CAPACIDADE']
+    )
+    assert.deepEqual(plano.cancelar, [])
+  })
+})
+
+describe(
+  'O ciclo gera conteúdo de verdade quando nenhuma capacidade é exigida',
+  { skip: !TEM_BANCO ? 'exige Postgres' : false },
+  () => {
+    test('TEXTO_COM_LINK sai pronto, com disclosure e custo zero', async () => {
+      // Produto sem direito de mídia: os formatos que exigem imagem caem
+      // fora, e sobra o que roda sem capacidade nenhuma.
+      const semMidia = await prisma.produto.create({
+        data: {
+          workspaceId: wsA, userId: userA, nome: `${marca}-texto`, categoria: 'livros',
+          tipoVenda: 'Afiliado', origemConteudo: 'Licenciado',
+          imagens: [], linkProduto: 'https://loja.invalido/t', preco: 40,
+        },
+        select: { id: true },
+      })
+
+      const agora = new Date()
+      const fila = await montarFilaDeOportunidades({ workspaceId: wsA, agora, canaisCapazes: ['instagram'] })
+      const plano = montarPlanoDeAcao({
+        workspaceId: wsA, fila, canaisConectados: ['instagram'], capacidades: {}, agora,
+      })
+      const doProduto = plano.itens.find((i) => i.produtoId === semMidia.id)
+      assert.ok(doProduto, 'o produto entrou no plano')
+      assert.equal(doProduto!.formatoRecomendado, 'TEXTO_COM_LINK')
+      assert.equal(doProduto!.custoEstimado, 0)
+
+      const porta = portaPrisma()
+      const desejados = jobsDeGeracaoDoPlano(wsA, [doProduto!])
+      assert.equal(desejados.length, 1)
+      await sincronizarFilaComPlano({
+        porta, workspaceId: wsA, desejados, agora, tiposGerenciados: ['GERAR_CONTEUDO'],
+      })
+
+      const antes = await prisma.conteudo.count({ where: { workspaceId: wsA } })
+      const laco = await rodarFilaDoWorkspace({
+        porta, workspaceId: wsA, workerId: `gera-${marca}`,
+        capacidades: { ffmpeg: false, chatterbox: false, memoriaLivreBytes: 8 * 1024 ** 3 },
+        agora, limite: 3,
+      })
+      assert.equal(laco.sucessos, 1, JSON.stringify(laco.detalhes))
+      assert.equal(await prisma.conteudo.count({ where: { workspaceId: wsA } }), antes + 1)
+
+      const novo = await prisma.conteudo.findFirstOrThrow({
+        where: { workspaceId: wsA, produtoId: semMidia.id },
+        select: { id: true, legendaInstagram: true, videoUrl: true },
+      })
+      assert.ok(
+        novo.legendaInstagram!.includes(textoDisclosure('afiliado')),
+        'a peça já sai com o disclosure que o canal exige'
+      )
+      assert.equal(novo.videoUrl, null, 'TEXTO_COM_LINK não renderiza vídeo')
+
+      // E o preflight aceita a peça: formato, mídia e disclosure em ordem.
+      const pf = await preflightDePublicacao({
+        workspaceId: wsA, canal: 'instagram', contentId: novo.id, env: ENV,
+      })
+      assert.equal(pf.formatoCompativel, true)
+      assert.equal(pf.disclosurePresente, true)
+      assert.equal(pf.midiaAutorizada, true, 'TEXTO_COM_LINK não usa a mídia bloqueada')
+      assert.equal(pf.custoZero, true)
     })
   }
 )

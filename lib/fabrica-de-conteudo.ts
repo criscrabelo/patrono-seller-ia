@@ -210,6 +210,59 @@ export function jobsDeGeracaoDoPlano(workspaceId: string, itens: ItemDoPlano[]):
   return saida
 }
 
+/**
+ * A LACUNA que `jobsDeGeracaoDoPlano` deixaria em silêncio.
+ *
+ * O plano pode marcar um item como PRONTO_PARA_GERAR_CONTEUDO num formato
+ * que a fábrica não produz — CARROSSEL é o caso de hoje. Ali o filtro de
+ * `jobsDeGeracaoDoPlano` simplesmente pula o item, e o resultado é um plano
+ * que diz "pronto" e uma fila vazia, sem ninguém explicando por quê.
+ *
+ * Automation First: "por que não gerou?" perguntado toda semana é dívida de
+ * automação. O job abaixo torna a lacuna visível no painel de exceções.
+ *
+ * Classe AGUARDA_CONDICAO com zero tentativas porque é exatamente isso:
+ * não há o que tentar, há uma capacidade a implementar. Ele desaparece
+ * sozinho quando o formato passar a ser produzido — a chave muda, e a
+ * sincronização cancela o antigo.
+ */
+export function jobsDeLacunaDeFormato(workspaceId: string, itens: ItemDoPlano[]): JobDesejado[] {
+  const saida: JobDesejado[] = []
+  for (const item of itens) {
+    if (item.estado !== 'PRONTO_PARA_GERAR_CONTEUDO') continue
+    if (!item.canalRecomendado || !item.formatoRecomendado) continue
+    if (ehFormatoGratuito(item.formatoRecomendado)) continue
+    if (item.workspaceId !== workspaceId) continue
+
+    const motivo =
+      FORMATOS_NAO_PRODUZIDOS[item.formatoRecomendado] ??
+      `O formato ${item.formatoRecomendado} não está no catálogo da fábrica.`
+    const contexto: Record<string, unknown> = {
+      formato: item.formatoRecomendado,
+      canal: item.canalRecomendado,
+      capacidadeQueFalta: item.formatoRecomendado,
+      custoEstimado: 0,
+    }
+    saida.push({
+      chave: chaveDoJob({
+        workspaceId,
+        tipo: 'HABILITAR_CAPACIDADE',
+        entityType: 'PRODUTO',
+        entityId: item.produtoId,
+        contexto,
+      }),
+      tipo: 'HABILITAR_CAPACIDADE',
+      entityType: 'PRODUTO',
+      entityId: item.produtoId,
+      classe: 'AGUARDA_CONDICAO',
+      motivoHumano: null,
+      contexto,
+      explicacao: `O plano escolheu ${item.formatoRecomendado} e a fábrica não o produz. ${motivo}`,
+    } as JobDesejado)
+  }
+  return saida
+}
+
 // ── A geração ───────────────────────────────────────────────────────────
 
 export interface ResultadoDaGeracao {

@@ -225,13 +225,21 @@ export async function sincronizarFilaComPlano(params: {
   workspaceId: string
   desejados: JobDesejado[]
   agora: Date
+  /**
+   * Tipos de job que esta chamada gerencia. Ausente = todos.
+   *
+   * Quem sincroniza só uma parte da fila precisa dizer qual parte — senão
+   * cancela o que outro dono criou.
+   */
+  tiposGerenciados?: readonly string[]
 }): Promise<ResultadoDaSincronizacao> {
   const { porta, workspaceId, desejados, agora } = params
   const existentes = await porta.listarPorWorkspace(workspaceId)
 
   const plano = sincronizar(
     desejados,
-    existentes.map<JobExistente>((j) => ({ id: j.id, chave: j.chave, estado: j.estado }))
+    existentes.map<JobExistente>((j) => ({ id: j.id, chave: j.chave, estado: j.estado, tipo: j.tipo })),
+    params.tiposGerenciados
   )
 
   const recusados: { entityId: string; motivo: string }[] = []
