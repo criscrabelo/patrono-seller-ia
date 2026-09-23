@@ -101,7 +101,7 @@ autorização da conta. Agora quem sincroniza declara os tipos que administra.
 |---|---|
 | `1c0a334` | `fix: envio incerto nunca vira retry automatico` |
 | `d8b6e23` | `feat: o plano passa a alimentar a fila (elo que faltava)` |
-| _(pendente)_ | `test: guard de workspace na renovacao + relatorio noturno` |
+| `333e40a` | `test: guard de workspace na renovacao + relatorio noturno` |
 
 Todos com push apenas em `claude/pronto-para-trabalhar-jiij19`.
 
