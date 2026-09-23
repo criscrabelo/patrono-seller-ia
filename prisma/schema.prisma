@@ -58,6 +58,7 @@ model Workspace {
   auditLogs         AuditLog[]
   eventosLink       EventoLink[]
   publicacoes       Publicacao[]
+  automationJobs    AutomationJob[]
 
   // ── Digital Twin (Rodada 7) ────────────────────────────────────────
   digitalTwinProfiles DigitalTwinProfile[]
@@ -1021,4 +1022,104 @@ model Publicacao {
 
   @@index([workspaceId, estado])
   @@index([workspaceId, contentId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// P1.3 — Automation Queue persistente.
+//
+// ── POR QUE UMA TABELA NOVA, E NAO A QUE JA EXISTE ──────────────────────
+// `DigitalTwinJob` tem `profileId` como FK OBRIGATORIA para
+// `DigitalTwinProfile`, e cinco modulos dependem disso. Uma pendencia de
+// "conectar canal" ou "completar dado do produto" nao tem perfil de Digital
+// Twin nenhum. Hospeda-la ali exigiria tornar aquela FK opcional — afrouxar
+// uma garantia existente para um uso que nao tem relacao com ela.
+//
+// O que E reusado: o vocabulario de `lib/automation.ts`
+// (HUMAN_ACTION_REASONS, ESTADOS_DO_JOB) e o padrao de reivindicacao de
+// `lib/digital-twin-job-queue.ts` — FOR UPDATE SKIP LOCKED, heartbeat,
+// retomada de job travado e requeue por tentativas. Nenhuma fila
+// concorrente: esta tabela guarda pendencias operacionais, aquela guarda
+// jobs de render com GPU.
+//
+// ── IDEMPOTENCIA ────────────────────────────────────────────────────────
+// `@@unique([workspaceId, chave])`. A chave e deterministica e inclui o
+// hash do contexto, entao a mesma situacao reencontra a mesma linha e uma
+// mudanca MATERIAL gera chave nova — sem depender de ninguem lembrar de
+// conferir antes de inserir.
+enum EstadoDoAutomationJob {
+  PENDING
+  RUNNING
+  WAITING
+  SUCCEEDED
+  FAILED_RETRYABLE
+  FAILED_FINAL
+  CANCELLED
+}
+
+model AutomationJob {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  // Tipo da dependencia, vindo de PROXIMAS_ACOES em lib/plano-de-acao.ts.
+  tipo String
+
+  // Chave deterministica de idempotencia. Ver `chaveDoJob()`.
+  chave String
+
+  estado EstadoDoAutomationJob @default(PENDING)
+
+  // Como a dona enxerga: AUTOMATIZAVEL | TENTANDO | AGUARDA_CONDICAO |
+  // EXIGE_HUMANO. E o que o Painel de Excecoes vai ler.
+  classe String
+
+  // Preenchido so quando `classe = EXIGE_HUMANO`. Vocabulario de
+  // HUMAN_ACTION_REASONS, em lib/automation.ts.
+  motivoHumano String?
+
+  // A que o job se refere. Generico de proposito: hoje e Produto, amanha
+  // pode ser Integracao ou Publicacao, sem migration nova.
+  entityType String
+  entityId   String
+
+  // Dados que descrevem a situacao. Nao entra segredo nem payload bruto.
+  contexto Json?
+
+  tentativas         Int       @default(0)
+  proximaTentativaEm DateTime?
+  ultimoErro         String?   @db.Text
+
+  // Reivindicacao pelo worker — mesmo padrao do DigitalTwinJob.
+  workerId    String?
+  claimedAt   DateTime?
+  heartbeatAt DateTime?
+
+  resolvidoEm DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ── INDICES DERIVADOS DAS QUERIES REAIS ───────────────────────────────
+  //
+  // Toda leitura desta fila e escopada por workspace: `listarPorWorkspace`
+  // e `reivindicar` recebem workspaceId OBRIGATORIO. Nao existe consulta
+  // global por estado, entao nenhum indice lidera por `estado`.
+  //
+  // A garantia de "mesma situacao, mesmo job". Tambem serve a busca da
+  // chave em `inserirOuReencontrar`.
+  @@unique([workspaceId, chave])
+
+  // Claim, ramos 1 e 2:
+  //   estado = PENDING
+  //   estado = FAILED_RETRYABLE AND proximaTentativaEm <= agora
+  // O prefixo (workspaceId) e (workspaceId, estado) vem de graca — por isso
+  // o indice (workspaceId, estado) separado foi REMOVIDO, era prefixo
+  // redundante deste.
+  @@index([workspaceId, estado, proximaTentativaEm])
+
+  // Claim, ramo 3: recuperacao de job abandonado.
+  //   estado = RUNNING AND heartbeatAt < limite
+  // Indice proprio porque a terceira coluna e outra; sem ele este ramo
+  // varreria todos os RUNNING do workspace.
+  @@index([workspaceId, estado, heartbeatAt])
 }
