@@ -16,7 +16,14 @@ import { vetorizarFeatures, nomesDoVetorDeFeatures, treinarRegressaoLogistica, p
 import type { ContentMLFeatures } from './ml-feature-store'
 import type { MLDataOrigin } from './ml-types'
 
-export const CONVERSION_MODEL_FAMILY = 'conversion_probability'
+/**
+ * Reexportado de lib/ml-constantes.ts, onde a constante passou a morar.
+ *
+ * Quem so LE o modelo nao deve carregar quem TREINA: importar a
+ * constante daqui arrastava este pipeline para o grafo do cron diario.
+ */
+export { CONVERSION_MODEL_FAMILY } from './ml-constantes'
+import { CONVERSION_MODEL_FAMILY } from './ml-constantes'
 
 export interface AmostraRotulada {
   features: ContentMLFeatures
