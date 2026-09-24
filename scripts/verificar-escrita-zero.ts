@@ -28,17 +28,26 @@ const ARQUIVO = join(process.cwd(), '.verificacao-escrita-zero.json')
 
 /** As tabelas que o ensaio jamais pode tocar. */
 async function contar() {
-  const [automationJob, conteudo, publicacao, linkDinamico, eventoLink, mLModel, mLFeatureSnapshot] =
-    await Promise.all([
-      prisma.automationJob.count(),
-      prisma.conteudo.count(),
-      prisma.publicacao.count(),
-      prisma.linkDinamico.count(),
-      prisma.eventoLink.count(),
-      prisma.mLModel.count(),
-      prisma.mLFeatureSnapshot.count(),
-    ])
-  return { automationJob, conteudo, publicacao, linkDinamico, eventoLink, mLModel, mLFeatureSnapshot }
+  const [
+    automationJob, conteudo, publicacao, linkDinamico, eventoLink,
+    mLModel, mLTrainingRun, mLFeatureSnapshot,
+  ] = await Promise.all([
+    prisma.automationJob.count(),
+    prisma.conteudo.count(),
+    prisma.publicacao.count(),
+    prisma.linkDinamico.count(),
+    prisma.eventoLink.count(),
+    prisma.mLModel.count(),
+    // `MLTrainingRun` entrou aqui na P1.7.5: contar `MLModel` prova que
+    // nenhum modelo foi promovido, mas não que nenhum treino RODOU. São
+    // garantias diferentes, e o shadow mode depende das duas.
+    prisma.mLTrainingRun.count(),
+    prisma.mLFeatureSnapshot.count(),
+  ])
+  return {
+    automationJob, conteudo, publicacao, linkDinamico, eventoLink,
+    mLModel, mLTrainingRun, mLFeatureSnapshot,
+  }
 }
 
 async function main() {
