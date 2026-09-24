@@ -63,6 +63,9 @@ export async function GET(req: NextRequest) {
   let totalSucessos = 0
   let totalAguardando = 0
   let totalDestravados = 0
+  // Sem isto, uma execucao com falhas era indistinguivel de uma limpa na
+  // resposta do cron: o laco contava, e ninguem lia.
+  let totalFalhas = 0
 
   for (const ws of workspaces) {
     const r = await rodarFilaDoWorkspace({
@@ -81,6 +84,7 @@ export async function GET(req: NextRequest) {
     totalSucessos += r.sucessos
     totalAguardando += r.aguardando
     totalDestravados += r.destravados
+    totalFalhas += r.falhas
     porWorkspace[ws.id] = r
   }
 
@@ -95,6 +99,7 @@ export async function GET(req: NextRequest) {
     totalExecutados,
     totalSucessos,
     totalAguardando,
+    totalFalhas,
     totalDestravados,
     porWorkspace,
     custoTotal: 0,

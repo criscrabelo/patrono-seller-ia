@@ -1,3 +1,17 @@
+> **STATUS EM 24/09/2026, APOS AS RODADAS SEGUINTES**
+> As tres decisoes deste relatorio ja foram tratadas. Deixo o texto
+> original intacto porque ele explica COMO cada problema foi descoberto,
+> mas nao leia as pendencias abaixo como abertas:
+>
+> - **Decisao 1 (ordem dos formatos)** — RESOLVIDA em `133b58a`. A
+>   autoridade unica virou `lib/capacidades-da-fabrica.ts`.
+> - **Decisao 2 (SINCRONIZAR_MIDIA_AUTORIZADA)** — RESOLVIDA em `133b58a`.
+>   Passou a AGUARDA_CONDICAO com zero tentativas.
+> - **Decisao 3 (cron de oportunidades escreve)** — PREPARADA em `b445f28`,
+>   com modo ensaio. **Continua sem deploy**, por decisao do dono.
+>
+> O estado atual esta em `RELATORIO-RODADA-AUTONOMA.md`.
+
 # Relatório noturno — 23/09/2026
 
 Modo noturno seguro. Branch `claude/pronto-para-trabalhar-jiij19`.

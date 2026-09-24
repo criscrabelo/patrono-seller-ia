@@ -205,3 +205,27 @@ describe('Machine Learning continua em shadow mode', () => {
     assert.match(s, /CONVERSION_MODEL_FAMILY = 'conversion_probability'/)
   })
 })
+
+describe('Observabilidade dos crons', () => {
+  test('o cron do executor reporta FALHAS, nao so sucessos', () => {
+    // O laco sempre contou `falhas`; a rota nao as devolvia. Uma execucao
+    // com jobs falhando ficava indistinguivel de uma limpa para quem le a
+    // resposta — e e a resposta que alguem olha quando algo parece parado.
+    const s = readFileSync(join(RAIZ, 'app/api/cron/executar-fila/route.ts'), 'utf8')
+    assert.match(s, /totalFalhas \+= r\.falhas/)
+    assert.match(s, /^\s*totalFalhas,$/m)
+  })
+
+  test('o cron de oportunidades reporta erro por workspace', () => {
+    const s = readFileSync(join(RAIZ, 'lib/ciclo-de-oportunidades.ts'), 'utf8')
+    assert.match(s, /erro: string \| null/)
+    assert.match(s, /erros: porWorkspace\.filter/)
+  })
+
+  test('os dois crons declaram custo na resposta', () => {
+    const ciclo = readFileSync(join(RAIZ, 'lib/ciclo-de-oportunidades.ts'), 'utf8')
+    assert.match(ciclo, /custoTotal: 0/)
+    const exec = readFileSync(join(RAIZ, 'app/api/cron/executar-fila/route.ts'), 'utf8')
+    assert.match(exec, /custoTotal: 0/)
+  })
+})
