@@ -193,12 +193,12 @@ describe('Canal — respeita o que a API realmente permite', () => {
     const e = escolherCanalEFormato(op(), ['instagram'], {})
     assert.notEqual(e.formato, 'VIDEO_IA_GERADO', 'nunca escolhe o pago sozinho')
     assert.equal(e.custo, 0)
-    // E o motivo registra que existe alternativa gratuita para aquele caso.
-    assert.ok(
-      e.motivo.some((m) => /alternativa gratuita/i.test(m)) ||
-        e.bloqueios.some((b) => b.startsWith('CUSTO_PAGO_BLOQUEADO')),
-      'ou usa o fallback, ou declara o bloqueio'
-    )
+    // A partir da rodada 45 o laço varre os formatos na ordem da FÁBRICA e
+    // retorna no primeiro produzível. VIDEO_IA_GERADO ficou no fim e não
+    // chega a ser avaliado, então não há bloqueio de custo a registrar —
+    // o motivo de não escolhê-lo passou a ser "havia opção melhor antes".
+    // A garantia que importa continua: o pago nunca é escolhido sozinho.
+    assert.ok(e.formato === null || e.formato === 'TEXTO_COM_LINK')
   })
 
   test('capacidade ausente é registrada como bloqueio nomeado', () => {
@@ -209,7 +209,10 @@ describe('Canal — respeita o que a API realmente permite', () => {
   test('Digital Twin só entra quando a GPU é declarada', () => {
     const semGpu = escolherCanalEFormato(op(), ['instagram'], { FFMPEG: false })
     assert.notEqual(semGpu.formato, 'VIDEO_DIGITAL_TWIN')
-    assert.ok(semGpu.bloqueios.includes('CAPACIDADE_AUSENTE:DIGITAL_TWIN_GPU'))
+    // E COM a GPU declarada também não entra: desde a rodada 45 a fábrica é
+    // a autoridade, e não existe caminho de geração para o Digital Twin.
+    const comGpu = escolherCanalEFormato(op(), ['instagram'], { DIGITAL_TWIN_GPU: true })
+    assert.notEqual(comGpu.formato, 'VIDEO_DIGITAL_TWIN')
   })
 
   test('mídia bloqueada cai para TEXTO_COM_LINK, não some', () => {

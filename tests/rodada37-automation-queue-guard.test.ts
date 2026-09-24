@@ -110,7 +110,7 @@ function portaEmMemoria(): PortaDaFila & { linhas: LinhaDaFila[]; emUso: Set<str
 const item = (over: Partial<ItemDaFilaDeAutomacao> = {}): ItemDaFilaDeAutomacao => ({
   chave: 'x',
   produtoId: 'p1',
-  dependencia: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+  dependencia: 'RENOVAR_TOKEN',
   explicacao: 'faltou mídia',
   repetivel: true,
   ...over,
@@ -193,10 +193,16 @@ describe('Estados sem loop falso', () => {
     assert.match(manual.explicacao, /não chega sozinho/i)
   })
 
-  test('SINCRONIZAR_MIDIA_AUTORIZADA é automatizável com retry', () => {
-    const p = perfilContextual('SINCRONIZAR_MIDIA_AUTORIZADA')
+  test('GERAR_CONTEUDO e automatizavel com retry', () => {
+    const p = perfilContextual('GERAR_CONTEUDO')
     assert.equal(p.classe, 'AUTOMATIZAVEL')
-    assert.ok(p.maxTentativas > 0)
+    assert.equal(p.maxTentativas, 3)
+  })
+
+  test('SINCRONIZAR_MIDIA_AUTORIZADA nao consome retry: nao tem executor', () => {
+    const p = perfilContextual('SINCRONIZAR_MIDIA_AUTORIZADA')
+    assert.equal(p.classe, 'AGUARDA_CONDICAO')
+    assert.equal(p.maxTentativas, 0)
   })
 
   test('tipo desconhecido é fail-closed', () => {
@@ -414,7 +420,7 @@ describe(
     test('job de produto ALHEIO nunca chega a existir', async () => {
       const porta = portaEmMemoria()
       const r = await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoB, agora: AGORA,
       })
       assert.equal(r.ok, false)
@@ -425,7 +431,7 @@ describe(
     test('job válido nasce com o estado certo para o perfil', async () => {
       const porta = portaEmMemoria()
       const auto = await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA, agora: AGORA,
       })
       assert.equal(auto.job!.estado, 'PENDING', 'automatizável entra na fila')
@@ -443,7 +449,7 @@ describe(
       const porta = portaEmMemoria()
       const criar = () =>
         criarOuSincronizarAutomationJob({
-          porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+          porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
           entityType: 'PRODUTO', entityId: produtoA, contexto: { canal: 'instagram' }, agora: AGORA,
         })
       const a = await criar()
@@ -455,11 +461,11 @@ describe(
     test('MUDANÇA MATERIAL do contexto gera job novo', async () => {
       const porta = portaEmMemoria()
       const a = await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA, contexto: { canal: 'instagram' }, agora: AGORA,
       })
       const b = await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA, contexto: { canal: 'tiktok' }, agora: AGORA,
       })
       assert.notEqual(a.job!.id, b.job!.id)
@@ -522,7 +528,7 @@ describe(
 
     test('DOIS WORKERS não pegam o mesmo job', async () => {
       const porta = portaEmMemoria()
-      for (const dep of ['SINCRONIZAR_MIDIA_AUTORIZADA'] as const) {
+      for (const dep of ['GERAR_CONTEUDO'] as const) {
         await criarOuSincronizarAutomationJob({
           porta, workspaceId: wsA, tipo: dep, entityType: 'PRODUTO', entityId: produtoA, agora: AGORA,
         })
@@ -539,7 +545,7 @@ describe(
     test('worker do workspace A NUNCA pega job do B', async () => {
       const porta = portaEmMemoria()
       await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA, agora: AGORA,
       })
       const doB = await porta.reivindicar(wsB, 'worker-do-b', AGORA)
@@ -566,12 +572,12 @@ describe(
     test('o executor resolve o que é automatizável', async () => {
       const porta = portaEmMemoria()
       await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA, agora: AGORA,
       })
       const r = await executarProximoJob({
         porta, workspaceId: wsA, workerId: 'w1', agora: AGORA,
-        acoes: { SINCRONIZAR_MIDIA_AUTORIZADA: async () => ({ ok: true }) },
+        acoes: { GERAR_CONTEUDO: async () => ({ ok: true }) },
       })
       assert.equal(r.executado, true)
       assert.equal(r.estadoFinal, 'SUCCEEDED')
@@ -581,12 +587,12 @@ describe(
     test('falha transitória vira FAILED_RETRYABLE com próxima tentativa', async () => {
       const porta = portaEmMemoria()
       await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA, agora: AGORA,
       })
       const r = await executarProximoJob({
         porta, workspaceId: wsA, workerId: 'w1', agora: AGORA,
-        acoes: { SINCRONIZAR_MIDIA_AUTORIZADA: async () => ({ ok: false, erro: 'rede caiu' }) },
+        acoes: { GERAR_CONTEUDO: async () => ({ ok: false, erro: 'rede caiu' }) },
       })
       assert.equal(r.estadoFinal, 'FAILED_RETRYABLE')
       assert.ok(r.job!.proximaTentativaEm)
@@ -596,12 +602,12 @@ describe(
     test('falha FATAL não entra em loop', async () => {
       const porta = portaEmMemoria()
       await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA, agora: AGORA,
       })
       const r = await executarProximoJob({
         porta, workspaceId: wsA, workerId: 'w1', agora: AGORA,
-        acoes: { SINCRONIZAR_MIDIA_AUTORIZADA: async () => ({ ok: false, erroFatal: true }) },
+        acoes: { GERAR_CONTEUDO: async () => ({ ok: false, erroFatal: true }) },
       })
       assert.equal(r.estadoFinal, 'FAILED_FINAL')
       assert.equal(r.job!.proximaTentativaEm, null)
@@ -611,7 +617,7 @@ describe(
     test('sem ação registrada o job AGUARDA, não falha', async () => {
       const porta = portaEmMemoria()
       await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA, agora: AGORA,
       })
       const r = await executarProximoJob({ porta, workspaceId: wsA, workerId: 'w1', agora: AGORA })

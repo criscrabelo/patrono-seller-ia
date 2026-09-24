@@ -41,7 +41,7 @@ const AGORA = new Date('2026-09-23T12:00:00.000Z')
 const item = (over: Partial<ItemDaFilaDeAutomacao> = {}): ItemDaFilaDeAutomacao => ({
   chave: 'x',
   produtoId: 'p1',
-  dependencia: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+  dependencia: 'COMPLETAR_DADO_DO_PRODUTO',
   explicacao: 'faltou mídia',
   repetivel: true,
   ...over,
@@ -98,11 +98,15 @@ describe('Automatizável × dependência externa', () => {
     assert.equal(podeExecutarSozinho(p), false)
   })
 
-  test('SINCRONIZAR_MIDIA_AUTORIZADA é interna e automatizável', () => {
+  test('SINCRONIZAR_MIDIA_AUTORIZADA nao e automatizavel enquanto nao tiver executor', () => {
+    // Ate a rodada 45 este tipo era AUTOMATIZAVEL com 3 tentativas e NENHUMA
+    // acao registrada no executor: o claim entregava o job, o worker nao
+    // achava acao, devolvia a WAITING e repetia a cada execucao. Classe e
+    // realidade agora concordam.
     const p = perfilDaDependencia('SINCRONIZAR_MIDIA_AUTORIZADA')
-    assert.equal(p.classe, 'AUTOMATIZAVEL')
-    assert.ok(p.maxTentativas > 0)
-    assert.equal(podeExecutarSozinho(p), true)
+    assert.equal(p.classe, 'AGUARDA_CONDICAO')
+    assert.equal(p.maxTentativas, 0)
+    assert.equal(podeExecutarSozinho(p), false)
   })
 
   test('HABILITAR_CAPACIDADE aguarda condição, sem tentar', () => {
@@ -132,10 +136,10 @@ describe('Automatizável × dependência externa', () => {
 describe('Idempotência — mesma situação, mesmo job', () => {
   const base = {
     workspaceId: 'ws-1',
-    tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+    tipo: 'GERAR_CONTEUDO',
     entityType: 'Produto',
     entityId: 'p1',
-    contexto: { dependencia: 'SINCRONIZAR_MIDIA_AUTORIZADA', canal: 'instagram' },
+    contexto: { dependencia: 'COMPLETAR_DADO_DO_PRODUTO', canal: 'instagram' },
   }
 
   test('mesma entrada = mesma chave', () => {
@@ -175,7 +179,7 @@ describe('Idempotência — mesma situação, mesmo job', () => {
 
 describe('Sincronização — o cron não pede que ninguém crie tarefa', () => {
   const desejados = jobsDesejadosDoPlano('ws-1', [
-    item({ produtoId: 'p1', dependencia: 'SINCRONIZAR_MIDIA_AUTORIZADA' }),
+    item({ produtoId: 'p1', dependencia: 'COMPLETAR_DADO_DO_PRODUTO' }),
     item({ produtoId: 'p2', dependencia: 'CONECTAR_CANAL' }),
   ])
 
@@ -263,7 +267,7 @@ describe('Sincronização — o cron não pede que ninguém crie tarefa', () => 
 // ── Retry ───────────────────────────────────────────────────────────────
 
 describe('Retry — transitório volta, fatal não entra em loop', () => {
-  const automatizavel = perfilDaDependencia('SINCRONIZAR_MIDIA_AUTORIZADA')
+  const automatizavel = perfilDaDependencia('GERAR_CONTEUDO')
 
   test('falha transitória volta com backoff crescente', () => {
     const p1 = decidirAposFalha({ perfil: automatizavel, tentativasAtuais: 0, agora: AGORA })

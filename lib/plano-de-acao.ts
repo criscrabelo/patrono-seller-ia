@@ -26,6 +26,11 @@
 
 import { capacidadeDoCanal, type ChannelCapability } from './channel-registry'
 import { escolherFallback } from './cost-fallback'
+import {
+  ehFormatoProduzivel,
+  motivoNaoProduzido,
+  posicaoNaProducao,
+} from './capacidades-da-fabrica'
 import type { OportunidadePontuada, NivelDeConfianca } from './motor-de-oportunidades'
 
 // ── Estados do plano ────────────────────────────────────────────────────
@@ -323,6 +328,18 @@ export function aplicarDiversidade(
  */
 export const PREFERENCIA_DE_CANAL = ['tiktok', 'instagram', 'youtube', 'facebook', 'whatsapp']
 
+/**
+ * O catálogo reordenado pelo que a fábrica produz.
+ *
+ * Ordem estável: produzíveis primeiro, na ordem declarada pela fábrica;
+ * o resto depois, na ordem original do catálogo. Eles continuam na lista
+ * de propósito — é assim que o plano consegue explicar "existe este
+ * formato e ele não sai hoje" em vez de simplesmente omiti-lo.
+ */
+export const FORMATOS_POR_PRODUCAO: CapacidadeDeFormato[] = [...FORMATOS].sort(
+  (a, b) => posicaoNaProducao(a.formato) - posicaoNaProducao(b.formato)
+)
+
 export interface EscolhaDeCanal {
   canal: string | null
   formato: string | null
@@ -373,7 +390,11 @@ export function escolherCanalEFormato(
       continue
     }
 
-    for (const f of FORMATOS) {
+    // A ordem é a da FÁBRICA, não a do catálogo. O catálogo descreve o que
+    // existe no mundo; a fábrica diz o que sai hoje. Percorrer primeiro o
+    // produzível é o que impede o plano de escolher carrossel e a fila
+    // ficar vazia.
+    for (const f of FORMATOS_POR_PRODUCAO) {
       if (!f.exigeDoCanal.some((c) => cap[c])) continue
       if (f.exigeMidiaAutorizada && !midiaAutorizada) continue
 
@@ -393,6 +414,20 @@ export function escolherCanalEFormato(
 
       if (f.exigeCapacidade && !capacidades[f.exigeCapacidade as keyof CapacidadesTecnicas]) {
         bloqueios.push(`CAPACIDADE_AUSENTE:${f.exigeCapacidade}`)
+        continue
+      }
+
+      // TRAVA FINAL: execução automática só em formato que a fábrica monta.
+      // Vem DEPOIS dos gates de custo e capacidade de propósito — assim o
+      // plano continua registrando CUSTO_PAGO_BLOQUEADO e CAPACIDADE_AUSENTE,
+      // que explicam POR QUE aquele formato saiu. Esta trava responde outra
+      // pergunta: mesmo que passasse, ninguém sabe montá-lo.
+      //
+      // Sem ela, o item virava PRONTO_PARA_GERAR_CONTEUDO e nenhum job
+      // nascia — a execução fantasma observada em 24/09.
+      if (!ehFormatoProduzivel(f.formato)) {
+        bloqueios.push(`FORMATO_NAO_PRODUZIDO:${f.formato}`)
+        motivo.push(`"${f.formato}" não é produzido pela fábrica. ${motivoNaoProduzido(f.formato)}`)
         continue
       }
 
@@ -437,7 +472,11 @@ export function derivarEstadoEAcao(
     return { estado: 'AGUARDANDO_DADO', proximaAcao: 'COMPLETAR_DADO_DO_PRODUTO' }
   }
   if (escolha.bloqueios.includes('SEM_CANAL_CONECTADO') || escolha.canal === null) {
-    if (escolha.bloqueios.some((b) => b.startsWith('CAPACIDADE_AUSENTE'))) {
+    if (
+      escolha.bloqueios.some(
+        (b) => b.startsWith('CAPACIDADE_AUSENTE') || b.startsWith('FORMATO_NAO_PRODUZIDO')
+      )
+    ) {
       return { estado: 'AGUARDANDO_CAPACIDADE', proximaAcao: 'HABILITAR_CAPACIDADE' }
     }
     return { estado: 'AGUARDANDO_CANAL', proximaAcao: 'CONECTAR_CANAL' }

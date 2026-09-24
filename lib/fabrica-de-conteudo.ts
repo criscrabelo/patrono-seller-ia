@@ -38,6 +38,12 @@ import { avaliarCusto, lerPoliticaDeCusto, type FonteDeEnv } from './cost-safety
 import { avaliarMemoriaParaJobPesado } from './worker-memoria'
 import { produtoPodeAparecerNoVideo } from './media-rights-produto'
 import { chaveDoJob, type JobDesejado } from './automation-queue-contrato'
+import {
+  ORDEM_DE_PRODUCAO,
+  FORMATOS_NAO_PRODUZIDOS,
+  ehFormatoProduzivel,
+  type FormatoProduzido,
+} from './capacidades-da-fabrica'
 import type { ItemDoPlano } from './plano-de-acao'
 
 // ── Formatos que a fábrica sabe produzir de verdade ─────────────────────
@@ -49,26 +55,30 @@ import type { ItemDoPlano } from './plano-de-acao'
  * continua no catálogo do P1.2 como formato conhecido e bloqueado — a
  * fábrica simplesmente não o produz.
  */
-export const FORMATOS_GRATUITOS = [
-  'VIDEO_9X16_FFMPEG_NARRADO',
-  'TEXTO_COM_LINK',
-] as const
-export type FormatoGratuito = (typeof FORMATOS_GRATUITOS)[number]
-
 /**
- * Formatos reconhecidos pelo plano que a fábrica ainda NÃO produz, com o
- * motivo. Declarados para não virarem silêncio: um formato que some sem
- * explicação vira "o robô não fez e ninguém sabe por quê".
+ * O que a fabrica produz vem de UMA autoridade so.
+ *
+ * Antes existia aqui uma lista propria, e lib/plano-de-acao.ts tinha outra.
+ * Elas discordavam: o plano escolhia CARROSSEL e a fabrica nao produz
+ * carrossel. Agora as duas perguntam a lib/capacidades-da-fabrica.ts.
+ *
+ * Os nomes antigos seguem exportados para nao quebrar quem ja os importava.
  */
-export const FORMATOS_NAO_PRODUZIDOS: Record<string, string> = {
-  VIDEO_IA_GERADO: 'Depende do fal.ai, que é pago. Bloqueado pelo CostSafetyGate.',
-  VIDEO_DIGITAL_TWIN: 'Exige worker com GPU pareado; a fábrica só produz quando a capacidade estiver declarada.',
-  CARROSSEL: 'O renderer monta imagem única e vídeo; carrossel ainda não tem caminho local de montagem.',
-  IMAGEM_UNICA: 'Renderizável, mas depende de mídia autorizada do produto — entra quando o gate de direitos permitir.',
-}
+export {
+  ORDEM_DE_PRODUCAO,
+  FORMATOS_NAO_PRODUZIDOS,
+  ehFormatoProduzivel,
+  motivoNaoProduzido,
+  type FormatoProduzido,
+} from './capacidades-da-fabrica'
 
-export function ehFormatoGratuito(formato: string | null | undefined): formato is FormatoGratuito {
-  return !!formato && (FORMATOS_GRATUITOS as readonly string[]).includes(formato)
+/** Nome historico de `ORDEM_DE_PRODUCAO`. Mesma lista, mesma autoridade. */
+export const FORMATOS_GRATUITOS = ORDEM_DE_PRODUCAO
+export type FormatoGratuito = FormatoProduzido
+
+/** Nome historico de `ehFormatoProduzivel`. */
+export function ehFormatoGratuito(formato: string | null | undefined): formato is FormatoProduzido {
+  return ehFormatoProduzivel(formato)
 }
 
 // ── Capacidade técnica ──────────────────────────────────────────────────

@@ -40,7 +40,7 @@ const portaStaleCurto = portaPrisma(50)
 const item = (over: Partial<ItemDaFilaDeAutomacao> = {}): ItemDaFilaDeAutomacao => ({
   chave: 'x',
   produtoId: produtoA,
-  dependencia: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+  dependencia: 'RENOVAR_TOKEN',
   explicacao: 'faltou mídia',
   repetivel: true,
   ...over,
@@ -51,7 +51,7 @@ async function semear(over: Record<string, unknown> = {}) {
   return prisma.automationJob.create({
     data: {
       workspaceId: wsA,
-      tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+      tipo: 'GERAR_CONTEUDO',
       chave: `${marca}-${Math.random().toString(36).slice(2)}`,
       estado: 'PENDING',
       classe: 'AUTOMATIZAVEL',
@@ -229,7 +229,7 @@ describe(
         await semear({ chave: `${marca}-iso-a-${i}` })
         await prisma.automationJob.create({
           data: {
-            workspaceId: wsB, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+            workspaceId: wsB, tipo: 'GERAR_CONTEUDO',
             chave: `${marca}-iso-b-${i}`, estado: 'PENDING',
             classe: 'AUTOMATIZAVEL', entityType: 'PRODUTO', entityId: produtoB,
           } as never,
@@ -338,7 +338,7 @@ describe(
       const agora = new Date()
       const criar = () =>
         criarOuSincronizarAutomationJob({
-          porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+          porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
           entityType: 'PRODUTO', entityId: produtoA, contexto: { canal: 'instagram' }, agora,
         })
 
@@ -377,7 +377,7 @@ describe(
     test('job com entidade alheia nunca chega ao banco', async () => {
       await prisma.automationJob.deleteMany({ where: { workspaceId: wsA } })
       const r = await criarOuSincronizarAutomationJob({
-        porta, workspaceId: wsA, tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
+        porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoB, agora: new Date(),
       })
       assert.equal(r.ok, false)

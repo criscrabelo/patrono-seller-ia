@@ -89,12 +89,29 @@ export const PERFIS_DE_DEPENDENCIA: Record<string, PerfilDaDependencia> = {
     explicacao:
       'Renovacao pelo refresh token ja guardado: gratuita, idempotente e sem novo consentimento.',
   },
+  /**
+   * Automatizável NO PAPEL, sem executor NA PRÁTICA.
+   *
+   * Nenhuma ação está registrada para este tipo em `acoesDoExecutor`. Como
+   * AUTOMATIZAVEL com 3 tentativas, o claim entregava o job ao worker, que
+   * não achava ação, devolvia a WAITING com "sem ação registrada" — e
+   * repetia isso a cada execução da fila. Churn sem trabalho.
+   *
+   * AGUARDA_CONDICAO com zero tentativas descreve a verdade: a condição que
+   * falta é a implementação da sincronização com o catálogo do provider.
+   * O job fica visível no painel de exceções sem consumir retry.
+   *
+   * QUANDO IMPLEMENTAR: escreva a ação, registre-a em `acoesDoExecutor` e
+   * só então volte a classe para AUTOMATIZAVEL com maxTentativas 3. Mudar
+   * a classe antes da ação recria exatamente este churn.
+   */
   SINCRONIZAR_MIDIA_AUTORIZADA: {
     tipo: 'SINCRONIZAR_MIDIA_AUTORIZADA',
-    classe: 'AUTOMATIZAVEL',
+    classe: 'AGUARDA_CONDICAO',
     motivoHumano: null,
-    maxTentativas: 3,
-    explicacao: 'Sincronização com o catálogo oficial do provider — interna, gratuita e idempotente.',
+    maxTentativas: 0,
+    explicacao:
+      'Sincronização com o catálogo oficial do provider ainda não tem executor. O sistema observa a condição; não há o que tentar.',
   },
   COMPLETAR_DADO_DO_PRODUTO: {
     tipo: 'COMPLETAR_DADO_DO_PRODUTO',
