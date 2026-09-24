@@ -31,6 +31,15 @@ const BASELINE = join(RAIZ, 'prisma', 'migrations', '20260101000000_baseline_pre
 
 const prisma = new PrismaClient({ log: ['error'] })
 
+/**
+ * Colunas que produção tem, o baseline não declara, e que já foram medidas
+ * como inertes: 100% nulas e não mencionadas por nenhuma migration.
+ * Sobra fora desta lista volta a ser divergência de verdade.
+ */
+const CONHECIDAS: Record<string, string[]> = {
+  Conteudo: ['linkUrl', 'videoResultUrl', 'videoStatusUrl'],
+}
+
 /** Colunas que cada CREATE TABLE do baseline declara. */
 function colunasDoBaseline(): Map<string, Set<string>> {
   const sql = readFileSync(BASELINE, 'utf8')
@@ -70,6 +79,7 @@ async function main() {
 
   let divergencias = 0
   let ausentes = 0
+  let conhecidas = 0
 
   for (const [tabela, esperadas] of baseline) {
     const reais = await colunasDeProducao(tabela)
@@ -86,34 +96,50 @@ async function main() {
       console.log(`\n  ${tabela}: confere (${esperadas.size} colunas)`)
       continue
     }
+    // Sobra conhecida: as três colunas mortas de `Conteudo`. A auditoria da
+    // P1.7.1 mediu que estão 100% nulas, nenhuma migration as menciona, e o
+    // ensaio da P1.7.2 reproduziu exatamente este estado e fez o baselining
+    // funcionar em cima dele. Tratá-las como divergência deixaria este gate
+    // permanentemente vermelho — e gate sempre vermelho ninguém lê.
+    const sobrasInesperadas = sobrando.filter((c) => !(CONHECIDAS[tabela] ?? []).includes(c))
+    if (faltando.length === 0 && sobrasInesperadas.length === 0) {
+      conhecidas += 1
+      console.log(`\n  ${tabela}: confere, com sobra conhecida`)
+      console.log(`    colunas mortas, já auditadas e inertes: ${sobrando.join(', ')}`)
+      continue
+    }
+
     divergencias += 1
     console.log(`\n  ${tabela}: DIVERGE`)
     if (faltando.length) console.log(`    no baseline e AUSENTES em produção: ${faltando.join(', ')}`)
-    if (sobrando.length) console.log(`    em produção e FORA do baseline:     ${sobrando.join(', ')}`)
+    if (sobrasInesperadas.length) {
+      console.log(`    em produção e FORA do baseline (INESPERADAS): ${sobrasInesperadas.join(', ')}`)
+    }
   }
 
   console.log(`\n${'='.repeat(78)}`)
   console.log('VEREDITO')
   console.log('='.repeat(78))
-  console.log(`  tabelas do baseline que conferem      ${baseline.size - divergencias - ausentes}`)
+  console.log(`  tabelas do baseline que conferem      ${baseline.size - divergencias - ausentes - conhecidas}`)
+  console.log(`  conferem com sobra conhecida          ${conhecidas}`)
   console.log(`  tabelas ausentes em produção          ${ausentes}`)
-  console.log(`  tabelas com divergência de coluna     ${divergencias}`)
+  console.log(`  tabelas com divergência INESPERADA    ${divergencias}`)
 
   if (divergencias === 0 && ausentes === 0) {
     console.log(`\n  Produção ESTÁ no estado do baseline. O baselining é seguro.`)
   } else if (divergencias === 0) {
     console.log(
-      `\n  Nenhuma divergência de coluna. Faltam apenas tabelas inteiras —\n` +
+      `\n  Nenhuma divergência inesperada. Faltam apenas tabelas inteiras —\n` +
         `  criá-las é aditivo e não toca dado existente. Depois disso o\n` +
         `  baselining é seguro.`
     )
   } else {
-    console.log(`\n  HÁ DIVERGÊNCIA DE COLUNA. O baselining NÃO é seguro sem tratar isso antes.`)
+    console.log(`\n  HÁ DIVERGÊNCIA INESPERADA. O baselining NÃO é seguro sem tratar isso antes.`)
   }
   console.log('\n  (nenhuma escrita foi executada)')
 
   await prisma.$disconnect()
-  process.exit(divergencias === 0 ? 0 : 1)
+  process.exit(divergencias === 0 && ausentes === 0 ? 0 : 1)
 }
 
 main().catch(async (e) => {
