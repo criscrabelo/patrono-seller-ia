@@ -12,8 +12,8 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, existsSync } from 'node:fs'
-import { join, dirname, resolve, sep } from 'node:path'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
+import { join, dirname, resolve, sep, relative } from 'node:path'
 
 const RAIZ = join(__dirname, '..')
 
@@ -227,5 +227,99 @@ describe('Observabilidade dos crons', () => {
     assert.match(ciclo, /custoTotal: 0/)
     const exec = readFileSync(join(RAIZ, 'app/api/cron/executar-fila/route.ts'), 'utf8')
     assert.match(exec, /custoTotal: 0/)
+  })
+})
+
+describe('O projeto continua DEPLOYÁVEL', () => {
+  /**
+   * Estes dois testes nasceram de duas falhas reais, descobertas só quando
+   * o `next build` rodou pela primeira vez em muitas rodadas. Nem
+   * `tsc --noEmit` nem a suíte pegavam nenhuma das duas, porque nenhuma é
+   * erro de tipo nem de comportamento — são regras de plataforma.
+   */
+
+  /** Todos os `route.ts` sob `app/`. */
+  function rotas(dir = join(RAIZ, 'app')): string[] {
+    const achados: string[] = []
+    for (const entrada of readdirSync(dir, { withFileTypes: true })) {
+      const caminho = join(dir, entrada.name)
+      if (entrada.isDirectory()) achados.push(...rotas(caminho))
+      else if (entrada.name === 'route.ts' || entrada.name === 'route.tsx') achados.push(caminho)
+    }
+    return achados
+  }
+
+  test('nenhum route.ts exporta coisa que o App Router não aceita', () => {
+    // O Next só admite, num `route.ts`, os handlers HTTP e um punhado de
+    // configs. Qualquer outro export vira erro de TIPO no `next build` —
+    // e só lá. Foi assim que `export { compararFilas, capacidadesDeclaradas }`
+    // no cron de oportunidades deixou o projeto indeployável sem ninguém
+    // notar: parecia uma conveniência inofensiva.
+    const PERMITIDOS = new Set([
+      'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS',
+      'dynamic', 'dynamicParams', 'revalidate', 'fetchCache', 'runtime',
+      'preferredRegion', 'maxDuration', 'generateStaticParams',
+    ])
+
+    const arquivos = rotas()
+    assert.ok(arquivos.length > 10, `poucas rotas encontradas (${arquivos.length}) — a varredura quebrou`)
+
+    const proibidos: string[] = []
+    for (const arq of arquivos) {
+      const src = readFileSync(arq, 'utf8')
+      // `export const X`, `export function X`, `export async function X`
+      for (const m of src.matchAll(/^export\s+(?:const|let|var|(?:async\s+)?function\*?|class)\s+(\w+)/gm)) {
+        if (!PERMITIDOS.has(m[1])) proibidos.push(`${relative(RAIZ, arq)} -> ${m[1]}`)
+      }
+      // `export { A, B }` — reexport, que foi exatamente o caso real.
+      for (const m of src.matchAll(/^export\s*\{([^}]*)\}/gm)) {
+        for (const nome of m[1].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()!.trim())) {
+          if (nome && !PERMITIDOS.has(nome)) proibidos.push(`${relative(RAIZ, arq)} -> ${nome}`)
+        }
+      }
+      // `export default` também não é aceito num route.ts.
+      if (/^export\s+default\b/m.test(src)) proibidos.push(`${relative(RAIZ, arq)} -> default`)
+    }
+
+    assert.deepEqual(
+      proibidos,
+      [],
+      `route.ts não pode exportar isto — o next build falha:\n  ${proibidos.join('\n  ')}`
+    )
+  })
+
+  test('vercel.json não declara cron — o plano Hobby recusa', () => {
+    // O plano Hobby só aceita cron diário. O `vercel.json` tinha dois
+    // sub-diários (`0 6,12,18 * * *` e `*/30 * * * *`), e por isso TODO
+    // deploy era recusado na validação — por 60 dias, sem ninguém saber.
+    // O agendamento mora no GitHub Actions agora.
+    const vercel = JSON.parse(readFileSync(join(RAIZ, 'vercel.json'), 'utf8'))
+    assert.ok(
+      !('crons' in vercel),
+      'vercel.json voltou a declarar crons: o deploy será recusado no plano Hobby'
+    )
+  })
+
+  test('todo cron do código está agendado no workflow', () => {
+    // A mudança de casa não pode ter deixado nenhum para trás.
+    const fluxo = readFileSync(join(RAIZ, '.github/workflows/patrono-crons.yml'), 'utf8')
+    const noCodigo = readdirSync(join(RAIZ, 'app/api/cron'), { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+    assert.ok(noCodigo.length >= 5, `poucos crons encontrados (${noCodigo.length})`)
+    const semAgenda = noCodigo.filter((c) => !fluxo.includes(c))
+    assert.deepEqual(semAgenda, [], `crons sem agendamento no workflow: ${semAgenda.join(', ')}`)
+  })
+
+  test('o workflow não carrega segredo e não opera sem ele', () => {
+    const fluxo = readFileSync(join(RAIZ, '.github/workflows/patrono-crons.yml'), 'utf8')
+    // O segredo vem do cofre do GitHub, nunca do arquivo.
+    assert.match(fluxo, /\$\{\{ secrets\.CRON_SECRET \}\}/)
+    // E vai no header, nunca na URL — query string entra em log de acesso.
+    assert.match(fluxo, /--header "Authorization: Bearer \$\{CRON_SECRET\}"/)
+    assert.ok(!/CRON_SECRET=['"][^'"$]/.test(fluxo), 'o workflow não pode conter valor literal de segredo')
+    // Sem segredo, não chama nada.
+    assert.match(fluxo, /if \[ -z "\$\{CRON_SECRET:-\}" \] && \[ -z "\$\{BASE_URL:-\}" \]; then/)
   })
 })

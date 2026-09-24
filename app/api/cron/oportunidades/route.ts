@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { compararFilas, MOTOR_NAO_PUBLICA } from '@/lib/motor-de-oportunidades'
+import { MOTOR_NAO_PUBLICA } from '@/lib/motor-de-oportunidades'
 import { PLANO_NAO_EXECUTA } from '@/lib/plano-de-acao'
 import { portaPrisma } from '@/lib/automation-queue-prisma'
 import {
   rodarCicloDeOportunidades,
-  capacidadesDeclaradas,
   CICLO_NAO_PUBLICA_NEM_GERA,
   TIPOS_DESTE_CICLO,
 } from '@/lib/ciclo-de-oportunidades'
@@ -69,5 +68,15 @@ export async function GET(req: NextRequest) {
   })
 }
 
-/** Reexportados para quem quiser comparar execuções fora do cron. */
-export { compararFilas, capacidadesDeclaradas }
+// ── POR QUE NÃO HÁ REEXPORT AQUI ───────────────────────────────────────
+// Este arquivo já reexportou `compararFilas` e `capacidadesDeclaradas`
+// "para quem quiser comparar execuções fora do cron". Parecia inofensivo e
+// não era: o App Router do Next só admite, num `route.ts`, os handlers HTTP
+// e um conjunto fixo de configs (`dynamic`, `maxDuration` e afins).
+// Qualquer outro export vira erro de tipo no `next build` — e só no build,
+// que `tsc --noEmit` e a suíte não executam. O projeto ficou indeployável
+// sem ninguém notar.
+//
+// As duas funções continuam exportadas de onde moram:
+// `lib/motor-de-oportunidades.ts` e `lib/ciclo-de-oportunidades.ts`. Quem
+// precisa delas importa de lá, que é o lugar certo de qualquer forma.

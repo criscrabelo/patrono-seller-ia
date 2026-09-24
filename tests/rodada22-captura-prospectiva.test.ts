@@ -182,7 +182,11 @@ describe('Gatilhos ligados no código', () => {
     assert.match(rota, /CRON_SECRET/)
     assert.match(rota, /status: 401/)
     assert.match(rota, /fecharJanelasDeObservacao/)
-    assert.match(lerFonte('vercel.json'), /ml-janela-observacao/)
+    // O agendamento saiu do `vercel.json` (o plano Hobby recusava as
+    // frequências do projeto e deixava o deploy travado) e passou para o
+    // GitHub Actions. A exigência continua a mesma: este cron TEM de estar
+    // agendado em algum lugar.
+    assert.match(lerFonte('.github/workflows/patrono-crons.yml'), /ml-janela-observacao/)
   })
 
   test('nenhum gatilho derruba a operação principal quando o ML falha', () => {

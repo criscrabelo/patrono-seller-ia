@@ -100,9 +100,13 @@ describe('O executor liga a fila à fábrica', () => {
   })
 
   test('o cron está agendado', () => {
-    const vercel = JSON.parse(readFileSync(join(RAIZ, 'vercel.json'), 'utf8'))
-    const caminhos = vercel.crons.map((c: { path: string }) => c.path)
-    assert.ok(caminhos.includes('/api/cron/executar-fila'))
+    // O agendamento saiu do `vercel.json` e foi para o GitHub Actions: o
+    // plano Hobby recusa cron sub-diário, e o `*/30` deste executor era um
+    // dos dois que deixavam o projeto INDEPLOYÁVEL. A exigência não
+    // afrouxou — mudou de arquivo.
+    const fluxo = readFileSync(join(RAIZ, '.github/workflows/patrono-crons.yml'), 'utf8')
+    assert.match(fluxo, /chamar "executar-fila"/)
+    assert.match(fluxo, /- cron: '0 \* \* \* \*'/)
   })
 
   test('o executor NÃO publica', () => {

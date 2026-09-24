@@ -89,12 +89,25 @@ jobs:
         run: |
           set -euo pipefail
 
+          # ── INERTE ATÉ ESTAR CONFIGURADO ────────────────────────────
+          # Enquanto nem o segredo nem a URL existirem, este workflow não
+          # tem como operar — e não deve fingir que tem. Ele encerra em
+          # silêncio, sem chamar nada e sem marcar falha, porque um X
+          # vermelho de hora em hora vira ruído e ninguém olha mais.
+          #
+          # Meio configurado é outra história: isso é engano, não espera,
+          # e aí ele falha alto.
+          if [ -z "${CRON_SECRET:-}" ] && [ -z "${BASE_URL:-}" ]; then
+            echo "Ainda não configurado: faltam o secret CRON_SECRET e a variable PATRONO_BASE_URL."
+            echo "Nada foi chamado. Este workflow permanece inerte até os dois existirem."
+            exit 0
+          fi
           if [ -z "${CRON_SECRET:-}" ]; then
-            echo "CRON_SECRET não está configurado nos Secrets do repositório." >&2
+            echo "PATRONO_BASE_URL existe mas o secret CRON_SECRET não. Configuração pela metade." >&2
             exit 1
           fi
           if [ -z "${BASE_URL:-}" ]; then
-            echo "PATRONO_BASE_URL não está configurada nas Variables do repositório." >&2
+            echo "CRON_SECRET existe mas a variable PATRONO_BASE_URL não. Configuração pela metade." >&2
             exit 1
           fi
 
