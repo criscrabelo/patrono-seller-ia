@@ -54,3 +54,5 @@ next-env.d.ts
 __pycache__/
 *.pyc
 .verificacao-escrita-zero.json
+
+.env*
