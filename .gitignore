@@ -53,3 +53,4 @@ next-env.d.ts
 # Cache do Python do worker (gerado ao importar chatterbox_synthesize.py)
 __pycache__/
 *.pyc
+.verificacao-escrita-zero.json
