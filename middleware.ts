@@ -18,6 +18,12 @@ const ROTAS_PUBLICAS = [
   '/register',
   '/esqueci-senha',
   '/redefinir-senha',
+  // Páginas institucionais: identificam a empresa responsável para
+  // parceiros e plataformas (ex.: validação do TikTok Shop Partner Center).
+  // Só texto — nenhum dado de usuária ou de workspace.
+  '/sobre',
+  '/privacidade',
+  '/termos',
 ]
 
 // Prefixos de API que precisam ser alcançáveis sem sessão:

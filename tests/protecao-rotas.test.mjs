@@ -94,3 +94,49 @@ describe('Link de afiliada (/api/l/:slug)', () => {
     assert.ok(!destino.includes('/login'), `redirecionou para login: ${destino}`)
   })
 })
+
+// ── Páginas institucionais públicas ────────────────────────────────────
+//
+// Existem para que parceiros e plataformas (validação do TikTok Shop
+// Partner Center) identifiquem a empresa. Precisam responder 200 SEM sessão,
+// SEM redirecionar, e com a razão social no HTML do servidor — um crawler
+// não executa JavaScript.
+describe('Institucional: /sobre, /privacidade, /termos', () => {
+  const PAGINAS = {
+    '/sobre': ['PATRONO INOVA SIMPLES (I.S.)', '69.438.337/0001-81', 'Patrono Seller', 'Política de Privacidade', 'Termos de Uso', 'Marketing de afiliados', 'Rastreamento de vendas e comissões'],
+    '/privacidade': ['PATRONO INOVA SIMPLES (I.S.)', 'Política de Privacidade', 'LGPD'],
+    '/termos': ['PATRONO INOVA SIMPLES (I.S.)', 'Termos de Uso'],
+  }
+
+  for (const [rota, textos] of Object.entries(PAGINAS)) {
+    test(`${rota} responde 200 sem sessão, sem redirecionar`, async () => {
+      const r = await sem(rota)
+      assert.equal(r.status, 200, `${rota} respondeu ${r.status} (location: ${r.headers.get('location')})`)
+      assert.ok((r.headers.get('content-type') ?? '').includes('text/html'))
+    })
+
+    test(`${rota} traz o texto no HTML do servidor`, async () => {
+      const html = await (await sem(rota)).text()
+      for (const t of textos) {
+        // O HTML escapa "&" e acentos não; a razão social precisa aparecer literal.
+        assert.ok(html.includes(t), `${rota} sem "${t}" no HTML renderizado`)
+      }
+    })
+
+    test(`${rota} não vaza segredo nem dado de sessão`, async () => {
+      const html = await (await sem(rota)).text()
+      for (const proibido of ['REVISAR', 'NEXTAUTH_SECRET', 'SERVICE_ROLE', 'accessToken', 'refreshToken', 'appSecret', 'DATABASE_URL', 'postgres://', 'postgresql://']) {
+        assert.ok(!html.includes(proibido), `${rota} contém "${proibido}"`)
+      }
+    })
+  }
+
+  // A liberação é por comparação EXATA: nada "parecido" fica público.
+  for (const rota of ['/sobre/admin', '/sobrex', '/termos/../dashboard', '/privacidade-interna']) {
+    test(`${rota} continua exigindo sessão`, async () => {
+      const r = await sem(rota)
+      assert.equal(r.status, 307, `${rota} respondeu ${r.status}`)
+      assert.ok((r.headers.get('location') ?? '').includes('/login'))
+    })
+  }
+})
