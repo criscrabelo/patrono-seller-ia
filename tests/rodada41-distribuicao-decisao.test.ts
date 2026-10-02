@@ -45,6 +45,7 @@ import { capacidadeDoCanal } from '../lib/channel-registry'
 import { TIKTOK_SCOPES } from '../lib/tiktok-oauth'
 import { prepararTentativaDePublicacao, confirmarDistribuicao } from '../lib/publicacao-fluxo'
 import { avaliarRastreamentoDoConteudo } from '../lib/rastreamento-da-publicacao'
+import { confirmarLinkNaBioParaTeste } from './_fixtura-midia-propria'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
 const RAIZ = join(__dirname, '..')
@@ -59,6 +60,8 @@ const ctxOk = (over: Partial<ContextoDaDistribuicao> = {}): ContextoDaDistribuic
   appAprovadoPeloProvider: true,
   midiaAutorizada: true,
   formatoCompativel: true,
+  // P1.9.1: o adapter real aceita a peça (vídeo, formato publicável).
+  pecaParaOAdapter: { aceita: true, bloqueios: [], explicacao: [] },
   disclosurePresente: true,
   pendenciasDeCompliance: [],
   custoZero: true,
@@ -78,12 +81,12 @@ before(async () => {
   }
   ;[wsA, wsB] = criados
 
-  const uA = (
+  const uA = (userA = (
     await prisma.user.create({
       data: { email: `${marca}-a@teste.local`, name: 'U', password: 'x', workspaceId: wsA },
       select: { id: true },
     })
-  ).id
+  ).id)
 
   const criarProduto = async (link: string | null) =>
     (
@@ -368,6 +371,7 @@ let wsA = ''
 let wsB = ''
 let conteudoA = ''
 let conteudoSemUrl = ''
+let userA = ''
 
 describe(
   'Publicacao e LinkDinamico no fluxo de distribuição',
@@ -506,10 +510,26 @@ describe(
       appAprovadoPeloProvider: true,
       midiaAutorizada: true,
       formatoCompativel: true,
+      pecaParaOAdapter: { aceita: true, bloqueios: [], explicacao: [] },
       disclosurePresente: true,
       pendenciasDeCompliance: [],
       custoZero: true,
     })
+
+    /**
+     * P1.9.2: no Instagram o link vai na bio, e nada sai sem a confirmação
+     * humana dele lá. Os testes de mecânica fazem esse passo pelo caminho
+     * real; os de bloqueio chamam `distribuirConteudo` direto, sem ele.
+     */
+    const distribuirComBio = async (p: Parameters<typeof distribuirConteudo>[0]) => {
+      if (p.workspaceId === wsA) {
+        await confirmarLinkNaBioParaTeste({
+          workspaceId: wsA, contentId: p.contentId, chaveDaTentativa: p.chaveDaTentativa,
+          userId: userA, env: p.env,
+        })
+      }
+      return distribuirConteudo(p)
+    }
 
     test('nenhum adapter ligado por padrão — decidir não é publicar', () => {
       assert.deepEqual(Object.keys(ADAPTADORES_LIGADOS), [])
@@ -532,7 +552,7 @@ describe(
 
     test('CAMINHO AUTORIZADO: publica e registra a Publicacao distribuída', async () => {
       const e = espiao()
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram',
         chaveDaTentativa: `${marca}-auto`, contexto: ctxAutorizado(),
         adaptadores: { instagram: e.adapter() }, env: BASE_OK,
@@ -548,40 +568,62 @@ describe(
       assert.equal(pub.publicacaoExternaId, r.publicacaoExternaId)
     })
 
-    test('a legenda leva o LINK RASTREADO, não o link direto', async () => {
+    test('o canal recebe o LINK RASTREADO, não o link direto — e no Instagram ele vai na bio', async () => {
       const e = espiao()
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram',
         chaveDaTentativa: `${marca}-link`, contexto: ctxAutorizado(),
         adaptadores: { instagram: e.adapter() }, env: BASE_OK,
       })
       assert.equal(r.rastreada, true)
       assert.match(e.chamadas[0].urlParaDivulgar, /\/api\/l\//)
-      assert.ok(e.chamadas[0].legenda.includes(e.chamadas[0].urlParaDivulgar))
+      // P1.9.1: legenda do Instagram não é clicável. A URL rastreada segue
+      // para quem publica (bio), e NÃO é colada no texto.
+      assert.ok(!e.chamadas[0].legenda.includes(e.chamadas[0].urlParaDivulgar))
       assert.ok(!e.chamadas[0].legenda.includes('https://loja.invalido/p'))
     })
 
-    test('sem link rastreável: distribui por FALLBACK e marca o estado', async () => {
+    test('P1.9.2 — produto sem link: no Instagram não há o que pôr na bio, e nada sai', async () => {
+      // Antes, o fallback publicava com um link genérico colado na legenda.
+      // No Instagram a legenda não é clicável e a bio precisa de UM link
+      // deste produto: sem destino, espera — o adapter não é chamado.
       const e = espiao()
+      const antes = await prisma.publicacao.count({ where: { workspaceId: wsA } })
       const r = await distribuirConteudo({
         workspaceId: wsA, contentId: conteudoSemUrl, canal: 'instagram',
         chaveDaTentativa: `${marca}-orq-fb`, contexto: ctxAutorizado(),
         adaptadores: { instagram: e.adapter() }, env: BASE_OK,
       })
-      assert.equal(r.ok, true, r.explicacao)
-      assert.equal(r.rastreada, false)
-      const est = await avaliarRastreamentoDoConteudo({ workspaceId: wsA, contentId: conteudoSemUrl })
-      assert.equal(est.estado, 'NAO_RASTREADA_COM_FALLBACK')
+      assert.equal(r.ok, false)
+      assert.equal(r.aguardar, true)
+      assert.equal(r.motivoDaEspera, 'LINK_NA_BIO_NAO_CONFIRMADO')
+      assert.equal(e.chamadas.length, 0)
+      assert.equal(await prisma.publicacao.count({ where: { workspaceId: wsA } }), antes)
+    })
+
+    test('P1.9.2 — link NÃO confirmado na bio: espera, o adapter não é chamado, nenhuma Publicacao', async () => {
+      const e = espiao()
+      const antes = await prisma.publicacao.count({ where: { workspaceId: wsA } })
+      const r = await distribuirConteudo({
+        workspaceId: wsA, contentId: conteudoA, canal: 'instagram',
+        chaveDaTentativa: `${marca}-sem-bio`, contexto: ctxAutorizado(),
+        adaptadores: { instagram: e.adapter() }, env: BASE_OK,
+      })
+      assert.equal(r.ok, false)
+      assert.equal(r.aguardar, true, 'esperar não consome tentativa')
+      assert.equal(r.motivoDaEspera, 'LINK_NA_BIO_NAO_CONFIRMADO')
+      assert.equal(e.chamadas.length, 0)
+      assert.equal(await prisma.publicacao.count({ where: { workspaceId: wsA } }), antes)
     })
 
     test('RETRY do mesmo job não cria segunda Publicacao', async () => {
       const e = espiao()
       const chave = `${marca}-orq-retry`
-      const a = await distribuirConteudo({
+      const a = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: chave,
         contexto: ctxAutorizado(), adaptadores: { instagram: e.adapter() }, env: BASE_OK,
       })
-      const b = await distribuirConteudo({
+      const b = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: chave,
         contexto: ctxAutorizado(), adaptadores: { instagram: e.adapter() }, env: BASE_OK,
       })
@@ -594,11 +636,11 @@ describe(
 
     test('REPUBLICAÇÃO cria outra Publicacao', async () => {
       const e = espiao()
-      const a = await distribuirConteudo({
+      const a = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: `${marca}-orq-r1`,
         contexto: ctxAutorizado(), adaptadores: { instagram: e.adapter() }, env: BASE_OK,
       })
-      const b = await distribuirConteudo({
+      const b = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: `${marca}-orq-r2`,
         contexto: ctxAutorizado(), adaptadores: { instagram: e.adapter() }, env: BASE_OK,
       })
@@ -614,13 +656,13 @@ describe(
         canal: 'instagram',
         publicar: async () => ({ ok: true, publicacaoExternaId: idRepetido, erro: null }),
       }
-      const a = await distribuirConteudo({
+      const a = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: `${marca}-col-1`,
         contexto: ctxAutorizado(), adaptadores: { instagram: adapter }, env: BASE_OK,
       })
       assert.equal(a.registroConfirmado, true)
 
-      const b = await distribuirConteudo({
+      const b = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: `${marca}-col-2`,
         contexto: ctxAutorizado(), adaptadores: { instagram: adapter }, env: BASE_OK,
       })
@@ -639,7 +681,7 @@ describe(
         canal: 'instagram',
         publicar: async () => ({ ok: false, publicacaoExternaId: null, erro: 'Mídia rejeitada.', fatal: true }),
       }
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: `${marca}-falha`,
         contexto: ctxAutorizado(), adaptadores: { instagram: adapter }, env: BASE_OK,
       })
@@ -657,7 +699,7 @@ describe(
           throw new Error('GET https://exemplo.invalido/x?access_token=EAAsegredoquenaopodevazar123 falhou')
         },
       }
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: `${marca}-token`,
         contexto: ctxAutorizado(), adaptadores: { instagram: adapter }, env: BASE_OK,
       })
@@ -673,7 +715,7 @@ describe(
 
     test('WORKSPACE ISOLADO: B não distribui conteúdo de A, nem chama o adapter', async () => {
       const e = espiao()
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsB, contentId: conteudoA, canal: 'instagram', chaveDaTentativa: `${marca}-orq-cross`,
         adaptadores: { instagram: e.adapter() }, env: BASE_OK,
       })

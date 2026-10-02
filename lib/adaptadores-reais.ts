@@ -25,6 +25,7 @@
 import { prisma } from './prisma'
 import { publicarReelInstagram } from './instagram'
 import { higienizar, type AdaptadorDeCanal, type RespostaDoAdaptador } from './distribuicao-orquestrador'
+import { avaliarPecaParaOAdapter } from './capacidade-real-do-adapter'
 
 /** O ambiente afirma que ESTE canal pode publicar de verdade. */
 export const VARIAVEL_DE_PUBLICACAO_REAL: Record<string, string> = {
@@ -90,6 +91,22 @@ export const adaptadorInstagram: AdaptadorDeCanal = {
         ok: false,
         publicacaoExternaId: null,
         erro: 'A peça não tem vídeo renderizado — o Instagram não aceita Reel sem mídia.',
+        fatal: true,
+      }
+    }
+
+    // P1.9.1. A MESMA avaliação que o preflight fez. Se o preflight aprovou,
+    // isto passa; se discordarem, alguém mudou uma ponta sem a outra.
+    const avaliacao = avaliarPecaParaOAdapter({
+      canal: 'instagram',
+      formato: pedido.formato ?? null,
+      assetUrl: pedido.assetUrl,
+    })
+    if (!avaliacao.aceita) {
+      return {
+        ok: false,
+        publicacaoExternaId: null,
+        erro: avaliacao.explicacao.join(' '),
         fatal: true,
       }
     }

@@ -51,6 +51,7 @@ import {
   type RenovadorDeAcesso,
 } from './renovacao-de-acesso'
 import type { FonteDeEnv } from './cost-safety-gate'
+import { avaliarFormatoParaOCanal } from './capacidades-da-fabrica'
 
 /** De quanto em quanto tempo o heartbeat é renovado durante o trabalho. */
 export const INTERVALO_DE_HEARTBEAT_MS = 30_000
@@ -141,6 +142,13 @@ export function acaoDeGerarConteudo(ctx: ContextoDoExecutor) {
     const canal = String(contexto.canal ?? '')
     const contentIdExistente =
       typeof contexto.contentId === 'string' && contexto.contentId.trim() ? contexto.contentId : null
+
+    // P1.9.2. Utilidade antes da capacidade: esperar por FFmpeg para gerar
+    // algo que o canal não publica seria esperar à toa.
+    const utilidade = avaliarFormatoParaOCanal(canal, formato)
+    if (!utilidade.util) {
+      return { ok: false, erroFatal: true, erro: `Job obsoleto — ${utilidade.explicacao}` }
+    }
 
     // Capacidade ANTES do trabalho: sem ela o job espera, e esperar não é
     // falhar.

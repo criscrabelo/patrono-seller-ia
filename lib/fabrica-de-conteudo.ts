@@ -34,6 +34,7 @@
 
 import { prisma } from './prisma'
 import { gerarConteudoGratuito } from './conteudo-gratuito'
+import { dataDaVerificacaoDoPreco } from './preco-verificado'
 import { avaliarCusto, lerPoliticaDeCusto, type FonteDeEnv } from './cost-safety-gate'
 import { avaliarMemoriaParaJobPesado } from './worker-memoria'
 import { produtoPodeAparecerNoVideo } from './media-rights-produto'
@@ -42,6 +43,7 @@ import {
   ORDEM_DE_PRODUCAO,
   FORMATOS_NAO_PRODUZIDOS,
   ehFormatoProduzivel,
+  avaliarFormatoParaOCanal,
   type FormatoProduzido,
 } from './capacidades-da-fabrica'
 import type { ItemDoPlano } from './plano-de-acao'
@@ -194,6 +196,9 @@ export function jobsDeGeracaoDoPlano(workspaceId: string, itens: ItemDoPlano[]):
     if (!item.canalRecomendado || !ehFormatoGratuito(item.formatoRecomendado)) continue
     if (item.custoEstimado !== 0) continue
     if (item.workspaceId !== workspaceId) continue
+    // P1.9.2. Segunda tranca, depois do plano: peça que o adapter real do
+    // canal não publicaria não vira job. Conteúdo inútil é ruído na fila.
+    if (!avaliarFormatoParaOCanal(item.canalRecomendado, item.formatoRecomendado).util) continue
 
     const contexto: Record<string, unknown> = {
       formato: item.formatoRecomendado,
@@ -332,6 +337,18 @@ export async function gerarConteudoDoJob(params: {
     ...extra,
   })
 
+  // 0. UTILIDADE (P1.9.2). Um job antigo pode pedir um formato que o
+  //    adapter real do canal não publica — TEXTO_COM_LINK para o Instagram
+  //    é o caso. Gerar a peça seria trabalho que nunca vai ao ar. Fatal:
+  //    nenhuma tentativa muda o que o adapter publica.
+  const utilidade = avaliarFormatoParaOCanal(params.canal, params.formato)
+  if (!utilidade.util) {
+    return falhar(`Job obsoleto — ${utilidade.explicacao}`, {
+      erroFatal: true,
+      erro: utilidade.motivo ?? undefined,
+    })
+  }
+
   // 1. CAPACIDADE, antes de qualquer trabalho.
   const capacidade = avaliarCapacidade(params.formato, params.capacidades, params.env)
   if (!capacidade.pode) {
@@ -381,6 +398,7 @@ export async function gerarConteudoDoJob(params: {
       select: {
         id: true, nome: true, categoria: true, preco: true, userId: true,
         beneficios: true, imagens: true, origemConteudo: true, origemDados: true,
+        sincronizadoEm: true,
       },
     })
     if (!produto) {
@@ -407,6 +425,10 @@ export async function gerarConteudoDoJob(params: {
       categoria: produto.categoria,
       preco: produto.preco,
       beneficios: produto.beneficios,
+      // P1.9.1: a data é a da verificação real, não a da geração. Faltar
+      // aqui era o que fazia a P1.8 escrever "consultado em" com a data de hoje.
+      precoVerificadoEm: dataDaVerificacaoDoPreco(produto),
+      agora: params.agora,
     })
 
     // 7. A PEÇA. Nasce com proveniência declarada e NUNCA como operação real.

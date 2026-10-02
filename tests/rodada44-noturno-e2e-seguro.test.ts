@@ -28,11 +28,19 @@ import { montarFilaDeOportunidades } from '../lib/motor-de-oportunidades'
 import { montarPlanoDeAcao, type ItemDoPlano } from '../lib/plano-de-acao'
 import { jobsDeGeracaoDoPlano, jobsDeLacunaDeFormato } from '../lib/fabrica-de-conteudo'
 import { sincronizarFilaComPlano } from '../lib/automation-queue-repositorio'
-import { sincronizar, perfilDaDependencia } from '../lib/automation-queue-contrato'
+import { sincronizar, perfilDaDependencia, jobsDesejadosDoPlano } from '../lib/automation-queue-contrato'
 import { portaPrisma } from '../lib/automation-queue-prisma'
 import { rodarFilaDoWorkspace } from '../lib/executor-da-fila'
 import { renovarAcessoDaConta, type RenovadorDeAcesso } from '../lib/renovacao-de-acesso'
 import { textoDisclosure } from '../lib/creative-factory'
+import { chaveDaTentativaPadrao } from '../lib/link-de-publicacao'
+import {
+  ENV_DE_CUSTODIA,
+  LEGENDA_PUBLICAVEL,
+  VIDEO_PROPRIO_URL,
+  evidenciaDeMidiaPropria,
+  confirmarLinkNaBioParaTeste,
+} from './_fixtura-midia-propria'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
 const marca = `r44-${Date.now()}`
@@ -41,6 +49,8 @@ const AMANHA = new Date(Date.now() + 24 * 60 * 60 * 1000)
 const ENV = {
   PUBLIC_BASE_URL: 'https://patrono.exemplo.com.br',
   PUBLICACAO_REAL_INSTAGRAM: 'true',
+  // P1.9.1: a custódia da mídia é verificada contra o storage do projeto.
+  ...ENV_DE_CUSTODIA,
 }
 const SEGREDO = `TOKEN-SECRETO-${marca}`
 
@@ -50,7 +60,21 @@ let produtoId = ''
 let conteudoId = ''
 const criados: string[] = []
 
-const LEGENDA = `Produto bom. ${textoDisclosure('afiliado')}`
+/** P1.9.1: com CTA para a bio — sem ela, o preflight recusa a peça. */
+const LEGENDA = LEGENDA_PUBLICAVEL
+
+/**
+ * P1.9.2: no Instagram nada sai sem o link confirmado na bio. Estes testes
+ * são da mecânica de retry, envio incerto e segredo — fazem o passo humano
+ * pelo caminho real antes de distribuir.
+ */
+async function distribuirComBio(p: Parameters<typeof distribuirConteudo>[0]) {
+  await confirmarLinkNaBioParaTeste({
+    workspaceId: p.workspaceId, contentId: p.contentId, chaveDaTentativa: p.chaveDaTentativa,
+    userId: userA, env: p.env,
+  })
+  return distribuirConteudo(p)
+}
 
 /** Conta o que o canal recebeu, e nunca sai da máquina. */
 function espiao(resposta: () => Promise<{ ok: boolean; publicacaoExternaId: string | null; erro: string | null; fatal?: boolean; envioIncerto?: boolean }>) {
@@ -98,7 +122,9 @@ before(async () => {
       data: {
         workspaceId: wsA, userId: userA, produtoId, roteiro: 'x',
         redeSocial: 'instagram', legendaInstagram: LEGENDA,
-        videoUrl: 'https://cdn.invalido/v.mp4',
+        // Vídeo próprio, em custódia, com registro de direito do arquivo.
+        videoUrl: VIDEO_PROPRIO_URL,
+        alertasCompliance: [evidenciaDeMidiaPropria()],
       },
       select: { id: true },
     })
@@ -165,7 +191,7 @@ describe('Envio incerto nunca vira retry automático', () => {
       const e = espiao(async () => {
         throw new Error('fetch failed')
       })
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-incerto`,
         adaptadores: { instagram: e.adapter }, env: ENV,
@@ -185,7 +211,7 @@ describe('Envio incerto nunca vira retry automático', () => {
       const e = espiao(async () => ({
         ok: false, publicacaoExternaId: null, erro: '(#100) video_url inválido', envioIncerto: false,
       }))
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-recusa`,
         adaptadores: { instagram: e.adapter }, env: ENV,
@@ -202,7 +228,7 @@ describe('Envio incerto nunca vira retry automático', () => {
       const e = espiao(async () => ({
         ok: false, publicacaoExternaId: null, erro: 'timeout na etapa final', envioIncerto: true,
       }))
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-incerto-2`,
         adaptadores: { instagram: e.adapter }, env: ENV,
@@ -214,7 +240,7 @@ describe('Envio incerto nunca vira retry automático', () => {
 
   test('sucesso nunca é marcado como incerto', { skip: !TEM_BANCO ? 'exige Postgres' : false }, async () => {
     const e = espiao(async () => ({ ok: true, publicacaoExternaId: `ig_ok_${marca}`, erro: null }))
-    const r = await distribuirConteudo({
+    const r = await distribuirComBio({
       workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
       chaveDaTentativa: `${marca}-ok`,
       adaptadores: { instagram: e.adapter }, env: ENV,
@@ -239,11 +265,11 @@ describe(
           : { ok: true, publicacaoExternaId: `ig_retry_${marca}`, erro: null }
       })
       const chave = `${marca}-retry`
-      const a = await distribuirConteudo({
+      const a = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram', chaveDaTentativa: chave,
         adaptadores: { instagram: e.adapter }, env: ENV,
       })
-      const b = await distribuirConteudo({
+      const b = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram', chaveDaTentativa: chave,
         adaptadores: { instagram: e.adapter }, env: ENV,
       })
@@ -266,11 +292,11 @@ describe(
           ? { ok: false, publicacaoExternaId: null, erro: 'instabilidade', envioIncerto: false }
           : { ok: true, publicacaoExternaId: `ig_rl_${marca}`, erro: null }
       })
-      await distribuirConteudo({
+      await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram', chaveDaTentativa: chave,
         adaptadores: { instagram: e.adapter }, env: ENV,
       })
-      await distribuirConteudo({
+      await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram', chaveDaTentativa: chave,
         adaptadores: { instagram: e.adapter }, env: ENV,
       })
@@ -284,11 +310,11 @@ describe(
         n += 1
         return { ok: true, publicacaoExternaId: `ig_rep_${n}_${marca}`, erro: null }
       })
-      const a = await distribuirConteudo({
+      const a = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-rep-a`, adaptadores: { instagram: e.adapter }, env: ENV,
       })
-      const b = await distribuirConteudo({
+      const b = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-rep-b`, adaptadores: { instagram: e.adapter }, env: ENV,
       })
@@ -300,7 +326,7 @@ describe(
       const e = espiao(async () => ({
         ok: true, publicacaoExternaId: `   ig_norm_${marca}   `, erro: null,
       }))
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-norm`, adaptadores: { instagram: e.adapter }, env: ENV,
       })
@@ -322,7 +348,7 @@ describe(
   () => {
     test('o pedido entregue ao canal não tem token', async () => {
       const e = espiao(async () => ({ ok: true, publicacaoExternaId: `ig_c_${marca}`, erro: null }))
-      await distribuirConteudo({
+      await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-cred`, adaptadores: { instagram: e.adapter }, env: ENV,
       })
@@ -339,7 +365,7 @@ describe(
       const e = espiao(async () => {
         throw new Error(`GET https://exemplo.invalido/x?access_token=${SEGREDO} falhou`)
       })
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-cred-erro`, adaptadores: { instagram: e.adapter }, env: ENV,
       })
@@ -349,7 +375,7 @@ describe(
 
     test('a evidência gravada não tem segredo', async () => {
       const e = espiao(async () => ({ ok: true, publicacaoExternaId: `ig_ev_${marca}`, erro: null }))
-      const r = await distribuirConteudo({
+      const r = await distribuirComBio({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram',
         chaveDaTentativa: `${marca}-cred-ev`, adaptadores: { instagram: e.adapter }, env: ENV,
       })
@@ -385,7 +411,7 @@ describe(
       const r = await adaptadorInstagram.publicar!({
         canal: 'instagram', workspaceId: 'workspace-que-nao-existe', publicacaoId: 'x',
         legenda: LEGENDA, urlParaDivulgar: 'https://patrono.exemplo.com.br/api/l/a',
-        assetUrl: 'https://cdn.invalido/v.mp4',
+        assetUrl: 'https://cdn.invalido/v.mp4', formato: 'VIDEO_PROPRIO',
       })
       assert.equal(r.ok, false)
       assert.equal(r.fatal, true)
@@ -445,7 +471,13 @@ describe(
       assert.equal(pf.conectado, true)
       assert.equal(pf.capabilityEfetiva.publicar, true)
 
-      // 6. Ensaio: o ciclo fecha sem enviar nada e sem gravar nada.
+      // 6. Ensaio: o ciclo fecha sem enviar nada e sem gravar nada. Com o
+      //    passo humano da bio feito para a tentativa padrão (P1.9.2), o
+      //    ensaio diz que publicaria — e mesmo assim não publica.
+      await confirmarLinkNaBioParaTeste({
+        workspaceId: wsA, contentId: conteudoId, userId: userA, env: ENV,
+        chaveDaTentativa: chaveDaTentativaPadrao({ contentId: conteudoId, canal: 'instagram', dataAgendamento: null }),
+      })
       const pubAntes = await prisma.publicacao.count({ where: { workspaceId: wsA } })
       const ensaio = await simularDistribuicao({
         workspaceId: wsA, contentId: conteudoId, canal: 'instagram', env: ENV,
@@ -486,7 +518,9 @@ describe('A lacuna de formato deixa de ser silêncio', () => {
     scoreDaOportunidade: 50,
     prioridadeOperacional: 50,
     posicao: 1,
-    canalRecomendado: 'instagram',
+    // P1.9.2: canal sem adapter real — o teste é da lacuna de formato. No
+    // Instagram, TEXTO_COM_LINK nem chega a virar job (rodada 49).
+    canalRecomendado: 'facebook',
     formatoRecomendado: 'CARROSSEL',
     estado: 'PRONTO_PARA_GERAR_CONTEUDO',
     proximaAcao: 'GERAR_CONTEUDO',
@@ -583,12 +617,12 @@ describe('A fila tem vários donos, e cada um cancela só o que é dele', () => 
 })
 
 describe(
-  'O ciclo gera conteúdo de verdade quando nenhuma capacidade é exigida',
+  'P1.9.2 — Instagram sem mídia da dona: o ciclo espera, não gera conteúdo inútil',
   { skip: !TEM_BANCO ? 'exige Postgres' : false },
   () => {
-    test('TEXTO_COM_LINK sai pronto, com disclosure e custo zero', async () => {
-      // Produto sem direito de mídia: os formatos que exigem imagem caem
-      // fora, e sobra o que roda sem capacidade nenhuma.
+    test('oportunidade → plano → fila: dependência humana WAITING, nenhum GERAR_CONTEUDO, nenhuma peça', async () => {
+      // Antes desta rodada, este mesmo cenário gerava uma peça TEXTO_COM_LINK
+      // para o Instagram — que o adapter real nunca publicaria.
       const semMidia = await prisma.produto.create({
         data: {
           workspaceId: wsA, userId: userA, nome: `${marca}-texto`, categoria: 'livros',
@@ -601,47 +635,54 @@ describe(
       const agora = new Date()
       const fila = await montarFilaDeOportunidades({ workspaceId: wsA, agora, canaisCapazes: ['instagram'] })
       const plano = montarPlanoDeAcao({
-        workspaceId: wsA, fila, canaisConectados: ['instagram'], capacidades: {}, agora,
+        workspaceId: wsA, fila, canaisConectados: ['instagram'], capacidades: { FFMPEG: true }, agora,
       })
       const doProduto = plano.itens.find((i) => i.produtoId === semMidia.id)
       assert.ok(doProduto, 'o produto entrou no plano')
-      assert.equal(doProduto!.formatoRecomendado, 'TEXTO_COM_LINK')
-      assert.equal(doProduto!.custoEstimado, 0)
+      assert.equal(doProduto!.canalRecomendado, 'instagram')
+      assert.equal(doProduto!.formatoRecomendado, 'VIDEO_PROPRIO')
+      assert.equal(doProduto!.estado, 'AGUARDANDO_MIDIA_AUTORIZADA')
+      assert.equal(doProduto!.proximaAcao, 'SINCRONIZAR_MIDIA_AUTORIZADA')
+      assert.equal(doProduto!.podeExecutarAutomaticamente, false)
 
+      // Nenhum job de geração: não há o que gerar.
+      assert.deepEqual(jobsDeGeracaoDoPlano(wsA, plano.itens).filter((j) => j.entityId === semMidia.id), [])
+
+      // A dependência explícita, na fila que já existe.
       const porta = portaPrisma()
-      const desejados = jobsDeGeracaoDoPlano(wsA, [doProduto!])
+      const desejados = jobsDesejadosDoPlano(
+        wsA, plano.filaDeAutomacao.filter((f) => f.produtoId === semMidia.id)
+      )
       assert.equal(desejados.length, 1)
       await sincronizarFilaComPlano({
-        porta, workspaceId: wsA, desejados, agora, tiposGerenciados: ['GERAR_CONTEUDO'],
+        porta, workspaceId: wsA, desejados, agora, tiposGerenciados: ['SINCRONIZAR_MIDIA_AUTORIZADA'],
       })
+      const jobs = await prisma.automationJob.findMany({
+        where: { workspaceId: wsA, entityId: semMidia.id },
+        select: { tipo: true, estado: true, classe: true, motivoHumano: true, tentativas: true },
+      })
+      assert.equal(jobs.length, 1)
+      assert.equal(jobs[0].tipo, 'SINCRONIZAR_MIDIA_AUTORIZADA')
+      assert.equal(jobs[0].estado, 'WAITING', 'nasce esperando — não é reivindicável')
+      assert.equal(jobs[0].classe, 'EXIGE_HUMANO', 'o vídeo é da dona: o painel diz "preciso de você"')
+      assert.equal(jobs[0].motivoHumano, 'MISSING_AUTHORIZED_MEDIA')
+      assert.equal(jobs[0].tentativas, 0)
 
+      // O executor passa e não gasta nada com ela.
       const antes = await prisma.conteudo.count({ where: { workspaceId: wsA } })
-      const laco = await rodarFilaDoWorkspace({
+      await rodarFilaDoWorkspace({
         porta, workspaceId: wsA, workerId: `gera-${marca}`,
         capacidades: { ffmpeg: false, chatterbox: false, memoriaLivreBytes: 8 * 1024 ** 3 },
         agora, limite: 3,
       })
-      assert.equal(laco.sucessos, 1, JSON.stringify(laco.detalhes))
-      assert.equal(await prisma.conteudo.count({ where: { workspaceId: wsA } }), antes + 1)
-
-      const novo = await prisma.conteudo.findFirstOrThrow({
-        where: { workspaceId: wsA, produtoId: semMidia.id },
-        select: { id: true, legendaInstagram: true, videoUrl: true },
+      const depois = await prisma.automationJob.findFirstOrThrow({
+        where: { workspaceId: wsA, entityId: semMidia.id },
+        select: { estado: true, tentativas: true },
       })
-      assert.ok(
-        novo.legendaInstagram!.includes(textoDisclosure('afiliado')),
-        'a peça já sai com o disclosure que o canal exige'
-      )
-      assert.equal(novo.videoUrl, null, 'TEXTO_COM_LINK não renderiza vídeo')
-
-      // E o preflight aceita a peça: formato, mídia e disclosure em ordem.
-      const pf = await preflightDePublicacao({
-        workspaceId: wsA, canal: 'instagram', contentId: novo.id, env: ENV,
-      })
-      assert.equal(pf.formatoCompativel, true)
-      assert.equal(pf.disclosurePresente, true)
-      assert.equal(pf.midiaAutorizada, true, 'TEXTO_COM_LINK não usa a mídia bloqueada')
-      assert.equal(pf.custoZero, true)
+      assert.equal(depois.estado, 'WAITING')
+      assert.equal(depois.tentativas, 0, 'esperar pela dona não consome tentativa')
+      assert.equal(await prisma.conteudo.count({ where: { workspaceId: wsA, produtoId: semMidia.id } }), 0)
+      assert.ok((await prisma.conteudo.count({ where: { workspaceId: wsA } })) >= antes)
     })
   }
 )

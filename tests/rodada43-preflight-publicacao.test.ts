@@ -29,7 +29,14 @@ import {
 } from '../lib/adaptadores-reais'
 import { ADAPTADORES_LIGADOS, type AdaptadorDeCanal } from '../lib/distribuicao-orquestrador'
 import { lerAutorizacao, CAMPO_DOS_SCOPES, CAMPO_DA_COMPROVACAO } from '../lib/autorizacao-da-conta'
-import { textoDisclosure } from '../lib/creative-factory'
+import {
+  ENV_DE_CUSTODIA,
+  LEGENDA_PUBLICAVEL,
+  VIDEO_PROPRIO_URL,
+  evidenciaDeMidiaPropria,
+  confirmarLinkNaBioParaTeste,
+} from './_fixtura-midia-propria'
+import { chaveDaTentativaPadrao } from '../lib/link-de-publicacao'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
 const RAIZ = join(__dirname, '..')
@@ -41,6 +48,8 @@ const AMANHA = new Date(Date.now() + 24 * 60 * 60 * 1000)
 /** Ambiente mínimo: base pública para o link, e NADA ligado. */
 const ENV_BASE: Record<string, string | undefined> = {
   PUBLIC_BASE_URL: 'https://patrono.exemplo.com.br',
+  // P1.9.1: sem o host do storage não há como provar custódia da mídia.
+  ...ENV_DE_CUSTODIA,
 }
 /** O mesmo, com o Instagram ligado de propósito. */
 const ENV_LIGADO = { ...ENV_BASE, PUBLICACAO_REAL_INSTAGRAM: 'true' }
@@ -52,14 +61,17 @@ let wsA = ''
 let wsB = ''
 let userA = ''
 const criados: string[] = []
-/** Peça completa: vídeo, disclosure e produto com direito de uso. */
+/**
+ * Peça completa: vídeo próprio em custódia, registro de direito do arquivo,
+ * legenda com CTA e disclosure (P1.9.1).
+ */
 let conteudoOk = ''
 /** Peça sem disclosure na legenda. */
 let conteudoSemDisclosure = ''
-/** Peça com vídeo, e produto cuja mídia não tem direito verificado. */
+/** Peça com vídeo e SEM registro de direito do arquivo. */
 let conteudoSemDireito = ''
 
-const LEGENDA_OK = `Olha esse produto. ${textoDisclosure('afiliado')}`
+const LEGENDA_OK = LEGENDA_PUBLICAVEL
 
 async function integracaoInstagram(over: {
   scopes?: string[] | null
@@ -123,20 +135,28 @@ before(async () => {
   const comDireito = await criarProduto('Proprio')
   const semDireito = await criarProduto('Licenciado')
 
-  const criarConteudo = async (pid: string, legenda: string) =>
+  const criarConteudo = async (pid: string, legenda: string, comEvidencia: boolean) =>
     (
       await prisma.conteudo.create({
         data: {
           workspaceId: wsA, userId: userA, produtoId: pid, roteiro: 'x',
           redeSocial: 'instagram', legendaInstagram: legenda,
-          videoUrl: 'https://cdn.invalido/v.mp4',
+          videoUrl: VIDEO_PROPRIO_URL,
+          alertasCompliance: comEvidencia ? [evidenciaDeMidiaPropria()] : [],
         },
         select: { id: true },
       })
     ).id
-  conteudoOk = await criarConteudo(comDireito, LEGENDA_OK)
-  conteudoSemDisclosure = await criarConteudo(comDireito, 'Olha esse produto.')
-  conteudoSemDireito = await criarConteudo(semDireito, LEGENDA_OK)
+  conteudoOk = await criarConteudo(comDireito, LEGENDA_OK, true)
+  conteudoSemDisclosure = await criarConteudo(comDireito, 'Olha esse produto.\n\nLink na bio.', true)
+  conteudoSemDireito = await criarConteudo(semDireito, LEGENDA_OK, false)
+
+  // P1.9.2: a peça completa também tem o link rastreado GERADO e
+  // CONFIRMADO na bio por uma pessoa — sem isso nada é executável.
+  await confirmarLinkNaBioParaTeste({
+    workspaceId: wsA, contentId: conteudoOk, userId: userA, env: ENV_BASE,
+    chaveDaTentativa: chaveDaTentativaPadrao({ contentId: conteudoOk, canal: 'instagram', dataAgendamento: null }),
+  })
 })
 
 after(async () => {
@@ -447,7 +467,11 @@ describe(
       assert.match(r.payload!.urlQueSeriaUsada!, /\/api\/l\//)
       assert.equal(r.payload!.temMidia, true)
       assert.equal(r.payload!.disclosurePresente, true)
-      assert.equal(r.payload!.formato, 'VIDEO_9X16_FFMPEG_NARRADO')
+      // O formato vem do registro de direito do arquivo.
+      assert.equal(r.payload!.formato, 'VIDEO_PROPRIO')
+      // P1.9.1: no Instagram o link vai na bio, nunca colado na legenda.
+      assert.equal(r.payload!.ondeVaiOLink, 'BIO')
+      assert.equal(r.payload!.urlNaLegenda, false)
     })
 
     test('a URL simulada é a MESMA que a chave da tentativa produziria', async () => {
@@ -467,7 +491,7 @@ describe(
         workspaceId: wsA, contentId: conteudoOk, canal: 'instagram', env: ENV_LIGADO,
       })
       assert.equal(r.payload!.tamanhoDaLegenda, LEGENDA_OK.length)
-      assert.ok(!JSON.stringify(r.payload).includes('Olha esse produto'))
+      assert.ok(!JSON.stringify(r.payload).includes('Produto de teste'))
     })
 
     test('bloqueado: o ensaio diz que nada sairia, e por quê', async () => {

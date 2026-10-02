@@ -7,6 +7,9 @@ import {
   confirmarDistribuicao,
   registrarFalhaDaTentativa,
 } from '@/lib/publicacao-fluxo'
+import { autorizarPublicacaoReal } from '@/lib/porta-de-publicacao-real'
+import { chaveDaTentativaPadrao } from '@/lib/link-de-publicacao'
+import { urlVaiNaLegenda } from '@/lib/capacidade-real-do-adapter'
 
 // Endpoint chamado pela Vercel Cron para publicar automaticamente os
 // conteúdos cuja data de agendamento já chegou.
@@ -93,6 +96,8 @@ export async function GET(req: NextRequest) {
   // "publicar agora". A chave da tentativa deriva do agendamento, entao uma
   // reexecucao do cron reencontra a mesma Publicacao e o mesmo link.
   let publicacoesSemRastreamento = 0
+  // P1.9.2: agendado que a porta não liberou. Continua `agendado`, intacto.
+  let bloqueadosPelaPorta = 0
 
   for (const c of devidos) {
     // Sem vídeo: publicação apenas dentro do app.
@@ -127,10 +132,34 @@ export async function GET(req: NextRequest) {
       continue
     }
 
+    // P1.9.2: A PORTA ÚNICA, a mesma da rota manual. Sem `executavelAgora`
+    // o agendado não sai — e não é marcado publicado: ele não circulou.
+    const chaveDaTentativa = chaveDaTentativaPadrao({
+      contentId: c.id,
+      canal: 'instagram',
+      dataAgendamento: c.dataAgendamento,
+    })
+    const porta = await autorizarPublicacaoReal({
+      workspaceId: c.workspaceId,
+      contentId: c.id,
+      canal: 'instagram',
+      chaveDaTentativa,
+      agora,
+    })
+    if (!porta.liberada) {
+      bloqueadosPelaPorta++
+      await prisma.conteudo.update({
+        where: { id: c.id },
+        data: { erroPublicacao: `Bloqueado pelo preflight (${porta.bloqueio}): ${porta.explicacao}` },
+      })
+      continue
+    }
+
     const tentativa = await prepararTentativaDePublicacao({
       workspaceId: c.workspaceId,
       contentId: c.id,
       canal: 'instagram',
+      chaveDaTentativa,
       urlDiretaDoProduto: c.produto?.linkProduto ?? null,
       dataAgendamento: c.dataAgendamento,
     })
@@ -141,7 +170,10 @@ export async function GET(req: NextRequest) {
         accessToken: integracao.accessToken,
         igUserId: integracao.accountId,
         videoUrl: c.videoUrl,
-        legenda: montarLegenda(c.legendaInstagram, c.hashtags, c.chamadaAcao, tentativa.urlParaDivulgar),
+        // A legenda aprovada pelo preflight. URL só onde ela é clicável.
+        legenda: urlVaiNaLegenda('instagram')
+          ? montarLegenda(c.legendaInstagram, [], null, tentativa.urlParaDivulgar)
+          : (c.legendaInstagram ?? '').trim(),
       })
       await prisma.conteudo.update({
         where: { id: c.id },
@@ -189,6 +221,7 @@ export async function GET(req: NextRequest) {
     falhas,
     amostrasCapturadas,
     publicacoesSemRastreamento,
+    bloqueadosPelaPorta,
     tokensRenovados,
     tokensFalha,
     executadoEm: agora.toISOString(),

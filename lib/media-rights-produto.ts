@@ -23,6 +23,7 @@
  */
 
 import { direitosDaPolicy, type MediaRightsRecord, type MediaUsagePolicy } from './media-rights'
+import { hostDeTerceiro } from './evidencia-de-midia'
 
 export interface ProdutoParaDireitos {
   id: string
@@ -101,6 +102,22 @@ export function resolverDireitosDoProduto(produto: ProdutoParaDireitos): MediaRi
   const origem = normalizar(produto.origemConteudo || '')
   // Origem não reconhecida nunca vira "permitido por omissão".
   const policy = POLICY_POR_ORIGEM[origem] ?? 'UNKNOWN'
+
+  // P1.9.1: declaração e evidência precisam concordar. "Próprio" ou "Gerado
+  // por IA" com imagem no CDN de um marketplace é contradição — e o erro
+  // estaria do lado perigoso, porque são as únicas origens que liberam
+  // derivar. Na dúvida, vale a evidência.
+  if (policy !== 'UNKNOWN') {
+    const terceiro = produto.imagens.map(hostDeTerceiro).find((h): h is string => !!h)
+    if (terceiro) {
+      return direitosDaPolicy('UNKNOWN', {
+        assetId: idDoAsset(produto),
+        source: `cadastro-do-produto:${origem}`,
+        authorizingSource: `Origem declarada "${produto.origemConteudo}" contradiz a mídia hospedada em ${terceiro} — direito não confirmado`,
+        storageExpiresAt: null,
+      })
+    }
+  }
 
   return direitosDaPolicy(policy, {
     assetId: idDoAsset(produto),

@@ -4,6 +4,13 @@
  *   Produto → Oportunidade → Plano → AutomationJob → Executor
  *          → Conteudo → Preflight → Dry Run
  *
+ * P1.9.2: no Instagram o ciclo NÃO gera mais peça de texto — o adapter real
+ * só publica Reel com vídeo. O ciclo agora termina numa dependência humana
+ * (o vídeo da dona), e o e2e segue pelo caminho real de mídia própria:
+ *
+ *   ciclo → WAITING (EXIGE_HUMANO) → vídeo da dona → peça → link rastreado
+ *        → preflight (bio não confirmada) → confirmação → preflight → ensaio
+ *
  * Nenhuma etapa é simulada com atalho: cada uma chama a função que roda em
  * produção. O que muda é o banco (o de teste) e o fato de nenhum adapter
  * de canal estar ligado.
@@ -28,6 +35,14 @@ import { RENOVADORES_LIGADOS } from '../lib/renovacao-de-acesso'
 import { adaptadoresHabilitados } from '../lib/adaptadores-reais'
 import { CAMPO_DOS_SCOPES, CAMPO_DA_COMPROVACAO } from '../lib/autorizacao-da-conta'
 import { textoDisclosure } from '../lib/creative-factory'
+import { prepararPecaComMidiaPropria } from '../lib/peca-com-midia-propria'
+import { gerarLinkParaABio, confirmarLinkNaBio } from '../lib/link-na-bio'
+import {
+  ENV_DE_CUSTODIA,
+  VIDEO_PROPRIO_URL,
+  REEL_VALIDO,
+  DECLARACOES_COMPLETAS,
+} from './_fixtura-midia-propria'
 
 const TEM_BANCO = !!process.env.DATABASE_URL
 const marca = `r47-${Date.now()}`
@@ -35,7 +50,7 @@ const AGORA = new Date('2026-09-24T05:00:00Z')
 const AMANHA = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
 
 /** Base pública para o link rastreado; nada ligado para publicar. */
-const ENV = { PUBLIC_BASE_URL: 'https://patrono.exemplo.com.br' }
+const ENV = { PUBLIC_BASE_URL: 'https://patrono.exemplo.com.br', ...ENV_DE_CUSTODIA }
 
 /** Máquina sem render e sem voz: o caminho que funciona hoje. */
 const SEM_CAPACIDADE = { ffmpeg: false, chatterbox: false, memoriaLivreBytes: 8 * 1024 ** 3 }
@@ -45,6 +60,7 @@ const criados: string[] = []
 let wsA = ''
 let wsB = ''
 let produtoA = ''
+let userA = ''
 
 async function montarWorkspace(nome: string) {
   const ws = await prisma.workspace.create({
@@ -80,7 +96,7 @@ async function montarWorkspace(nome: string) {
       } as never,
     },
   })
-  return { wsId: ws.id, produtoId: p.id }
+  return { wsId: ws.id, produtoId: p.id, userId: u.id }
 }
 
 before(async () => {
@@ -88,6 +104,7 @@ before(async () => {
   const a = await montarWorkspace('A')
   wsA = a.wsId
   produtoA = a.produtoId
+  userA = a.userId
   wsB = (await montarWorkspace('B')).wsId
 })
 
@@ -135,58 +152,81 @@ describe(
       assert.equal(ciclo.jobsCriados, 1, 'o item de plano virou job')
       assert.equal(ciclo.custoTotal, 0)
 
-      // 4. O job existe no banco, com a identidade certa.
+      // 4. O job existe, e é a DEPENDÊNCIA da mídia — não geração.
+      //    Antes da P1.9.2 era um GERAR_CONTEUDO de TEXTO_COM_LINK, que o
+      //    adapter do Instagram nunca publicaria.
       const jobs = await prisma.automationJob.findMany({
         where: { workspaceId: wsA },
-        select: { id: true, tipo: true, estado: true, chave: true, entityId: true, tentativas: true },
+        select: { id: true, tipo: true, estado: true, classe: true, motivoHumano: true, entityId: true, tentativas: true },
       })
       assert.equal(jobs.length, 1)
-      assert.equal(jobs[0].tipo, 'GERAR_CONTEUDO')
-      assert.equal(jobs[0].estado, 'PENDING', 'automatizável nasce pronto para o claim')
+      assert.equal(jobs[0].tipo, 'SINCRONIZAR_MIDIA_AUTORIZADA')
+      assert.equal(jobs[0].estado, 'WAITING', 'dependência humana não é reivindicável')
+      assert.equal(jobs[0].classe, 'EXIGE_HUMANO')
+      assert.equal(jobs[0].motivoHumano, 'MISSING_AUTHORIZED_MEDIA')
       assert.equal(jobs[0].entityId, produtoA)
       assert.equal(jobs[0].tentativas, 0)
 
-      // 5. Executor: reivindica, executa, conclui.
+      // 5. Executor: não há o que executar, e nada é gerado.
       const laco = await rodarFilaDoWorkspace({
         porta, workspaceId: wsA, workerId: `e2e-${marca}`,
         capacidades: SEM_CAPACIDADE, agora: AGORA, limite: 5,
       })
-      assert.equal(laco.sucessos, 1, JSON.stringify(laco.detalhes))
-      assert.equal(laco.falhas, 0)
+      assert.equal(laco.executados, 0, JSON.stringify(laco.detalhes))
+      assert.equal(await prisma.conteudo.count({ where: { workspaceId: wsA } }), 0, 'nenhuma peça inútil')
 
-      // 6. UM Conteudo, com o disclosure que o canal exige.
-      const conteudos = await prisma.conteudo.findMany({
-        where: { workspaceId: wsA },
+      // 6. A dona fornece o vídeo: direito registrado, Reel validado, copy.
+      const peca = await prepararPecaComMidiaPropria({
+        workspaceId: wsA, produtoId: produtoA, videoUrl: VIDEO_PROPRIO_URL, gravar: true,
+        reel: REEL_VALIDO, env: ENV, agora: AGORA,
+        declaracao: {
+          origem: 'PROPRIO', declaradoPor: userA, descricao: 'vídeo que a dona gravou',
+          declaracoes: DECLARACOES_COMPLETAS,
+        },
+      })
+      assert.ok(peca.contentId, peca.montagem.ok ? '' : peca.montagem.motivos.join('|'))
+      const conteudo = await prisma.conteudo.findUniqueOrThrow({
+        where: { id: peca.contentId! },
         select: { id: true, legendaInstagram: true, videoUrl: true, produtoId: true },
       })
-      assert.equal(conteudos.length, 1, 'exatamente uma peça')
-      const conteudo = conteudos[0]
       assert.equal(conteudo.produtoId, produtoA)
-      assert.ok(
-        conteudo.legendaInstagram!.includes(textoDisclosure('afiliado')),
-        'a peça já sai com o disclosure'
-      )
-      assert.equal(conteudo.videoUrl, null, 'TEXTO_COM_LINK não renderiza vídeo')
+      assert.ok(conteudo.legendaInstagram!.includes(textoDisclosure('afiliado')), 'a peça sai com o disclosure')
+      assert.equal(conteudo.videoUrl, VIDEO_PROPRIO_URL)
 
-      // 7. Preflight: explica a prontidão sem publicar.
+      // 7. Link rastreado GERADO (para a bio não abrir um 404) e preflight:
+      //    pronto, e não executável — o link ainda não foi confirmado na bio.
+      const link = await gerarLinkParaABio({ workspaceId: wsA, contentId: conteudo.id, canal: 'instagram', env: ENV })
+      assert.equal(link.ok, true, link.explicacao)
       const pf = await preflightDePublicacao({
         workspaceId: wsA, canal: 'instagram', contentId: conteudo.id, env: ENV,
       })
       assert.equal(pf.conectado, true)
-      assert.equal(pf.tokenValido, true)
       assert.deepEqual(pf.scopesComprovados, ['instagram_content_publish'])
-      assert.deepEqual(pf.scopesFaltando, [])
-      assert.equal(pf.capabilityEfetiva.publicar, true)
-      assert.equal(pf.formatoCompativel, true)
-      assert.equal(pf.midiaAutorizada, true, 'TEXTO_COM_LINK não usa a mídia bloqueada')
+      assert.equal(pf.capabilityEfetiva.publicar, true, 'a CONTA está pronta')
+      assert.equal(pf.formato, 'VIDEO_PROPRIO')
+      assert.equal(pf.aceitoPeloAdapter, true)
+      assert.equal(pf.midiaAutorizada, true, pf.motivoDaMidia ?? '')
       assert.equal(pf.disclosurePresente, true)
       assert.equal(pf.custoZero, true)
-      assert.equal(pf.pronto, true, 'a conta e a peça estão prontas')
-      // E mesmo assim NÃO é executável: nenhum canal ligado.
+      assert.equal(pf.pronto, true, pf.explicacao.join(' | '))
       assert.equal(pf.executavelAgora, false)
-      assert.equal(pf.bloqueio, 'ADAPTER_DESLIGADO')
+      assert.equal(pf.bloqueio, 'LINK_NA_BIO_NAO_CONFIRMADO')
+      assert.equal(pf.link!.estrategia, 'BIO')
+      assert.equal(pf.link!.gerado, true)
+      assert.equal(pf.link!.estado, 'AGUARDANDO_CONFIRMACAO')
+      assert.equal(pf.link!.url, link.url)
 
-      // 8. Dry run: o caminho inteiro sem enviar e sem gravar.
+      // 8. A confirmação humana: agora só o canal desligado segura.
+      const conf = await confirmarLinkNaBio({
+        workspaceId: wsA, contentId: conteudo.id, canal: 'instagram', url: link.url!, confirmadoPor: userA, env: ENV,
+      })
+      assert.equal(conf.ok, true, conf.explicacao)
+      const pf2 = await preflightDePublicacao({ workspaceId: wsA, canal: 'instagram', contentId: conteudo.id, env: ENV })
+      assert.equal(pf2.link!.estado, 'CONFIRMADO')
+      assert.equal(pf2.executavelAgora, false)
+      assert.equal(pf2.bloqueio, 'ADAPTER_DESLIGADO')
+
+      // 9. Dry run: o caminho inteiro sem enviar e sem gravar.
       const pubAntes = await prisma.publicacao.count({ where: { workspaceId: wsA } })
       const ensaio = await simularDistribuicao({
         workspaceId: wsA, contentId: conteudo.id, canal: 'instagram', env: ENV,
@@ -195,13 +235,13 @@ describe(
       assert.equal(ensaio.enviouAoCanal, false)
       assert.equal(ensaio.criouPublicacao, false)
       assert.equal(ensaio.acaoQueSeriaTomada, 'NENHUMA', 'nada sai com o canal desligado')
-      assert.equal(ensaio.payload!.linkRastreado, true, 'mas o link rastreado já existiria')
-      assert.match(ensaio.payload!.urlQueSeriaUsada!, /\/api\/l\//)
+      assert.equal(ensaio.payload!.urlQueSeriaUsada, link.url, 'o ensaio usa o link confirmado')
+      assert.equal(ensaio.payload!.urlNaLegenda, false)
       assert.equal(await prisma.publicacao.count({ where: { workspaceId: wsA } }), pubAntes)
 
-      // 9. O saldo do ciclo inteiro.
+      // 10. O saldo: nenhuma Publicacao; um link, o da bio.
       assert.equal(await prisma.publicacao.count({ where: { workspaceId: wsA } }), 0)
-      assert.equal(await prisma.linkDinamico.count({ where: { workspaceId: wsA } }), 0)
+      assert.equal(await prisma.linkDinamico.count({ where: { workspaceId: wsA } }), 1)
     })
 
     test('SEGUNDA volta do ciclo não duplica job nem peça', async () => {
@@ -319,12 +359,14 @@ describe(
       assert.equal(r.criouPublicacao, false)
     })
 
-    test('SALDO FINAL: nenhuma Publicacao, nenhum link, nenhum custo', async () => {
+    test('SALDO FINAL: nenhuma Publicacao, só o link da bio, nenhum custo', async () => {
       for (const ws of [wsA, wsB]) {
         assert.equal(await prisma.publicacao.count({ where: { workspaceId: ws } }), 0)
-        assert.equal(await prisma.linkDinamico.count({ where: { workspaceId: ws } }), 0)
         assert.equal(await prisma.eventoLink.count({ where: { workspaceId: ws } }), 0)
       }
+      // P1.9.2: o link da bio é gerado ANTES da publicação, de propósito.
+      assert.equal(await prisma.linkDinamico.count({ where: { workspaceId: wsA } }), 1)
+      assert.equal(await prisma.linkDinamico.count({ where: { workspaceId: wsB } }), 0)
       // E nenhum job ficou com tentativa queimada sem motivo.
       const jobs = await prisma.automationJob.findMany({
         where: { workspaceId: wsA },

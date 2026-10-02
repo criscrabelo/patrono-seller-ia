@@ -21,6 +21,7 @@ import {
   motivoNaoProduzido,
   posicaoNaProducao,
   PLANO_SO_ESCOLHE_O_QUE_A_FABRICA_PRODUZ,
+  ehFormatoDaDona,
 } from '../lib/capacidades-da-fabrica'
 import {
   FORMATOS,
@@ -127,44 +128,45 @@ describe('O plano só escolhe o que a fábrica monta', () => {
   })
 
   test('CARROSSEL nunca é escolhido, nem quando o canal o aceita', () => {
-    // Instagram aceita carousel e a mídia está autorizada: antes desta
-    // rodada, CARROSSEL era exatamente o que saía daqui.
-    const e = escolherCanalEFormato(oport(), ['instagram'], {})
+    // Facebook aceita carousel e a mídia está autorizada: antes da rodada
+    // 45, CARROSSEL era exatamente o que saía daqui. (P1.9.2: o teste usa
+    // um canal SEM adapter real; o Instagram tem regra própria, abaixo.)
+    const e = escolherCanalEFormato(oport(), ['facebook'], {})
     assert.notEqual(e.formato, 'CARROSSEL')
     assert.ok(ehFormatoProduzivel(e.formato), 'o escolhido tem de ser produzível')
   })
 
   test('IMAGEM_UNICA também não é escolhida', () => {
-    const e = escolherCanalEFormato(oport(), ['instagram'], {})
+    const e = escolherCanalEFormato(oport(), ['facebook'], {})
     assert.notEqual(e.formato, 'IMAGEM_UNICA')
   })
 
   test('com FFmpeg disponível, escolhe o vídeo — o formato de maior valor', () => {
-    const e = escolherCanalEFormato(oport(), ['instagram'], { FFMPEG: true })
+    const e = escolherCanalEFormato(oport(), ['facebook'], { FFMPEG: true })
     assert.equal(e.formato, 'VIDEO_9X16_FFMPEG_NARRADO')
     assert.equal(e.custo, 0)
   })
 
   test('FFmpeg INDISPONÍVEL: não seleciona vídeo FFmpeg', () => {
-    const e = escolherCanalEFormato(oport(), ['instagram'], { FFMPEG: false })
+    const e = escolherCanalEFormato(oport(), ['facebook'], { FFMPEG: false })
     assert.notEqual(e.formato, 'VIDEO_9X16_FFMPEG_NARRADO')
     assert.ok(e.bloqueios.includes('CAPACIDADE_AUSENTE:FFMPEG'))
   })
 
   test('sem FFmpeg, cai para TEXTO_COM_LINK — que roda sem capacidade', () => {
-    const e = escolherCanalEFormato(oport(), ['instagram'], {})
+    const e = escolherCanalEFormato(oport(), ['facebook'], {})
     assert.equal(e.formato, 'TEXTO_COM_LINK')
   })
 
   test('Digital Twin INDISPONÍVEL: não é selecionado', () => {
-    const e = escolherCanalEFormato(oport(), ['instagram'], { DIGITAL_TWIN_GPU: false })
+    const e = escolherCanalEFormato(oport(), ['facebook'], { DIGITAL_TWIN_GPU: false })
     assert.notEqual(e.formato, 'VIDEO_DIGITAL_TWIN')
   })
 
   test('Digital Twin com GPU declarada TAMBÉM não é selecionado', () => {
     // A GPU não cria o caminho de geração. A fábrica recusaria o job, e o
     // plano prometeria o que ninguém monta.
-    const e = escolherCanalEFormato(oport(), ['instagram'], { DIGITAL_TWIN_GPU: true, FFMPEG: false })
+    const e = escolherCanalEFormato(oport(), ['facebook'], { DIGITAL_TWIN_GPU: true, FFMPEG: false })
     assert.notEqual(e.formato, 'VIDEO_DIGITAL_TWIN')
     assert.ok(ehFormatoProduzivel(e.formato))
     assert.equal(ehFormatoProduzivel('VIDEO_DIGITAL_TWIN'), false)
@@ -172,7 +174,7 @@ describe('O plano só escolhe o que a fábrica monta', () => {
   })
 
   test('provider pago continua fora, com ou sem esta mudança', () => {
-    const e = escolherCanalEFormato(oport(), ['instagram'], { FFMPEG: true })
+    const e = escolherCanalEFormato(oport(), ['facebook'], { FFMPEG: true })
     assert.notEqual(e.formato, 'VIDEO_IA_GERADO')
     assert.equal(e.custo, 0)
   })
@@ -180,7 +182,7 @@ describe('O plano só escolhe o que a fábrica monta', () => {
   test('mídia sem direito: sobra TEXTO_COM_LINK, que não usa a imagem', () => {
     const e = escolherCanalEFormato(
       oport({ motivosDeProntidao: ['MIDIA_SEM_DIREITO'] as never }),
-      ['instagram'],
+      ['facebook'],
       { FFMPEG: true }
     )
     assert.equal(e.formato, 'TEXTO_COM_LINK')
@@ -205,6 +207,14 @@ describe('Nenhum formato viável nunca vira execução fantasma', () => {
           const e = escolherCanalEFormato(o, [canal], c)
           if (e.formato === null) continue
           escolhas += 1
+          // P1.9.2: o plano pode recomendar um formato que a DONA fornece
+          // (VIDEO_PROPRIO). Ele não é produzido — e por isso nunca pode
+          // virar PRONTO_PARA_GERAR_CONTEUDO. O que este teste protege é
+          // isso: execução fantasma, não a recomendação.
+          if (ehFormatoDaDona(e.formato)) {
+            assert.equal(derivarEstadoEAcao(o, e).estado, 'AGUARDANDO_MIDIA_AUTORIZADA')
+            continue
+          }
           assert.ok(
             ehFormatoProduzivel(e.formato),
             `${canal} com ${JSON.stringify(c)} escolheu ${e.formato}, que a fábrica não produz`
@@ -215,14 +225,20 @@ describe('Nenhum formato viável nunca vira execução fantasma', () => {
     assert.ok(escolhas >= 30, `a varredura precisa exercitar o caminho (${escolhas})`)
   })
 
-  test('hoje todo canal do registro aceita TEXTO_COM_LINK — a trava é rede de segurança', () => {
-    // Fato observado no registro: os 5 canais têm imagePost, shortVideo ou
-    // reel. Por isso sempre sobra um formato produzível, e o caminho
-    // AGUARDANDO_CAPACIDADE por falta de formato não dispara hoje. Ele
-    // existe para o dia em que isso deixar de ser verdade.
-    for (const canal of ['instagram', 'tiktok', 'youtube', 'facebook', 'pinterest']) {
+  test('todo canal SEM adapter real aceita TEXTO_COM_LINK — a trava é rede de segurança', () => {
+    // Fato observado no registro: estes canais têm imagePost, shortVideo ou
+    // reel, então sempre sobra um formato produzível.
+    for (const canal of ['tiktok', 'youtube', 'facebook', 'pinterest']) {
       const e = escolherCanalEFormato(oport(), [canal], {})
       assert.ok(ehFormatoProduzivel(e.formato), `${canal} deveria aceitar TEXTO_COM_LINK`)
+    }
+  })
+
+  test('P1.9.2 — o Instagram, com adapter real, NÃO recebe TEXTO_COM_LINK: espera o vídeo da dona', () => {
+    for (const caps of [{}, { FFMPEG: true }]) {
+      const e = escolherCanalEFormato(oport(), ['instagram'], caps)
+      assert.equal(e.formato, 'VIDEO_PROPRIO', JSON.stringify(caps))
+      assert.equal(derivarEstadoEAcao(oport(), e).estado, 'AGUARDANDO_MIDIA_AUTORIZADA')
     }
   })
 
@@ -245,7 +261,7 @@ describe('Nenhum formato viável nunca vira execução fantasma', () => {
     const plano = montarPlanoDeAcao({
       workspaceId: 'ws-1',
       fila: [oport(), oport({ produtoId: 'p-2', categoria: 'pet' })],
-      canaisConectados: ['instagram'],
+      canaisConectados: ['facebook'],
       capacidades: {},
       agora: new Date('2026-09-24T12:00:00Z'),
     })
@@ -335,7 +351,7 @@ describe('Tipo sem executor não consome retry', () => {
   test('a mídia sem direito continua gerando a dependência certa', () => {
     const e = escolherCanalEFormato(
       oport({ motivosDeProntidao: ['MIDIA_SEM_DIREITO'] as never }),
-      ['instagram'],
+      ['facebook'],
       { FFMPEG: true }
     )
     // Como sobra TEXTO_COM_LINK, que não usa a mídia, o item segue pronto —

@@ -21,7 +21,9 @@
  */
 
 import { gerarPresetTikTokDigitalTwinV1 } from './digital-twin-tiktok-preset'
-import type { ConteudoGerado } from '@/types'
+import { avaliarPreco } from './preco-verificado'
+import { nomeSemClaims, montarLegendaDoCanal, hashtagsParaOCanal, ctaDoCanal } from './copy-por-canal'
+import type { AlertaCompliance, ConteudoGerado } from '@/types'
 
 export interface ProdutoParaConteudoGratuito {
   nome: string
@@ -29,7 +31,14 @@ export interface ProdutoParaConteudoGratuito {
   preco?: number | null
   beneficios?: string[]
   pontosNegativos?: string[]
-  atualizadoEm?: Date
+  /**
+   * Data da última verificação REAL do preço (P1.9.1). Não é `updatedAt`:
+   * editar o cadastro não verifica preço. Use `dataDaVerificacaoDoPreco()`.
+   * Ausente = não verificado, e a legenda não afirma preço nem data.
+   */
+  precoVerificadoEm?: Date | null
+  /** Relógio explícito. A data do preço nunca sai daqui. */
+  agora?: Date
 }
 
 export interface ResultadoConteudoGratuito {
@@ -39,12 +48,23 @@ export interface ResultadoConteudoGratuito {
 }
 
 export function gerarConteudoGratuito(produto: ProdutoParaConteudoGratuito): ResultadoConteudoGratuito {
+  // P1.9.1: o título do vendedor entra sem as alegações que ninguém
+  // conferiu ("Homologado", "Original Lacrado").
+  const { nome, removidos } = nomeSemClaims(produto.nome)
+  const preco = avaliarPreco({
+    preco: produto.preco ?? null,
+    verificadoEm: produto.precoVerificadoEm ?? null,
+    agora: produto.agora ?? new Date(),
+  })
+
   const preset = gerarPresetTikTokDigitalTwinV1({
     produto: {
-      nome: produto.nome,
+      nome,
       categoria: produto.categoria,
-      preco: produto.preco ?? null,
-      precoConsultadoEm: (produto.atualizadoEm ?? new Date()).toLocaleDateString('pt-BR'),
+      // Sem verificação válida o preset não recebe preço: é ele quem decide
+      // escrever "confira o preço atual", e assim não há data para inventar.
+      preco: preco.status === 'VERIFICADO' ? produto.preco ?? null : null,
+      precoConsultadoEm: preco.dataDaVerificacao,
       isAffiliate: true,
     },
     produtoVisivelNoAsset: false,
@@ -62,38 +82,68 @@ export function gerarConteudoGratuito(produto: ProdutoParaConteudoGratuito): Res
   }
 
   const pacote = preset.pacote
-  const legendaCompleta = [pacote.caption, pacote.disclosure, pacote.hashtags.join(' ')]
-    .filter((p): p is string => !!p && p.trim().length > 0)
-    .join('\n\n')
+
+  // Uma legenda POR CANAL (P1.9.1). Antes era uma só, e o Instagram
+  // recebia `#tiktokmademebuyit` e nenhuma CTA.
+  const legendaDo = (canal: string) =>
+    montarLegendaDoCanal({
+      canal,
+      nome,
+      precoTexto: preco.textoParaCopy,
+      disclosure: pacote.disclosure,
+      hashtags: pacote.hashtags,
+    })
 
   limitacoes.push('Narração livre não é gerada sem IA paga — use o roteiro do preset ou escreva a narração.')
   if (!produto.beneficios?.length) limitacoes.push('Benefícios não foram inferidos: vêm do cadastro do produto.')
   if (!produto.pontosNegativos?.length) limitacoes.push('Pontos negativos não foram inferidos: vêm do cadastro do produto.')
 
+  // A mensagem começa pelo código estável (PRECO_NAO_VERIFICADO, ...), que
+  // é o que a tela e os testes procuram.
+  const alertasCompliance: AlertaCompliance[] = []
+  if (preco.alerta) {
+    alertasCompliance.push({
+      tipo: 'enganoso',
+      severidade: 'amarelo',
+      mensagem: preco.alerta,
+      acaoRecomendada: 'VERIFICAR_PRECO_ANTES_DE_PUBLICAR',
+    })
+  }
+  if (removidos.length > 0) {
+    alertasCompliance.push({
+      tipo: 'enganoso',
+      severidade: 'amarelo',
+      mensagem: `CLAIM_NAO_COMPROVADO: removido do título por falta de comprovação: ${removidos.join(', ')}.`,
+      acaoRecomendada: 'REVISAR_SE_NECESSARIO',
+    })
+  }
+
   const conteudo: ConteudoGerado = {
     // O "roteiro" gratuito é a sequência determinística hook → caption → CTA.
     roteiro: [pacote.hooks[0], pacote.caption, pacote.cta].join('\n\n'),
-    legendaTiktok: legendaCompleta,
-    legendaInstagram: legendaCompleta,
-    legendaYoutube: legendaCompleta,
+    legendaTiktok: legendaDo('tiktok'),
+    legendaInstagram: legendaDo('instagram'),
+    legendaYoutube: legendaDo('youtube'),
     legendaWhatsapp: `${pacote.caption}\n\n${pacote.cta}`,
-    legendaFacebook: legendaCompleta,
+    legendaFacebook: legendaDo('facebook'),
     legendaMarketplace: pacote.caption,
-    hashtags: pacote.hashtags,
+    // O campo é único; a legenda do Instagram é a que mais publica hoje,
+    // então ele não pode carregar hashtag do TikTok.
+    hashtags: hashtagsParaOCanal(pacote.hashtags, 'instagram'),
     textoTela: pacote.hooks[0],
     // Vazio de propósito: sem equivalente gratuito. Dívida de automação.
     narracao: '',
     trilhaSugerida: '',
     promptVideoIA: '',
     promptCurto: '',
-    chamadaAcao: pacote.cta,
+    chamadaAcao: ctaDoCanal('instagram'),
     // Zero aqui significa "não avaliado", não "produto ruim". Nota é
     // julgamento sobre o produto, e a versão gratuita não julga.
     notaProduto: 0,
     pontosPositivos: produto.beneficios ?? [],
     pontosNegativos: produto.pontosNegativos ?? [],
     veredito: 'Gerado sem IA paga — avaliação do produto não foi feita automaticamente.',
-    alertasCompliance: [],
+    alertasCompliance,
   }
 
   return { conteudo, limitacoes }

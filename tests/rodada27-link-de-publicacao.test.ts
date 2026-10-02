@@ -191,7 +191,11 @@ describe('Publicação divulga o link RASTREADO, não o do produto', () => {
   })
 
   test('a rota manual aceita chaveDaTentativa de quem chama', () => {
-    assert.match(manual, /chaveDaTentativa: typeof body\?\.chaveDaTentativa === 'string'/)
+    // P1.9.2: a chave de quem chama é lida UMA vez, antes da porta, e a
+    // mesma vai para o preflight e para a tentativa — é ela que fixa o link
+    // que foi confirmado na bio.
+    assert.match(manual, /typeof body\?\.chaveDaTentativa === 'string' && body\.chaveDaTentativa\.trim\(\)/)
+    assert.match(manual, /prepararTentativaDePublicacao\(\{[\s\S]*?chaveDaTentativa,/)
   })
 
   test('o destino NUNCA vem de quem chama', () => {

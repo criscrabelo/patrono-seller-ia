@@ -21,6 +21,8 @@ import { gerarPreviaLipSync, gerarPreviaVozSomente } from './digital-twin-lipsyn
 import { gerarPresetTikTokDigitalTwinV1 } from './digital-twin-tiktok-preset'
 import { avaliarDigitalTwinQualityGate } from './digital-twin-quality-gate'
 import { produtoPodeAparecerNoVideo } from './media-rights-produto'
+import { avaliarPreco, dataDaVerificacaoDoPreco } from './preco-verificado'
+import { fonteDaImagemDoProduto, fonteDoPatrono, registrarDerivacao } from './cadeia-de-direitos'
 import { criarUrlAssinada, uploadBufferPrivado } from './supabase'
 import { baixarComRetomada } from './digital-twin-model-cache'
 import { calcularExpiracaoPreview } from './digital-twin-retention'
@@ -350,15 +352,20 @@ async function processarProductPreview(
   })
 
   // --- Preset determinístico: hook, caption, CTA, hashtags, disclosure ----
+  const precoDaLegenda = avaliarPreco({
+    preco: conteudo.produto.preco,
+    verificadoEm: dataDaVerificacaoDoPreco(conteudo.produto),
+    agora: new Date(),
+  })
   const preset = gerarPresetTikTokDigitalTwinV1({
     produto: {
       nome: conteudo.produto.nome,
       categoria: conteudo.produto.categoria,
-      preco: conteudo.produto.preco,
-      // Data em pt-BR: este valor é interpolado na legenda que a proprietária
-      // publica. Um timestamp ISO cru vazaria "2026-09-20T03:02:40.781Z" para
-      // dentro do texto do TikTok.
-      precoConsultadoEm: conteudo.produto.updatedAt.toLocaleDateString('pt-BR'),
+      // P1.9.1: `updatedAt` não é verificação de preço — qualquer edição do
+      // cadastro o move. Só a verificação real vai para a legenda, e fora do
+      // prazo o preço some em vez de aparecer com data velha.
+      preco: precoDaLegenda.status === 'VERIFICADO' ? conteudo.produto.preco : null,
+      precoConsultadoEm: precoDaLegenda.dataDaVerificacao,
       isAffiliate: true,
     },
     produtoVisivelNoAsset: direitos.visivel,
@@ -474,6 +481,37 @@ async function processarProductPreview(
     .filter((p): p is string => !!p && p.trim().length > 0)
     .join('\n\n')
 
+  // --- Cadeia de direitos do vídeo derivado (P1.9.2) ----------------------
+  //
+  // O MP4 não tem direito próprio: herda o das fontes, e só se TODAS
+  // tiverem. A imagem do produto entra com o direito que o cadastro e a
+  // custódia sustentam — "Gerado por IA" ou imagem de marketplace ficam
+  // sem evidência, e o derivado inteiro fica bloqueado. O registro vai
+  // gravado de qualquer jeito: é proveniência, e é o que explica depois
+  // por que este vídeo não pode ir ao ar.
+  const fontes = [
+    imagemUrl
+      ? fonteDaImagemDoProduto(conteudo.produto, imagemUrl, process.env)
+      : fonteDoPatrono('FUNDO_NEUTRO', job.id, 'Fundo neutro composto pelo renderer local.'),
+    fonteDoPatrono(
+      'VOZ_SINTETIZADA',
+      job.id,
+      `Narração sintetizada localmente com a referência de voz aprovada pela dona em ${aprovacaoVoz.voiceApprovedAt.toISOString()}.`
+    ),
+    fonteDoPatrono('TEXTO_SOBREPOSTO', job.id, 'Hook, legenda e CTA do preset determinístico, queimados no vídeo.'),
+  ]
+  const derivacao = registrarDerivacao({
+    // Prévia em bucket PRIVADO: identificador interno, não URL pública. O
+    // registro guarda a cadeia; publicar exigiria outro arquivo, em custódia.
+    assetUrl: `digital-twin-asset:${assetId}`,
+    formato: 'VIDEO_9X16_FFMPEG_NARRADO',
+    geracaoId: job.id,
+    fontes,
+    agora: new Date(),
+    env: process.env,
+  })
+  const alertasAnteriores = Array.isArray(conteudo.alertasCompliance) ? conteudo.alertasCompliance : []
+
   await prisma.conteudo.update({
     where: { id: conteudo.id },
     data: {
@@ -482,10 +520,13 @@ async function processarProductPreview(
       chamadaAcao: preset.pacote.cta,
       textoTela: preset.pacote.hooks[0],
       duracao: Math.round(video.durationSeconds),
+      alertasCompliance: [...alertasAnteriores, derivacao.evidencia] as object[],
     },
   })
 
-  const observacaoMidia = video.usouFundoNeutro ? ` ${direitos.motivo}` : ''
+  const observacaoMidia =
+    (video.usouFundoNeutro ? ` ${direitos.motivo}` : '') +
+    (derivacao.fontesAutorizadas ? '' : ` Cadeia de direitos: ${derivacao.motivo}`)
   const observacaoPublicacao = pendenciasParaPublicar.length
     ? ` Pendente para publicar: ${pendenciasParaPublicar.join('; ')}`
     : ''

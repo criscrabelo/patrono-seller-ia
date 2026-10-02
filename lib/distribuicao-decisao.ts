@@ -26,6 +26,7 @@
  */
 
 import { capacidadeDoCanal, type ChannelCapability } from './channel-registry'
+import type { AvaliacaoDoAdapter } from './capacidade-real-do-adapter'
 
 // ── Estados ─────────────────────────────────────────────────────────────
 
@@ -60,6 +61,10 @@ export const MOTIVOS_DE_BLOQUEIO = [
   'APROVACAO_DO_PROVIDER_PENDENTE',
   'MIDIA_SEM_DIREITO',
   'FORMATO_INCOMPATIVEL',
+  /** P1.9.1. O canal aceita o formato; o adapter real, não. */
+  'FORMATO_INCOMPATIVEL_COM_ADAPTER',
+  /** P1.9.1. O adapter real exige mídia e a peça não tem. */
+  'MIDIA_OBRIGATORIA_AUSENTE',
   'DISCLOSURE_AUSENTE',
   'COMPLIANCE_PENDENTE',
   'CUSTO_NAO_AUTORIZADO',
@@ -95,7 +100,7 @@ export const IMPLEMENTACAO_POR_CANAL: Record<string, Implementacao> = {
     scopeParaPublicar: 'instagram_content_publish',
     scopeParaDraft: null,
     observacao:
-      'lib/instagram.ts publica de verdade pela Graph API oficial, e duas rotas já o usam. A Meta não oferece rascunho por API.',
+      'lib/instagram.ts publica de verdade pela Graph API oficial. O adapter real só envia Reel com vídeo (lib/capacidade-real-do-adapter.ts). A Meta não oferece rascunho por API.',
   },
   tiktok: {
     // O publisher existe e chama /post/publish/video/init/ (Direct Post).
@@ -159,6 +164,13 @@ export interface ContextoDaDistribuicao {
   midiaAutorizada: boolean
   /** O formato da peça é aceito pelo canal. */
   formatoCompativel: boolean
+  /**
+   * P1.9.1. O adapter REAL enviaria esta peça? Vem de
+   * `avaliarPecaParaOAdapter`, a mesma função que o adapter chama antes de
+   * abrir rede. Obrigatório de propósito: sem ele, "pronto" voltaria a
+   * significar "a plataforma aceitaria", que foi o bug da P1.9.
+   */
+  pecaParaOAdapter: AvaliacaoDoAdapter
   /** O disclosure obrigatório está na peça. */
   disclosurePresente: boolean
   /** Pendências de compliance abertas. Vazio = nenhuma. */
@@ -215,6 +227,16 @@ export function decidirDistribuicao(ctx: ContextoDaDistribuicao): VereditoDaDist
     bloqueios.push('FORMATO_INCOMPATIVEL')
     explicacao.push('O formato da peça não é aceito por este canal.')
   }
+  // Fail-closed: avaliação ausente é tratada como recusa.
+  const doAdapter = ctx.pecaParaOAdapter ?? {
+    aceita: false,
+    bloqueios: ['FORMATO_INCOMPATIVEL_COM_ADAPTER'],
+    explicacao: ['A peça não foi avaliada contra o adapter real.'],
+  }
+  if (!doAdapter.aceita) {
+    for (const b of doAdapter.bloqueios) if (!bloqueios.includes(b)) bloqueios.push(b)
+    explicacao.push(...doAdapter.explicacao)
+  }
   if (ctx.pendenciasDeCompliance.length > 0) {
     bloqueios.push('COMPLIANCE_PENDENTE')
     explicacao.push(`Compliance pendente: ${ctx.pendenciasDeCompliance.join(', ')}.`)
@@ -228,6 +250,10 @@ export function decidirDistribuicao(ctx: ContextoDaDistribuicao): VereditoDaDist
     explicacao.push('A distribuição só é automática quando o caminho custa R$ 0,00.')
   }
   if (bloqueios.length > 0) {
+    // Só falta a mídia: é ela que destrava, e o estado diz isso.
+    if (bloqueios.length === 1 && bloqueios[0] === 'MIDIA_OBRIGATORIA_AUSENTE') {
+      return veredito('AGUARDANDO_MIDIA_AUTORIZADA')
+    }
     // Nada disso depende de terceiro: é a peça que precisa mudar.
     return veredito('PUBLICACAO_MANUAL_ASSISTIDA')
   }

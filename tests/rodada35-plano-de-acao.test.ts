@@ -159,12 +159,25 @@ describe('Formatos — só o que o projeto realmente faz', () => {
 })
 
 describe('Canal — respeita o que a API realmente permite', () => {
-  test('Instagram conectado vira canal com formato de vídeo gratuito', () => {
-    const e = escolherCanalEFormato(op(), ['instagram'], SO_FFMPEG)
-    assert.equal(e.canal, 'instagram')
+  test('canal sem adapter real, com FFmpeg: formato de vídeo gratuito', () => {
+    const e = escolherCanalEFormato(op(), ['facebook'], SO_FFMPEG)
+    assert.equal(e.canal, 'facebook')
     assert.equal(e.formato, 'VIDEO_9X16_FFMPEG_NARRADO')
     assert.equal(e.custo, 0)
-    assert.equal(e.dependenciaExterna, null, 'Instagram publica pela API')
+    assert.equal(e.dependenciaExterna, null)
+  })
+
+  test('P1.9.2 — Instagram: só o que o adapter real publica, e hoje isso é o vídeo da dona', () => {
+    // O adapter do Instagram publica Reel com vídeo. A fábrica entrega copy
+    // (TEXTO_COM_LINK) ou copy sem vídeo (FFMPEG, render não ligado à peça).
+    // Nenhum dos dois iria ao ar: o plano espera pelo vídeo da dona.
+    const e = escolherCanalEFormato(op(), ['instagram'], SO_FFMPEG)
+    assert.equal(e.canal, 'instagram')
+    assert.equal(e.formato, 'VIDEO_PROPRIO')
+    assert.equal(e.dependenciaExterna, 'MIDIA_DA_DONA')
+    assert.ok(e.bloqueios.includes('MIDIA_PROPRIA_AUSENTE'))
+    assert.ok(e.bloqueios.includes('FORMATO_NAO_PUBLICAVEL_PELO_ADAPTER:instagram:TEXTO_COM_LINK'))
+    assert.ok(e.bloqueios.includes('FABRICA_NAO_ENTREGA_MIDIA:instagram:VIDEO_9X16_FFMPEG_NARRADO'))
   })
 
   test('TikTok vence Instagram quando os dois estão conectados', () => {
@@ -190,7 +203,7 @@ describe('Canal — respeita o que a API realmente permite', () => {
   test('CUSTO PAGO bloqueia — e prefere o fallback gratuito', () => {
     // Sem FFMPEG declarado, o formato gratuito de vídeo sai de cena e o
     // pago seria o próximo. Ele não é escolhido.
-    const e = escolherCanalEFormato(op(), ['instagram'], {})
+    const e = escolherCanalEFormato(op(), ['facebook'], {})
     assert.notEqual(e.formato, 'VIDEO_IA_GERADO', 'nunca escolhe o pago sozinho')
     assert.equal(e.custo, 0)
     // A partir da rodada 45 o laço varre os formatos na ordem da FÁBRICA e
@@ -202,7 +215,7 @@ describe('Canal — respeita o que a API realmente permite', () => {
   })
 
   test('capacidade ausente é registrada como bloqueio nomeado', () => {
-    const e = escolherCanalEFormato(op(), ['instagram'], {})
+    const e = escolherCanalEFormato(op(), ['facebook'], {})
     assert.ok(e.bloqueios.some((b) => b === 'CAPACIDADE_AUSENTE:FFMPEG'))
   })
 
@@ -218,7 +231,7 @@ describe('Canal — respeita o que a API realmente permite', () => {
   test('mídia bloqueada cai para TEXTO_COM_LINK, não some', () => {
     const e = escolherCanalEFormato(
       op({ motivosDeProntidao: ['MIDIA_SEM_DIREITO'], classificacao: 'OPORTUNIDADE_COMERCIAL' }),
-      ['instagram'],
+      ['facebook'],
       SO_FFMPEG
     )
     assert.equal(e.formato, 'TEXTO_COM_LINK')
@@ -316,7 +329,7 @@ describe('Diversidade e saturação', () => {
 
 describe('Estado e próxima ação', () => {
   test('tudo em ordem = PRONTO_PARA_GERAR_CONTEUDO', () => {
-    const e = escolherCanalEFormato(op(), ['instagram'], SO_FFMPEG)
+    const e = escolherCanalEFormato(op(), ['facebook'], SO_FFMPEG)
     const r = derivarEstadoEAcao(op(), e)
     assert.equal(r.estado, 'PRONTO_PARA_GERAR_CONTEUDO')
     assert.equal(r.proximaAcao, 'GERAR_CONTEUDO')

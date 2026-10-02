@@ -67,7 +67,10 @@ const itemDoPlano = (over: Partial<ItemDoPlano> = {}): ItemDoPlano => ({
   scoreDaOportunidade: 80,
   prioridadeOperacional: 76,
   posicao: 1,
-  canalRecomendado: 'instagram',
+  // P1.9.2: canal SEM adapter real. Estes testes exercitam a mecânica da
+  // fábrica; o Instagram tem regra própria (só Reel com vídeo) e é testado
+  // à parte, no fim deste arquivo e na rodada 49.
+  canalRecomendado: 'facebook',
   formatoRecomendado: 'VIDEO_9X16_FFMPEG_NARRADO',
   estado: 'PRONTO_PARA_GERAR_CONTEUDO',
   proximaAcao: 'GERAR_CONTEUDO',
@@ -331,7 +334,7 @@ describe(
     test('gera Conteudo real, com copy determinística e custo zero', async () => {
       const r = await gerarConteudoDoJob({
         workspaceId: wsA, produtoId: produtoA,
-        formato: 'TEXTO_COM_LINK', canal: 'instagram',
+        formato: 'TEXTO_COM_LINK', canal: 'facebook',
         capacidades: CAPACIDADES_OK, agora: AGORA, env: ENV_GRATUITO,
       })
       assert.equal(r.ok, true, r.explicacao)
@@ -341,7 +344,7 @@ describe(
       const c = await prisma.conteudo.findUniqueOrThrow({ where: { id: r.contentId! } })
       assert.equal(c.workspaceId, wsA)
       assert.equal(c.produtoId, produtoA)
-      assert.equal(c.redeSocial, 'instagram')
+      assert.equal(c.redeSocial, 'facebook')
       assert.equal(c.status, 'roteiro_gerado')
       assert.ok(c.roteiro && c.roteiro.length > 0)
       assert.ok(c.legendaInstagram && c.legendaInstagram.length > 0)
@@ -351,7 +354,7 @@ describe(
     test('a PROVENIÊNCIA fica registrada, e nunca como operação real', async () => {
       const r = await gerarConteudoDoJob({
         workspaceId: wsA, produtoId: produtoA,
-        formato: 'TEXTO_COM_LINK', canal: 'instagram',
+        formato: 'TEXTO_COM_LINK', canal: 'facebook',
         capacidades: CAPACIDADES_OK, agora: AGORA, env: ENV_GRATUITO,
       })
       const c = await prisma.conteudo.findUniqueOrThrow({ where: { id: r.contentId! } })
@@ -368,14 +371,14 @@ describe(
     test('RETRY não duplica Conteudo, asset nem render', async () => {
       const primeira = await gerarConteudoDoJob({
         workspaceId: wsA, produtoId: produtoA,
-        formato: 'TEXTO_COM_LINK', canal: 'instagram',
+        formato: 'TEXTO_COM_LINK', canal: 'facebook',
         capacidades: CAPACIDADES_OK, agora: AGORA, env: ENV_GRATUITO,
       })
       const antes = await prisma.conteudo.count({ where: { workspaceId: wsA } })
 
       const retry = await gerarConteudoDoJob({
         workspaceId: wsA, produtoId: produtoA,
-        formato: 'TEXTO_COM_LINK', canal: 'instagram',
+        formato: 'TEXTO_COM_LINK', canal: 'facebook',
         contentIdExistente: primeira.contentId,
         capacidades: CAPACIDADES_OK, agora: AGORA, env: ENV_GRATUITO,
       })
@@ -388,7 +391,7 @@ describe(
     test('MÍDIA SEM DIREITO bloqueia o vídeo', async () => {
       const r = await gerarConteudoDoJob({
         workspaceId: wsA, produtoId: produtoSemDireito,
-        formato: 'VIDEO_9X16_FFMPEG_NARRADO', canal: 'instagram',
+        formato: 'VIDEO_9X16_FFMPEG_NARRADO', canal: 'facebook',
         capacidades: CAPACIDADES_OK, agora: AGORA,
         env: { DIGITAL_TWIN_MIN_FREE_RAM_GB: '3' },
       })
@@ -400,7 +403,7 @@ describe(
     test('SEM CAPACIDADE não gera e não é fatal — o job espera', async () => {
       const r = await gerarConteudoDoJob({
         workspaceId: wsA, produtoId: produtoA,
-        formato: 'VIDEO_9X16_FFMPEG_NARRADO', canal: 'instagram',
+        formato: 'VIDEO_9X16_FFMPEG_NARRADO', canal: 'facebook',
         capacidades: { ...CAPACIDADES_OK, ffmpeg: false },
         agora: AGORA, env: ENV_GRATUITO,
       })
@@ -412,7 +415,7 @@ describe(
     test('MEMÓRIA insuficiente não gera e não é fatal', async () => {
       const r = await gerarConteudoDoJob({
         workspaceId: wsA, produtoId: produtoA,
-        formato: 'VIDEO_9X16_FFMPEG_NARRADO', canal: 'instagram',
+        formato: 'VIDEO_9X16_FFMPEG_NARRADO', canal: 'facebook',
         capacidades: { ...CAPACIDADES_OK, memoriaLivreBytes: 100 * 1024 ** 2 },
         agora: AGORA, env: { DIGITAL_TWIN_MIN_FREE_RAM_GB: '3' },
       })
@@ -424,7 +427,7 @@ describe(
     test('produto de OUTRO workspace é FATAL, não retry', async () => {
       const r = await gerarConteudoDoJob({
         workspaceId: wsA, produtoId: produtoB,
-        formato: 'TEXTO_COM_LINK', canal: 'instagram',
+        formato: 'TEXTO_COM_LINK', canal: 'facebook',
         capacidades: CAPACIDADES_OK, agora: AGORA, env: ENV_GRATUITO,
       })
       assert.equal(r.ok, false)

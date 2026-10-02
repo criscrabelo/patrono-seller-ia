@@ -89,6 +89,21 @@ export function perfilContextual(
   contexto: Record<string, unknown> = {}
 ): PerfilDaDependencia {
   const base = perfilDaDependencia(tipo)
+
+  // P1.9.2. Mídia que só a DONA pode fornecer (o vídeo que ela grava). Não
+  // é a sincronização com o provider: é pessoa, e o painel precisa dizer
+  // "preciso de você". Zero tentativas — repetir não grava vídeo.
+  if (tipo === 'SINCRONIZAR_MIDIA_AUTORIZADA' && contexto.origemDaMidia === 'DA_DONA') {
+    return {
+      ...base,
+      classe: 'EXIGE_HUMANO',
+      motivoHumano: 'MISSING_AUTHORIZED_MEDIA',
+      maxTentativas: 0,
+      explicacao:
+        'O canal só publica vídeo, e o vídeo tem de ser da proprietária, com direito registrado. Fica aguardando o arquivo, sem consumir tentativa.',
+    }
+  }
+
   if (tipo !== 'COMPLETAR_DADO_DO_PRODUTO') return base
 
   const temFonteAutomatica = contexto.temFonteAutomatica === true

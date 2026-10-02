@@ -43,6 +43,17 @@ import {
 } from './publicacao-fluxo'
 import { chaveDoJob, type JobDesejado } from './automation-queue-contrato'
 import { lerAutorizacao } from './autorizacao-da-conta'
+import {
+  avaliarPecaParaOAdapter,
+  capacidadeRealDoAdapter,
+  urlVaiNaLegenda,
+  estrategiaDeLinkDoCanal,
+  type EstrategiaDeLink,
+} from './capacidade-real-do-adapter'
+import { avaliarMidiaParaPublicacao, lerEvidenciaDeMidia } from './evidencia-de-midia'
+import { pendenciasDeCopy } from './copy-por-canal'
+import { pendenciaDePrecoNaLegenda, dataDaVerificacaoDoPreco } from './preco-verificado'
+import { urlDaTentativa, avaliarLinkNaBio } from './link-na-bio'
 import type { LinhaDaFila } from './automation-queue-repositorio'
 
 /** Tipo de job desta rodada. Vocabulário único, na fila que já existe. */
@@ -63,6 +74,11 @@ export interface PedidoDeDistribuicao {
   /** Rastreada quando deu; direta quando não deu. Já decidida acima. */
   urlParaDivulgar: string
   assetUrl: string | null
+  /**
+   * P1.9.1. O formato da peça. O adapter real confere contra a mesma
+   * declaração que o preflight usou (`lib/capacidade-real-do-adapter.ts`).
+   */
+  formato?: string | null
 }
 
 export interface RespostaDoAdaptador {
@@ -174,6 +190,18 @@ export interface ConteudoParaDistribuir {
   assetUrl: string | null
   formato: string | null
   urlDiretaDoProduto: string | null
+  /** P1.9.1. Onde o link rastreado fica. `null` = não verificado: não vai na legenda. */
+  estrategiaDeLink?: EstrategiaDeLink | null
+  /** P1.9.1. Por que a mídia foi ou não aceita, em uma frase. */
+  motivoDaMidia?: string | null
+  /**
+   * P1.9.2. Para a confirmação do link na bio: o nome entra no slug, o
+   * agendamento na chave padrão, e os alertas guardam a confirmação.
+   * Ausentes, a confirmação não é encontrada — fail-closed.
+   */
+  nomeProduto?: string | null
+  dataAgendamento?: Date | null
+  alertas?: unknown[] | null
 }
 
 /**
@@ -186,6 +214,10 @@ export async function montarContextoDaDistribuicao(params: {
   workspaceId: string
   contentId: string
   canal: string
+  /** Para a custódia da mídia (host do storage do projeto). */
+  env?: Record<string, string | undefined>
+  /** Para a validade do preço. */
+  agora?: Date
 }): Promise<{ contexto: ContextoDaDistribuicao; conteudo: ConteudoParaDistribuir | null }> {
   const canal = (params.canal ?? '').trim().toLowerCase()
 
@@ -196,6 +228,7 @@ export async function montarContextoDaDistribuicao(params: {
     appAprovadoPeloProvider: null,
     midiaAutorizada: false,
     formatoCompativel: false,
+    pecaParaOAdapter: { aceita: false, bloqueios: [], explicacao: [] },
     disclosurePresente: false,
     pendenciasDeCompliance: ['Conteúdo não encontrado neste workspace.'],
     custoZero: true,
@@ -207,6 +240,7 @@ export async function montarContextoDaDistribuicao(params: {
       id: true,
       produtoId: true,
       videoUrl: true,
+      dataAgendamento: true,
       legendaInstagram: true,
       legendaTiktok: true,
       legendaFacebook: true,
@@ -220,6 +254,7 @@ export async function montarContextoDaDistribuicao(params: {
           origemDados: true,
           imagens: true,
           linkProduto: true,
+          sincronizadoEm: true,
         },
       },
     },
@@ -235,7 +270,19 @@ export async function montarContextoDaDistribuicao(params: {
     (canal === 'youtube' ? conteudo.legendaYoutube : null) ??
     ''
 
-  const formato = conteudo.videoUrl ? 'VIDEO_9X16_FFMPEG_NARRADO' : 'TEXTO_COM_LINK'
+  const alertas = Array.isArray(conteudo.alertasCompliance) ? conteudo.alertasCompliance : []
+  const assetUrl = conteudo.videoUrl ?? null
+  // O registro de direito DESTE arquivo — a peça pode guardar outros.
+  const evidencia = lerEvidenciaDeMidia(alertas, assetUrl)
+
+  // O formato é o que o registro de direito declara para ESTE arquivo.
+  // Sem registro, vale a inferência de sempre: vídeo renderizado ou texto.
+  const formato =
+    evidencia && assetUrl && evidencia.assetUrl === assetUrl && evidencia.formato
+      ? evidencia.formato
+      : assetUrl
+        ? 'VIDEO_9X16_FFMPEG_NARRADO'
+        : 'TEXTO_COM_LINK'
 
   // Autoridade única do que esta conta autorizou (P1.5.1). O orquestrador
   // não lê token nem extraData: ele pergunta, e o que volta já é público.
@@ -251,9 +298,20 @@ export async function montarContextoDaDistribuicao(params: {
     origemDados: conteudo.produto.origemDados ?? undefined,
   })
   const formatoUsaMidia = FORMATOS.find((f) => f.formato === formato)?.exigeMidiaAutorizada ?? true
-  const midiaAutorizada = !formatoUsaMidia || (direitos.canDerive && direitos.canTransform)
 
-  const alertas = Array.isArray(conteudo.alertasCompliance) ? conteudo.alertasCompliance : []
+  // P1.9.1. Canal com adapter REAL publica de verdade, e aí o que decide é
+  // o direito do ARQUIVO, com evidência — não a origem do produto.
+  // `comprei_e_testei` não prova autoria de foto nenhuma.
+  const temAdapterReal = !!capacidadeRealDoAdapter(canal)
+  const avaliacaoDaMidia = temAdapterReal
+    ? avaliarMidiaParaPublicacao({ assetUrl, evidencia, env: params.env ?? process.env })
+    : null
+  const midiaAutorizada = !formatoUsaMidia
+    ? true
+    : avaliacaoDaMidia
+      ? avaliacaoDaMidia.autorizada
+      : direitos.canDerive && direitos.canTransform
+
   const pendencias = alertas
     .map((a) => {
       const item = (a ?? {}) as Record<string, unknown>
@@ -261,6 +319,16 @@ export async function montarContextoDaDistribuicao(params: {
       return bloqueia ? String(item.mensagem ?? item.regra ?? 'alerta de compliance') : null
     })
     .filter((m): m is string => !!m)
+
+  // P1.9.1. A legenda já escrita também passa pelas regras de copy e de
+  // preço. É o que segura as peças geradas antes desta correção.
+  pendencias.push(...pendenciasDeCopy({ canal, legenda }))
+  const doPreco = pendenciaDePrecoNaLegenda({
+    legenda,
+    verificadoEm: dataDaVerificacaoDoPreco(conteudo.produto),
+    agora: params.agora ?? new Date(),
+  })
+  if (doPreco) pendencias.push(doPreco)
 
   const disclosurePresente = ['afiliado', 'parceria', 'publicidade'].some((t) =>
     legenda.includes(textoDisclosure(t as 'afiliado' | 'parceria' | 'publicidade'))
@@ -275,6 +343,7 @@ export async function montarContextoDaDistribuicao(params: {
       appAprovadoPeloProvider: autorizacao.aprovacaoDoApp,
       midiaAutorizada,
       formatoCompativel: formatoAceitoPeloCanal(formato, canal),
+      pecaParaOAdapter: avaliarPecaParaOAdapter({ canal, formato, assetUrl }),
       disclosurePresente,
       pendenciasDeCompliance: pendencias,
       // A distribuição desta rodada não chama nenhum provider pago.
@@ -284,9 +353,14 @@ export async function montarContextoDaDistribuicao(params: {
       id: conteudo.id,
       produtoId: conteudo.produtoId,
       legenda,
-      assetUrl: conteudo.videoUrl ?? null,
+      assetUrl,
       formato,
       urlDiretaDoProduto: conteudo.produto.linkProduto ?? null,
+      estrategiaDeLink: estrategiaDeLinkDoCanal(canal),
+      motivoDaMidia: avaliacaoDaMidia?.motivo ?? null,
+      nomeProduto: conteudo.produto.nome,
+      dataAgendamento: conteudo.dataAgendamento,
+      alertas,
     },
   }
 }
@@ -298,6 +372,8 @@ export const MOTIVOS_DE_ESPERA = [
   'ADAPTADOR_NAO_LIGADO',
   'ADAPTADOR_SEM_A_ACAO',
   'CONTEUDO_INDISPONIVEL',
+  /** P1.9.2. O link vai na bio e ninguém confirmou que ele está lá. */
+  'LINK_NA_BIO_NAO_CONFIRMADO',
 ] as const
 export type MotivoDeEspera = (typeof MOTIVOS_DE_ESPERA)[number]
 
@@ -379,6 +455,9 @@ export async function distribuirConteudo(params: {
       workspaceId: params.workspaceId,
       contentId: params.contentId,
       canal,
+      // O mesmo ambiente da execução: a custódia da mídia é verificada
+      // contra o storage DESTE projeto.
+      env: params.env,
     })
     contexto = contexto ?? lido.contexto
     conteudo = conteudo ?? lido.conteudo
@@ -417,6 +496,44 @@ export async function distribuirConteudo(params: {
     )
   }
 
+  // ── P1.9.2: o link precisa estar onde a CTA manda ────────────────────
+  //
+  // No Instagram a CTA diz "Link na bio". Publicar sem que uma pessoa tenha
+  // confirmado ESTE link na bio seria mandar o público para outro lugar.
+  // Checado ANTES da Publicacao nascer: esperar não deixa rastro.
+  const estrategia = estrategiaDeLinkDoCanal(canal)
+  const daTentativa =
+    estrategia === 'BIO'
+      ? urlDaTentativa({
+          workspaceId: params.workspaceId,
+          contentId: params.contentId,
+          canal,
+          chaveDaTentativa: params.chaveDaTentativa,
+          dataAgendamento: conteudo.dataAgendamento ?? null,
+          nomeProduto: conteudo.nomeProduto ?? null,
+          urlDiretaDoProduto: conteudo.urlDiretaDoProduto,
+          env: params.env,
+        })
+      : null
+  if (daTentativa) {
+    const gerado = daTentativa.slug
+      ? !!(await prisma.linkDinamico.findFirst({
+          where: { slug: daTentativa.slug, workspaceId: params.workspaceId },
+          select: { id: true },
+        }))
+      : true
+    const naBio = avaliarLinkNaBio({
+      canal,
+      url: daTentativa.url,
+      rastreada: daTentativa.rastreada,
+      gerado,
+      alertas: conteudo.alertas ?? null,
+    })
+    if (!naBio.liberaExecucao) {
+      return espera('LINK_NA_BIO_NAO_CONFIRMADO', naBio.explicacao, veredito)
+    }
+  }
+
   // ── A Publicacao nasce aqui, com o link rastreado ────────────────────
   const tentativa = await prepararTentativaDePublicacao({
     workspaceId: params.workspaceId,
@@ -438,9 +555,26 @@ export async function distribuirConteudo(params: {
   }
 
   const publicacaoId = tentativa.publicacao.id
-  const legenda = tentativa.urlParaDivulgar
-    ? `${conteudo.legenda}\n\n${tentativa.urlParaDivulgar}`.trim()
-    : conteudo.legenda
+
+  // Segunda conferência: o link que a tentativa REALMENTE obteve é o que
+  // foi confirmado? Divergir aqui significa que algo mudou entre a
+  // confirmação e agora — melhor não publicar do que publicar errado.
+  if (daTentativa && tentativa.urlParaDivulgar !== daTentativa.url) {
+    await registrarFalhaDaTentativa({ workspaceId: params.workspaceId, publicacaoId })
+    return espera(
+      'LINK_NA_BIO_NAO_CONFIRMADO',
+      'O link obtido para a publicação não é o que foi confirmado na bio. Nada foi enviado.',
+      veredito
+    )
+  }
+
+  // P1.9.1. A URL só entra na legenda onde ela é clicável. No Instagram o
+  // link rastreado vai na bio, e a legenda só aponta para ela — colar a URL
+  // ali seria oferecer um link que não abre.
+  const legenda =
+    tentativa.urlParaDivulgar && urlVaiNaLegenda(canal)
+      ? `${conteudo.legenda}\n\n${tentativa.urlParaDivulgar}`.trim()
+      : conteudo.legenda
 
   let resposta: RespostaDoAdaptador
   try {
@@ -451,6 +585,7 @@ export async function distribuirConteudo(params: {
       legenda,
       urlParaDivulgar: tentativa.urlParaDivulgar ?? '',
       assetUrl: conteudo.assetUrl,
+      formato: conteudo.formato,
     })
   } catch (e) {
     // A exceção escapou do adapter: ele não nos disse se a requisição

@@ -19,6 +19,9 @@ import {
   registrarFalhaDaTentativa,
   respostaDeRastreamento,
 } from '@/lib/publicacao-fluxo'
+import { autorizarPublicacaoReal } from '@/lib/porta-de-publicacao-real'
+import { chaveDaTentativaPadrao } from '@/lib/link-de-publicacao'
+import { urlVaiNaLegenda } from '@/lib/capacidade-real-do-adapter'
 
 // Publicar pode levar até ~50s (processamento do vídeo na Meta).
 export const maxDuration = 60
@@ -79,6 +82,27 @@ export async function POST(
   const accessToken = integracao.accessToken
   const igUserId = integracao.accountId
 
+  // P1.9.2: A PORTA ÚNICA. Antes daqui, esta rota publicava sem preflight,
+  // sem a flag PUBLICACAO_REAL_INSTAGRAM, sem direito de mídia e sem link
+  // na bio — inclusive as imagens do produto. Agora nenhuma conexão com a
+  // Meta abre sem `executavelAgora`.
+  const chaveDaTentativa =
+    (typeof body?.chaveDaTentativa === 'string' && body.chaveDaTentativa.trim()) ||
+    chaveDaTentativaPadrao({ contentId: conteudo.id, canal: 'instagram', dataAgendamento: conteudo.dataAgendamento })
+  const porta = await autorizarPublicacaoReal({
+    workspaceId: session.user.workspaceId,
+    contentId: conteudo.id,
+    canal: 'instagram',
+    chaveDaTentativa,
+    envio: { tipoMidia, destino },
+  })
+  if (!porta.liberada) {
+    return NextResponse.json(
+      { error: porta.explicacao, bloqueio: porta.bloqueio },
+      { status: 409 }
+    )
+  }
+
   // P1.0 Etapa 2.c: a tentativa passa pela AUTORIDADE CENTRAL. Ela cria ou
   // reusa a Publicacao, obtem o link rastreado, valida o vinculo pelo guard
   // e move o estado para DISTRIBUINDO — tudo antes de falar com a Meta.
@@ -90,17 +114,17 @@ export async function POST(
     workspaceId: session.user.workspaceId,
     contentId: conteudo.id,
     canal: 'instagram',
-    chaveDaTentativa: typeof body?.chaveDaTentativa === 'string' ? body.chaveDaTentativa : null,
+    chaveDaTentativa,
     urlDiretaDoProduto: conteudo.produto?.linkProduto ?? null,
     dataAgendamento: conteudo.dataAgendamento,
   })
 
-  const legenda = montarLegenda(
-    conteudo.legendaInstagram,
-    conteudo.hashtags,
-    conteudo.chamadaAcao,
-    tentativa.urlParaDivulgar
-  )
+  // P1.9.2: a legenda é a que o preflight aprovou — com CTA e hashtags já
+  // dentro. Remontá-la aqui duplicaria a CTA e, no Instagram, colaria uma
+  // URL que não é clicável (o link rastreado vai na bio).
+  const legenda = urlVaiNaLegenda('instagram')
+    ? montarLegenda(conteudo.legendaInstagram, [], null, tentativa.urlParaDivulgar)
+    : (conteudo.legendaInstagram ?? '').trim()
   const ehVideo = tipoMidia === 'video'
 
   try {

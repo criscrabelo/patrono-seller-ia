@@ -129,7 +129,12 @@ describe('Fallback EXECUTADO, nao apenas mapeado', () => {
   })
 
   test('preco real aparece formatado em BRL na legenda', () => {
-    const { conteudo } = gerarConteudoGratuito({ nome: 'X', categoria: 'casa', preco: 1299.9 })
+    // P1.9.1: preço só entra com verificação real e dentro do prazo.
+    const agora = new Date('2026-10-01T12:00:00Z')
+    const { conteudo } = gerarConteudoGratuito({
+      nome: 'X', categoria: 'casa', preco: 1299.9,
+      precoVerificadoEm: new Date('2026-10-01T09:00:00Z'), agora,
+    })
     assert.ok(conteudo.legendaTiktok.includes('R$ 1.299,90'), conteudo.legendaTiktok)
   })
 

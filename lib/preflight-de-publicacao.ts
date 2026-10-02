@@ -26,7 +26,6 @@
  * Este módulo não chama adapter, não cria `Publicacao` e não escreve nada.
  */
 
-import { prisma } from './prisma'
 import {
   lerAutorizacao,
   capabilityEfetivaDaConta,
@@ -53,13 +52,10 @@ import {
   motivoDeAdapterDesligado,
   ADAPTADORES_DISPONIVEIS,
 } from './adaptadores-reais'
-import {
-  lerBasePublica,
-  montarUrlRastreada,
-  slugDaPublicacao,
-  chaveDaTentativaPadrao,
-} from './link-de-publicacao'
+import { chaveDaTentativaPadrao } from './link-de-publicacao'
 import { chaveDoJob, type JobDesejado } from './automation-queue-contrato'
+import { type EstrategiaDeLink, urlVaiNaLegenda } from './capacidade-real-do-adapter'
+import { situacaoDoLinkNaBio, urlDaTentativa, type SituacaoDoLinkNaBio } from './link-na-bio'
 
 // ── Vocabulário ─────────────────────────────────────────────────────────
 
@@ -72,6 +68,8 @@ import { chaveDoJob, type JobDesejado } from './automation-queue-contrato'
 export const MOTIVOS_DO_PREFLIGHT = [
   'ADAPTER_DESLIGADO',
   'CONTEUDO_INDISPONIVEL',
+  /** P1.9.2. O link vai na bio e a presença dele lá não foi confirmada. */
+  'LINK_NA_BIO_NAO_CONFIRMADO',
 ] as const
 export type MotivoDoPreflight =
   | (typeof MOTIVOS_DO_PREFLIGHT)[number]
@@ -101,6 +99,23 @@ export interface RelatorioDePreflight {
   midiaAutorizada: boolean
   disclosurePresente: boolean
   custoZero: boolean
+
+  /** P1.9.1. O formato da peça, como o adapter o receberia. */
+  formato: string | null
+  /** P1.9.1. O adapter REAL enviaria esta peça? Mesma função que ele chama. */
+  aceitoPeloAdapter: boolean
+  /** P1.9.1. Por que a mídia foi ou não aceita. */
+  motivoDaMidia: string | null
+  /** P1.9.1. Onde o link rastreado fica para o público. */
+  estrategiaDeLink: EstrategiaDeLink | null
+  /** P1.9.1. Pendências de copy, preço e compliance, uma por linha. */
+  pendencias: string[]
+  /**
+   * P1.9.2. As três coisas que antes se confundiam: estratégia definida,
+   * link rastreado gerado, e link confirmado na bio por uma pessoa.
+   * `null` quando o relatório é só da conta.
+   */
+  link: SituacaoDoLinkNaBio | null
 
   capabilityEfetiva: { publicar: boolean; draft: boolean }
   estadoDaDistribuicao: EstadoDeDistribuicao | null
@@ -134,6 +149,8 @@ export async function preflightDePublicacao(params: {
   /** Injetável em teste. Sem isto, lê do ambiente. */
   adaptadores?: Record<string, AdaptadorDeCanal>
   agora?: Date
+  /** A tentativa que vai ao ar. Sem ela, a chave padrão — é dela o link da bio. */
+  chaveDaTentativa?: string | null
 }): Promise<RelatorioDePreflight> {
   const canal = (params.canal ?? '').trim().toLowerCase()
   const env = params.env ?? process.env
@@ -162,12 +179,26 @@ export async function preflightDePublicacao(params: {
       workspaceId: params.workspaceId,
       contentId: params.contentId,
       canal,
+      env,
+      agora: params.agora,
     })
     contexto = lido.contexto
     conteudo = lido.conteudo
   }
 
   const veredito: VereditoDaDistribuicao | null = contexto ? decidirDistribuicao(contexto) : null
+
+  // 4. O link na bio (P1.9.2): só existe pergunta quando há peça.
+  const link =
+    params.contentId && conteudo
+      ? await situacaoDoLinkNaBio({
+          workspaceId: params.workspaceId,
+          contentId: params.contentId,
+          canal,
+          chaveDaTentativa: params.chaveDaTentativa,
+          env,
+        })
+      : null
 
   const explicacao: string[] = [autorizacao.explicacao, ...(veredito?.explicacao ?? [])]
 
@@ -197,14 +228,27 @@ export async function preflightDePublicacao(params: {
     // Com peça: ela também precisa passar. Sem peça: só a conta responde.
     (!params.contentId || (!!veredito && veredito.podeExecutarSozinho))
 
-  const executavelAgora = pronto && adapterLigado
-  if (pronto && !adapterLigado) bloqueio = 'ADAPTER_DESLIGADO'
+  // O link na bio vem ANTES do adapter na ordem do bloqueio: confirmar é o
+  // passo humano que precede ligar o canal, e é o que a pessoa faz primeiro.
+  const linkLiberado = link === null || link.liberaExecucao
+  const executavelAgora = pronto && adapterLigado && linkLiberado
+  if (pronto && !linkLiberado) bloqueio = 'LINK_NA_BIO_NAO_CONFIRMADO'
+  else if (pronto && !adapterLigado) bloqueio = 'ADAPTER_DESLIGADO'
 
   const oQueFalta = (() => {
     if (executavelAgora) return null
+    if (bloqueio === 'LINK_NA_BIO_NAO_CONFIRMADO') return link?.explicacao ?? 'Confirme o link na bio.'
     if (bloqueio === 'ADAPTER_DESLIGADO') return motivoDoAdapter
     if (bloqueio === 'SCOPE_NAO_VERIFICAVEL')
-      return 'Reconecte a conta informando App ID e App Secret, para a plataforma confirmar as permissões.'
+      return 'Revalide as permissões no card do canal em Integrações. Se a conta não tiver App ID e App Secret, reconecte informando os dois.'
+    if (bloqueio === 'FORMATO_INCOMPATIVEL_COM_ADAPTER')
+      return `O adapter de ${canal} não publica este formato. ${contexto?.pecaParaOAdapter.explicacao[0] ?? ''}`.trim()
+    if (bloqueio === 'MIDIA_OBRIGATORIA_AUSENTE')
+      return `${canal} exige vídeo e a peça não tem. Envie um vídeo próprio do produto.`
+    if (bloqueio === 'MIDIA_SEM_DIREITO')
+      return conteudo?.motivoDaMidia ?? 'A mídia não tem direito de uso verificado para este canal.'
+    if (bloqueio === 'COMPLIANCE_PENDENTE')
+      return contexto?.pendenciasDeCompliance[0] ?? 'Há pendência de compliance na peça.'
     if (bloqueio === 'ESCOPO_INSUFICIENTE')
       return `A conta precisa conceder: ${autorizacao.scopesFaltando.join(', ')}.`
     if (bloqueio === 'TOKEN_EXPIRADO')
@@ -245,6 +289,13 @@ export async function preflightDePublicacao(params: {
     disclosurePresente: contexto?.disclosurePresente ?? false,
     custoZero: contexto?.custoZero ?? true,
 
+    formato: conteudo?.formato ?? null,
+    aceitoPeloAdapter: contexto?.pecaParaOAdapter.aceita ?? false,
+    motivoDaMidia: conteudo?.motivoDaMidia ?? null,
+    estrategiaDeLink: conteudo?.estrategiaDeLink ?? null,
+    pendencias: contexto?.pendenciasDeCompliance ?? [],
+    link,
+
     capabilityEfetiva: { publicar: capability.publicar.permitido, draft: capability.draft.permitido },
     estadoDaDistribuicao: veredito?.estado ?? null,
 
@@ -265,8 +316,15 @@ export interface PayloadSimulado {
   tamanhoDaLegenda: number
   /** `true` quando a peça tem vídeo renderizado. */
   temMidia: boolean
-  /** O link que iria na legenda seria o rastreado? */
+  /** O link que seria divulgado seria o rastreado? */
   linkRastreado: boolean
+  /**
+   * P1.9.1. Onde o link fica. Em `BIO`, a legenda NÃO leva a URL: ela vai
+   * na bio do perfil, e quem publica precisa colocá-la lá antes.
+   */
+  ondeVaiOLink: EstrategiaDeLink | null
+  /** A URL entraria no texto da legenda? Só onde ela é clicável. */
+  urlNaLegenda: boolean
   /** A URL que seria usada. É pública por natureza — não é segredo. */
   urlQueSeriaUsada: string | null
   disclosurePresente: boolean
@@ -318,12 +376,15 @@ export async function simularDistribuicao(params: {
     env,
     adaptadores: params.adaptadores,
     agora: params.agora,
+    chaveDaTentativa: params.chaveDaTentativa,
   })
 
   const { conteudo } = await montarContextoDaDistribuicao({
     workspaceId: params.workspaceId,
     contentId: params.contentId,
     canal,
+    env,
+    agora: params.agora,
   })
 
   if (!conteudo) {
@@ -340,29 +401,31 @@ export async function simularDistribuicao(params: {
   }
 
   // A URL rastreada, calculada e não reservada.
+  // Sem chave explícita, a padrão — derivada do agendamento da peça, como
+  // a publicação real faz. Antes o ensaio usava `dataAgendamento: null` e,
+  // numa peça agendada, mostrava um link diferente do que sairia.
   const chaveDaTentativa =
     (params.chaveDaTentativa ?? '').trim() ||
-    chaveDaTentativaPadrao({ contentId: params.contentId, canal, dataAgendamento: null })
+    chaveDaTentativaPadrao({
+      contentId: params.contentId,
+      canal,
+      dataAgendamento: conteudo.dataAgendamento ?? null,
+    })
 
-  const base = lerBasePublica(env)
-  const podeRastrear = base.ok && !!conteudo.urlDiretaDoProduto
-  const produto = await prisma.produto.findFirst({
-    where: { id: conteudo.produtoId, workspaceId: params.workspaceId },
-    select: { nome: true },
+  // A MESMA função que o link da bio e o orquestrador usam: a URL do ensaio
+  // é a que seria confirmada e a que seria publicada.
+  const daTentativa = urlDaTentativa({
+    workspaceId: params.workspaceId,
+    contentId: params.contentId,
+    canal,
+    chaveDaTentativa,
+    dataAgendamento: conteudo.dataAgendamento ?? null,
+    nomeProduto: conteudo.nomeProduto ?? null,
+    urlDiretaDoProduto: conteudo.urlDiretaDoProduto,
+    env,
   })
-
-  const urlQueSeriaUsada = podeRastrear
-    ? montarUrlRastreada(
-        (base as { ok: true; baseUrl: string }).baseUrl,
-        slugDaPublicacao({
-          workspaceId: params.workspaceId,
-          contentId: params.contentId,
-          chaveDaTentativa,
-          canal,
-          nomeProduto: produto?.nome ?? null,
-        })
-      )
-    : conteudo.urlDiretaDoProduto
+  const podeRastrear = daTentativa.rastreada
+  const urlQueSeriaUsada = daTentativa.url
 
   const acaoQueSeriaTomada: 'PUBLICAR' | 'DRAFT' | 'NENHUMA' = !preflight.executavelAgora
     ? 'NENHUMA'
@@ -385,6 +448,8 @@ export async function simularDistribuicao(params: {
       tamanhoDaLegenda: conteudo.legenda.length,
       temMidia: !!conteudo.assetUrl,
       linkRastreado: podeRastrear,
+      ondeVaiOLink: conteudo.estrategiaDeLink ?? null,
+      urlNaLegenda: urlVaiNaLegenda(canal),
       urlQueSeriaUsada,
       disclosurePresente: preflight.disclosurePresente,
     },

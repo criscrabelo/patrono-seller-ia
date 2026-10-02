@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { gerarConteudo, BloqueadoPorPoliticaDeCusto } from '@/lib/claude'
 import { gerarConteudoGratuito } from '@/lib/conteudo-gratuito'
+import { dataDaVerificacaoDoPreco } from '@/lib/preco-verificado'
 import { z } from 'zod'
 
 const gerarSchema = z.object({
@@ -72,7 +73,8 @@ export async function POST(req: NextRequest) {
         preco: produto.preco,
         beneficios: produto.beneficios,
         pontosNegativos: produto.pontosNegativos,
-        atualizadoEm: produto.updatedAt,
+        // P1.9.1: data da verificação real do preço, nunca `updatedAt`.
+        precoVerificadoEm: dataDaVerificacaoDoPreco(produto),
       })
       gerado = gratuito.conteudo
       limitacoesDoGratuito = gratuito.limitacoes

@@ -326,7 +326,10 @@ export function jobsDesejadosDoPlano(
     )
       continue
     const perfil = perfilDaDependencia(item.dependencia)
-    const contexto = { dependencia: item.dependencia, ...contextoExtra(item) }
+    // P1.9.2: o contexto do item (ex.: mídia que a DONA fornece) entra na
+    // chave — é outra pendência, não a mesma com outro texto.
+    const contexto = { dependencia: item.dependencia, ...(item.contexto ?? {}), ...contextoExtra(item) }
+    const humano = item.motivoHumano ?? null
     // `PRODUTO` em maiuscula: e o vocabulario de TIPOS_DE_ENTIDADE, e a
     // chave PRECISA bater com a que o repositorio recalcula depois de
     // resolver a entidade. Com 'Produto' aqui e 'PRODUTO' la, cada execucao
@@ -343,8 +346,8 @@ export function jobsDesejadosDoPlano(
       tipo: item.dependencia,
       entityType: 'PRODUTO',
       entityId: item.produtoId,
-      classe: perfil.classe,
-      motivoHumano: perfil.motivoHumano,
+      classe: humano ? 'EXIGE_HUMANO' : perfil.classe,
+      motivoHumano: humano ?? perfil.motivoHumano,
       contexto,
       explicacao: item.explicacao || perfil.explicacao,
     })

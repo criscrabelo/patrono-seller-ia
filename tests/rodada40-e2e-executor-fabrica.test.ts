@@ -52,7 +52,9 @@ const itemDoPlano = (over: Partial<ItemDoPlano> = {}): ItemDoPlano => ({
   scoreDaOportunidade: 80,
   prioridadeOperacional: 76,
   posicao: 1,
-  canalRecomendado: 'instagram',
+  // P1.9.2: canal SEM adapter real — o teste é da mecânica do executor.
+  // O Instagram só aceita Reel com vídeo, e tem testes próprios (rodada 49).
+  canalRecomendado: 'facebook',
   formatoRecomendado: 'TEXTO_COM_LINK',
   estado: 'PRONTO_PARA_GERAR_CONTEUDO',
   proximaAcao: 'GERAR_CONTEUDO',
@@ -254,7 +256,7 @@ describe(
       const conteudos = await prisma.conteudo.findMany({ where: { workspaceId: wsA } })
       assert.equal(conteudos.length, 1)
       assert.equal(conteudos[0].produtoId, produtoA)
-      assert.equal(conteudos[0].redeSocial, 'instagram')
+      assert.equal(conteudos[0].redeSocial, 'facebook')
 
       // O job terminou certo, com resultado auditável.
       const final = await prisma.automationJob.findUniqueOrThrow({ where: { id: job.id } })
@@ -265,7 +267,7 @@ describe(
       const ctx = final.contexto as Record<string, unknown>
       assert.equal(ctx.contentId, conteudos[0].id, 'o contentId fica no contexto')
       assert.equal(ctx.formato, 'TEXTO_COM_LINK')
-      assert.equal(ctx.canal, 'instagram')
+      assert.equal(ctx.canal, 'facebook')
       assert.equal(ctx.custo, 0, 'custo R$ 0,00')
       assert.ok(ctx.concluidoEm)
     })
@@ -377,7 +379,7 @@ describe(
       const r = await criarOuSincronizarAutomationJob({
         porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: produtoA,
-        contexto: { formato: 'TEXTO_COM_LINK', canal: 'instagram', custoEstimado: 0 },
+        contexto: { formato: 'TEXTO_COM_LINK', canal: 'facebook', custoEstimado: 0 },
         agora: AGORA,
       })
       await porta.atualizar(r.job!.id, { entityId: 'outro', tipo: 'OUTRA_COISA' } as never)
@@ -402,7 +404,7 @@ describe(
       const r = await criarOuSincronizarAutomationJob({
         porta, workspaceId: wsA, tipo: 'GERAR_CONTEUDO',
         entityType: 'PRODUTO', entityId: efemero.id,
-        contexto: { formato: 'TEXTO_COM_LINK', canal: 'instagram', custoEstimado: 0 },
+        contexto: { formato: 'TEXTO_COM_LINK', canal: 'facebook', custoEstimado: 0 },
         agora: AGORA,
       })
       await prisma.produto.delete({ where: { id: efemero.id } })

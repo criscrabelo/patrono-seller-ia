@@ -59,7 +59,7 @@ export const CHANNEL_CAPABILITIES: ChannelCapability[] = [
     sourceType: 'OFFICIAL_DOCS',
     confidence: 'MEDIUM',
     observacao:
-      'Já existe adapter oficial real (lib/instagram.ts, Meta Graph API) publicando Reels/imagem/carrossel — os únicos campos deste registro já em uso operacional hoje. Limites exatos de duração/tamanho variam por tipo de conta e devem ser reconferidos contra a documentação Meta antes de qualquer ajuste.',
+      'Este registro descreve a PLATAFORMA: ela aceita Reel, imagem e carrossel. O adapter real do Patrono só envia Reel com vídeo — o que ele publica de verdade está em lib/capacidade-real-do-adapter.ts, e é isso que o preflight consulta. Não há post só de texto. Limites exatos de duração/tamanho variam por tipo de conta e devem ser reconferidos contra a documentação Meta antes de qualquer ajuste.',
   },
   {
     channelId: 'tiktok',

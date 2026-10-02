@@ -30,7 +30,11 @@ import {
   ehFormatoProduzivel,
   motivoNaoProduzido,
   posicaoNaProducao,
+  avaliarFormatoParaOCanal,
+  ehFormatoDaDona,
 } from './capacidades-da-fabrica'
+import { capacidadeRealDoAdapter } from './capacidade-real-do-adapter'
+import type { HumanActionReason } from './automation'
 import type { OportunidadePontuada, NivelDeConfianca } from './motor-de-oportunidades'
 
 // ── Estados do plano ────────────────────────────────────────────────────
@@ -133,6 +137,19 @@ export const FORMATOS: CapacidadeDeFormato[] = [
     explicacao: 'Post de imagem única com a mídia autorizada — custo R$ 0,00.',
   },
   {
+    // P1.9.1. O vídeo que a PRÓPRIA dona gravou, publicado como Reel. Não
+    // sai da fábrica: entra por `lib/peca-com-midia-propria.ts`, com o
+    // registro de direito do arquivo. Por isso está em FORMATOS_NAO_PRODUZIDOS
+    // e o plano nunca o escolhe sozinho.
+    formato: 'VIDEO_PROPRIO',
+    exigeDoCanal: ['reel', 'shortVideo'],
+    exigeMidiaAutorizada: true,
+    provedorPago: null,
+    operacao: null,
+    exigeCapacidade: null,
+    explicacao: 'Vídeo gravado pela própria dona, com registro de direito do arquivo — custo R$ 0,00.',
+  },
+  {
     formato: 'TEXTO_COM_LINK',
     exigeDoCanal: ['imagePost', 'shortVideo', 'reel'],
     // Texto não usa a imagem do produto: serve justamente quando a mídia
@@ -205,6 +222,14 @@ export interface ItemDaFilaDeAutomacao {
   explicacao: string
   /** `true` quando ignorar isso vira trabalho manual repetido. */
   repetivel: boolean
+  /**
+   * P1.9.2. Contexto que diferencia esta dependência de outra do mesmo
+   * tipo. Entra na chave do job: mídia que a DONA precisa fornecer não é
+   * a mesma pendência que sincronizar o catálogo do provider.
+   */
+  contexto?: Record<string, unknown>
+  /** P1.9.2. Quando só uma pessoa destrava. */
+  motivoHumano?: HumanActionReason | null
 }
 
 export interface PlanoDeAcao {
@@ -394,8 +419,39 @@ export function escolherCanalEFormato(
     // existe no mundo; a fábrica diz o que sai hoje. Percorrer primeiro o
     // produzível é o que impede o plano de escolher carrossel e a fila
     // ficar vazia.
+    const real = capacidadeRealDoAdapter(canal)
     for (const f of FORMATOS_POR_PRODUCAO) {
       if (!f.exigeDoCanal.some((c) => cap[c])) continue
+
+      // P1.9.2. Canal com adapter REAL: só entra o que ele publicaria.
+      // A autoridade é lib/capacidade-real-do-adapter.ts, a mesma do
+      // preflight e do adapter. Sem isto o plano mandava gerar
+      // TEXTO_COM_LINK para o Instagram — peça que nunca vai ao ar.
+      const utilidade = avaliarFormatoParaOCanal(canal, f.formato)
+      if (!utilidade.util) {
+        bloqueios.push(`${utilidade.motivo}:${canal}:${f.formato}`)
+        continue
+      }
+
+      // Mídia da DONA: a fábrica não produz, e o direito do produto não
+      // importa — o arquivo é outro. O plano recomenda e espera por ela.
+      if (ehFormatoDaDona(f.formato)) {
+        if (!real) continue
+        bloqueios.push('MIDIA_PROPRIA_AUSENTE')
+        motivo.push(
+          `${canal} só publica ${real.formatosPublicaveis.join(' ou ')}, e nada que a fábrica gera hoje entrega isso. ` +
+            `O caminho é ${f.formato}: ${f.explicacao}`
+        )
+        return {
+          canal,
+          formato: f.formato,
+          bloqueios,
+          motivo,
+          custo: 0,
+          dependenciaExterna: 'MIDIA_DA_DONA',
+        }
+      }
+
       if (f.exigeMidiaAutorizada && !midiaAutorizada) continue
 
       // CUSTO: provider pago só com autorização explícita. Sem ela, tenta o
@@ -481,6 +537,10 @@ export function derivarEstadoEAcao(
     }
     return { estado: 'AGUARDANDO_CANAL', proximaAcao: 'CONECTAR_CANAL' }
   }
+  // P1.9.2. Falta o vídeo da dona: nada a gerar, uma mídia a receber.
+  if (ehFormatoDaDona(escolha.formato)) {
+    return { estado: 'AGUARDANDO_MIDIA_AUTORIZADA', proximaAcao: 'SINCRONIZAR_MIDIA_AUTORIZADA' }
+  }
   if (escolha.bloqueios.includes('MIDIA_SEM_DIREITO') && escolha.formato !== 'TEXTO_COM_LINK') {
     return { estado: 'AGUARDANDO_MIDIA_AUTORIZADA', proximaAcao: 'SINCRONIZAR_MIDIA_AUTORIZADA' }
   }
@@ -562,12 +622,21 @@ export function montarPlanoDeAcao(params: {
 
     // AUTOMATION QUEUE: dependência repetível não pode virar rotina manual.
     if (proximaAcao !== 'NENHUMA' && proximaAcao !== 'GERAR_CONTEUDO') {
+      const daDona = ehFormatoDaDona(escolha.formato)
       filaDeAutomacao.push({
         chave: `plano:${proximaAcao}:${o.produtoId}`,
         produtoId: o.produtoId,
         dependencia: proximaAcao,
         explicacao: escolha.motivo[0] ?? `Bloqueado por ${escolha.bloqueios.join(', ')}.`,
         repetivel: true,
+        // P1.9.2. A mídia que falta é da dona: dependência humana, WAITING
+        // desde o nascimento e sem tentativa — tentar não grava vídeo.
+        ...(daDona
+          ? {
+              contexto: { origemDaMidia: 'DA_DONA', formato: escolha.formato, canal: escolha.canal },
+              motivoHumano: 'MISSING_AUTHORIZED_MEDIA' as const,
+            }
+          : {}),
       })
     }
   })
