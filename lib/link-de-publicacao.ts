@@ -67,7 +67,9 @@ export type BasePublica =
  * Fail-closed: sem base válida não se monta link rastreado.
  */
 export function lerBasePublica(env: Record<string, string | undefined> = process.env): BasePublica {
-  const bruto = (env.PUBLIC_BASE_URL ?? env.NEXTAUTH_URL ?? '').trim()
+  // Vazio conta como ausente: `PUBLIC_BASE_URL=""` não pode esconder o
+  // `NEXTAUTH_URL` configurado (com `??`, escondia).
+  const bruto = (env.PUBLIC_BASE_URL ?? '').trim() || (env.NEXTAUTH_URL ?? '').trim()
   if (!bruto) {
     return {
       ok: false,
@@ -106,7 +108,59 @@ export function lerBasePublica(env: Record<string, string | undefined> = process
 
 /** FUNÇÃO PURA. Monta a URL rastreada a partir da base já validada. */
 export function montarUrlRastreada(baseUrl: string, slug: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/api/l/${slug}`
+  // Barra final da base fora e slug codificado: nunca `//api`, nunca um
+  // slug que vire outro caminho.
+  return `${baseUrl.replace(/\/+$/, '')}/api/l/${encodeURIComponent(slug)}`
+}
+
+// ── Base para EXIBIR e para e-mail ──────────────────────────────────────
+
+export type BaseDeExibicao =
+  | { ok: true; baseUrl: string; local: boolean }
+  | { ok: false; motivo: MotivoSemBasePublica; explicacao: string }
+
+/**
+ * A base que a TELA mostra e copia, e a que vai em link de e-mail. Mesma
+ * prioridade da publicação — `PUBLIC_BASE_URL`, depois `NEXTAUTH_URL` —
+ * com UMA diferença: em DESENVOLVIMENTO (`NODE_ENV=development`), um
+ * endereço local é aceito, marcado `local: true`. Sem nada configurado em
+ * desenvolvimento, cai em `origemLocal` (a origem da requisição) ou em
+ * `http://localhost:3000`.
+ *
+ * Fora de desenvolvimento é exatamente `lerBasePublica`: localhost NUNCA
+ * sai em produção, e sem base válida não há link — a tela diz o motivo em
+ * vez de copiar um endereço quebrado.
+ *
+ * A publicação continua usando `lerBasePublica` direto: post nunca leva
+ * endereço local, nem em desenvolvimento.
+ */
+export function basePublicaParaExibir(
+  env: Record<string, string | undefined> = process.env,
+  origemLocal?: string | null
+): BaseDeExibicao {
+  const estrita = lerBasePublica(env)
+  if (estrita.ok) return { ok: true, baseUrl: estrita.baseUrl, local: false }
+  if (env.NODE_ENV !== 'development') return estrita
+
+  const bruto =
+    (env.PUBLIC_BASE_URL ?? '').trim() || (env.NEXTAUTH_URL ?? '').trim() || (origemLocal ?? '').trim() || 'http://localhost:3000'
+  try {
+    const u = new URL(bruto)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return estrita
+    return { ok: true, baseUrl: `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`, local: true }
+  } catch {
+    return estrita
+  }
+}
+
+/** O que a tela de Links recebe para cada link: a URL pronta, ou o porquê de não haver. */
+export function urlRastreadaParaExibir(
+  slug: string,
+  env: Record<string, string | undefined> = process.env
+): { url: string | null; local: boolean; motivo: string | null } {
+  const base = basePublicaParaExibir(env)
+  if (!base.ok) return { url: null, local: false, motivo: base.explicacao }
+  return { url: montarUrlRastreada(base.baseUrl, slug), local: base.local, motivo: null }
 }
 
 // ── Slug determinístico ─────────────────────────────────────────────────

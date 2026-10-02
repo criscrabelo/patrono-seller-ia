@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { registrarAuditoria } from '@/lib/audit-log'
 import { resumoPorLink } from '@/lib/vendas-comissoes'
+import { urlRastreadaParaExibir } from '@/lib/link-de-publicacao'
 
 const PLATAFORMAS = [
   'tiktok','instagram','youtube','facebook','pinterest','linkedin',
@@ -44,11 +45,20 @@ export async function GET(req: NextRequest) {
   // mas agora calculados a partir de Sale (fonte única) — nunca somando as
   // duas fontes.
   const porLink = await resumoPorLink(session.user.workspaceId)
-  const linksComDadosReais = links.map((link) => ({
-    ...link,
-    conversoes: porLink.get(link.id)?.conversoes ?? 0,
-    receitaTotal: porLink.get(link.id)?.receitaTotal ?? 0,
-  }))
+  const linksComDadosReais = links.map((link) => {
+    // P2.5: a URL que a tela mostra e copia sai daqui, da MESMA função
+    // central da publicação. Em produção nunca é localhost; sem base
+    // configurada, `urlPublica` é null e o motivo vai junto.
+    const publica = urlRastreadaParaExibir(link.slug)
+    return {
+      ...link,
+      conversoes: porLink.get(link.id)?.conversoes ?? 0,
+      receitaTotal: porLink.get(link.id)?.receitaTotal ?? 0,
+      urlPublica: publica.url,
+      urlPublicaLocal: publica.local,
+      motivoSemUrlPublica: publica.motivo,
+    }
+  })
 
   return NextResponse.json(linksComDadosReais)
 }

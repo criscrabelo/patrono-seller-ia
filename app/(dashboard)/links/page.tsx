@@ -13,6 +13,10 @@ interface LinkDinamico {
   tipo: string; comissao: number | null; cliques: number; conversoes: number
   receitaTotal: number; ativo: boolean; produto: { nome: string; preco: number }
   ultimaAtualizacao: string
+  /** Montada no servidor pela função central. null = sem base pública configurada. */
+  urlPublica: string | null
+  urlPublicaLocal: boolean
+  motivoSemUrlPublica: string | null
 }
 
 const PLATAFORMAS_OPCOES = [
@@ -338,10 +342,19 @@ export default function LinksPage() {
                           <span className="text-lg">{PLAT_EMOJI[link.plataforma] ?? '🔗'}</span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <code className="text-xs text-accent font-mono">
-                                patrono.link/{link.slug}
+                              <code className="text-xs text-accent font-mono break-all">
+                                {link.urlPublica ?? `/api/l/${link.slug}`}
                               </code>
-                              <CopyBtn text={`http://localhost:3000/api/l/${link.slug}`} />
+                              {link.urlPublica ? (
+                                <CopyBtn text={link.urlPublica} />
+                              ) : (
+                                <span className="text-[10px] text-amber-400" title={link.motivoSemUrlPublica ?? ''}>
+                                  sem domínio público configurado
+                                </span>
+                              )}
+                              {link.urlPublicaLocal && (
+                                <span className="text-[10px] text-amber-400">endereço local (desenvolvimento)</span>
+                              )}
                             </div>
                             <p className="text-[10px] text-muted-foreground capitalize">{link.plataforma} · {link.tipo}</p>
                           </div>

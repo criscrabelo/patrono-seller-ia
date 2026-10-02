@@ -40,6 +40,35 @@ export function verificarAssinaturaWebhook(params: {
   return crypto.timingSafeEqual(a, b)
 }
 
+/**
+ * P2.5 — Lê o cabeçalho OFICIAL `Tiktok-Signature` (developers.tiktok.com/
+ * doc/webhooks-verification): `t=<epoch em segundos>,s=<HMAC-SHA256 hex>`.
+ *
+ * A rota lia dois cabeçalhos separados (`tiktok-signature` e
+ * `tiktok-timestamp`), que o TikTok não envia — todo evento legítimo seria
+ * recusado. Formato fora do documentado devolve `null` e a requisição é
+ * recusada antes de o corpo ser lido.
+ */
+export function lerCabecalhoDeAssinatura(valor: string | null | undefined): { timestamp: string; assinatura: string } | null {
+  if (!valor || valor.length > 300) return null
+  const partes = new Map<string, string>()
+  for (const pedaco of valor.split(',')) {
+    const i = pedaco.indexOf('=')
+    if (i <= 0) return null
+    const chave = pedaco.slice(0, i).trim()
+    if (partes.has(chave)) return null
+    partes.set(chave, pedaco.slice(i + 1).trim())
+  }
+  const timestamp = partes.get('t')
+  const assinatura = partes.get('s')
+  if (!timestamp || !/^\d{9,11}$/.test(timestamp)) return null
+  if (!assinatura || !/^[0-9a-f]{64}$/i.test(assinatura)) return null
+  return { timestamp, assinatura: assinatura.toLowerCase() }
+}
+
+/** Corpo máximo aceito pelo webhook público: evento do TikTok é pequeno. */
+export const TAMANHO_MAXIMO_DO_CORPO = 64 * 1024
+
 /** Rejeita webhook com timestamp fora da janela de tolerância — nunca reprocessa um replay antigo. */
 export function timestampDentroDaJanela(timestampHeaderSegundos: string, agoraMs: number = Date.now()): boolean {
   const ts = parseInt(timestampHeaderSegundos, 10)

@@ -32,8 +32,20 @@ const ROTAS_PUBLICAS = [
 // - /api/cron  → chamada pela Vercel Cron, autenticada por CRON_SECRET
 const PREFIXOS_API_PUBLICOS = ['/api/auth', '/api/l/', '/api/cron']
 
+// Rotas de API públicas por CAMINHO EXATO — nunca prefixo. Cada uma recusa
+// sozinha o que não for legítimo, antes de qualquer escrita:
+// - /api/webhooks/tiktok → chamada servidor-a-servidor do TikTok, sem
+//   sessão; exige o cabeçalho oficial Tiktok-Signature (HMAC do client
+//   secret) e janela de tempo. Ver app/api/webhooks/tiktok/route.ts.
+//
+// O callback OAuth do TikTok Shop NÃO está aqui de propósito: ele chega no
+// navegador da própria usuária, que já traz a sessão — exigir sessão é o
+// que prende a autorização ao workspace certo.
+const ROTAS_API_PUBLICAS_EXATAS = ['/api/webhooks/tiktok']
+
 function ehPublica(pathname: string): boolean {
   if (ROTAS_PUBLICAS.includes(pathname)) return true
+  if (ROTAS_API_PUBLICAS_EXATAS.includes(pathname)) return true
   return PREFIXOS_API_PUBLICOS.some((p) => pathname.startsWith(p))
 }
 

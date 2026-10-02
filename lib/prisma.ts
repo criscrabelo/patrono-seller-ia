@@ -1,4 +1,12 @@
 import { PrismaClient } from '@prisma/client'
+import { bancoPermitidoNoAmbiente } from './guarda-de-ambiente'
+
+// P2.5: Preview/teste nunca abrem o banco de produção — ver
+// lib/guarda-de-ambiente.ts. Falha aqui derruba o ambiente errado inteiro,
+// que é exatamente o que se quer: melhor um Preview quebrado que um Preview
+// escrevendo em produção.
+const veredito = bancoPermitidoNoAmbiente(process.env)
+if (!veredito.ok) throw new Error(`[prisma] ${veredito.explicacao}`)
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined

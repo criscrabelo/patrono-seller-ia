@@ -3,8 +3,21 @@ import { guardarChamadaPaga } from './cost-safety-gate'
 import { esperaMaximaDeProviderMs } from './limite-sincrono'
 import type { ConteudoGerado, VideoSellerOutput, AlertaCompliance } from '@/types'
 
+/**
+ * P2.5: endereço da Anthropic FIXO. O SDK leria `ANTHROPIC_BASE_URL` do
+ * ambiente — e a Netlify injeta essa variável (com uma chave própria)
+ * apontando para o AI Gateway dela, que cobra em créditos da conta. Com o
+ * endereço fixo, uma chave injetada pela plataforma só consegue falhar na
+ * Anthropic; ela nunca é aceita, nunca cobra crédito da Netlify.
+ *
+ * E nada disso libera chamada: o gate de custo exige PAID_AI_ENABLED=true E
+ * orçamento > 0 antes de qualquer requisição (lib/cost-safety-gate.ts).
+ */
+export const ENDERECO_DA_ANTHROPIC = 'https://api.anthropic.com'
+
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
+  baseURL: ENDERECO_DA_ANTHROPIC,
 })
 
 const MODEL = 'claude-sonnet-4-6'
