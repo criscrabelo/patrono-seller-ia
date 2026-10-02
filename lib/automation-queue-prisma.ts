@@ -160,3 +160,45 @@ export async function renovarHeartbeat(jobId: string, workerId: string, agora: D
   })
   return r.count === 1
 }
+
+// ── P2.2: trabalhos longos ──────────────────────────────────────────────
+//
+// Os trabalhos `LONGO_*` (lib/trabalho-longo.ts) moram nesta mesma tabela,
+// e por isso escrevem por AQUI — a regra "um arquivo só escreve na fila"
+// continua valendo. Quem decide o quê é o núcleo dos trabalhos longos, que
+// valida a entidade (`validarEntidadeDaAutomacao`) antes de inserir; este
+// adaptador só executa a escrita, sempre condicionada a quem é o dono.
+
+type CriacaoDeTrabalhoLongo = Parameters<typeof prisma.automationJob.create>[0]['data']
+type MudancaDeTrabalhoLongo = Parameters<typeof prisma.automationJob.updateMany>[0]['data']
+
+export const portaDosTrabalhosLongos = {
+  inserir(dados: CriacaoDeTrabalhoLongo) {
+    return prisma.automationJob.create({ data: dados })
+  },
+
+  /** Muda `de` → `para`, só se o estado (e o heartbeat, se pedido) ainda for o esperado. */
+  async mudarSeEstado(id: string, de: string, dados: MudancaDeTrabalhoLongo, heartbeatAntesDe?: Date): Promise<boolean> {
+    const r = await prisma.automationJob.updateMany({
+      where: { id, estado: de as never, ...(heartbeatAntesDe ? { heartbeatAt: { lt: heartbeatAntesDe } } : {}) },
+      data: dados,
+    })
+    return r.count === 1
+  },
+
+  /** Claim atômico: só o PENDING reservado vira RUNNING, e só para um worker. */
+  async reivindicar(id: string, reserva: string, workerId: string): Promise<boolean> {
+    const agora = new Date()
+    const r = await prisma.automationJob.updateMany({
+      where: { id, estado: 'PENDING', workerId: reserva },
+      data: { estado: 'RUNNING', workerId, claimedAt: agora, heartbeatAt: agora, tentativas: { increment: 1 } },
+    })
+    return r.count === 1
+  },
+
+  /** Escreve só se ESTE worker ainda for o dono. */
+  async escreverComoDono(id: string, workerId: string, dados: MudancaDeTrabalhoLongo): Promise<boolean> {
+    const r = await prisma.automationJob.updateMany({ where: { id, workerId }, data: dados })
+    return r.count === 1
+  },
+}

@@ -98,17 +98,22 @@ describe('Evidência — metadados, nunca credencial', () => {
 describe('As rotas usam a autoridade central, sem replicar regra', () => {
   const manual = lerCodigo('app/api/conteudos/[id]/publicar/route.ts')
   const cron = lerCodigo('app/api/cron/publicar/route.ts')
+  // P2.2: as duas rotas delegam ao MESMO executor — uma regra, um lugar.
+  const executor = lerCodigo('lib/trabalhos-longos/publicar-instagram.ts')
 
   test('as duas preparam a tentativa pelo mesmo fluxo', () => {
+    assert.match(executor, /prepararTentativaDePublicacao/)
+    assert.match(executor, /confirmarDistribuicao/)
+    assert.match(executor, /registrarFalhaDaTentativa/)
     for (const [nome, codigo] of [['manual', manual], ['cron', cron]] as const) {
-      assert.match(codigo, /prepararTentativaDePublicacao/, `${nome}`)
-      assert.match(codigo, /confirmarDistribuicao/, `${nome}`)
-      assert.match(codigo, /registrarFalhaDaTentativa/, `${nome}`)
+      assert.match(codigo, /executorDaPublicacao\(\)/, `${nome} delega ao executor único`)
+      assert.match(codigo, /tipo: 'LONGO_PUBLICAR_INSTAGRAM'/, `${nome}`)
+      assert.match(codigo, /chave: chaveDaPublicacao\(\{ chaveDaTentativa \}\)/, `${nome} usa a chave da tentativa`)
     }
   })
 
   test('nenhuma rota cria Publicacao por conta própria', () => {
-    for (const codigo of [manual, cron]) {
+    for (const codigo of [manual, cron, executor]) {
       assert.ok(!/prisma\.publicacao\.(create|update|upsert)/.test(codigo))
       assert.ok(!/avaliarVinculoDeLinkComPublicacao/.test(codigo), 'o guard é chamado pelo repositório')
     }

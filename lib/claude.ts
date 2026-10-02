@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { guardarChamadaPaga } from './cost-safety-gate'
+import { esperaMaximaDeProviderMs } from './limite-sincrono'
 import type { ConteudoGerado, VideoSellerOutput, AlertaCompliance } from '@/types'
 
 const client = new Anthropic({
@@ -120,12 +121,19 @@ Retorne APENAS este JSON (valores curtos e diretos):
 }`
 
   await exigirPermissaoDeCusto('gerar-roteiro', workspaceId)
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 900,
-    system: 'Especialista em conteúdo comercial brasileiro. Retorne APENAS JSON válido, sem markdown.',
-    messages: [{ role: 'user', content: userPrompt }],
-  })
+  // P2.2: na Netlify a rota morre aos 30 s. Teto de 24 s e nenhuma repetição
+  // automática — repetir uma chamada paga que estourou o tempo só cobraria
+  // de novo para estourar de novo. Fora da Netlify, o padrão de sempre.
+  const teto = esperaMaximaDeProviderMs()
+  const message = await client.messages.create(
+    {
+      model: MODEL,
+      max_tokens: 900,
+      system: 'Especialista em conteúdo comercial brasileiro. Retorne APENAS JSON válido, sem markdown.',
+      messages: [{ role: 'user', content: userPrompt }],
+    },
+    teto ? { timeout: teto, maxRetries: 0 } : undefined
+  )
 
   const rawText = message.content[0].type === 'text' ? message.content[0].text : ''
   const cleaned = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()

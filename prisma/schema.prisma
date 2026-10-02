@@ -1,5 +1,9 @@
 generator client {
   provider = "prisma-client-js"
+  // "native" para o build local e a Vercel; "rhel-openssl-3.0.x" para as
+  // funções da Netlify (AWS Lambda, Amazon Linux 2023). Só o gerador: não
+  // muda o schema do banco nem gera migration.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

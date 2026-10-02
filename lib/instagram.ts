@@ -29,12 +29,37 @@ export interface PublicarReelParams {
   legenda: string
 }
 
+/**
+ * A Meta RESPONDEU com erro. Diferente de falha de rede, que chega como
+ * exceção do `fetch` sem resposta nenhuma.
+ *
+ * A diferença decide se dá para repetir uma publicação: com resposta 4xx e
+ * corpo de erro da Graph API, a Meta recusou e nada foi ao ar. Sem
+ * resposta (rede, timeout) ou com 5xx, ninguém sabe — ver
+ * `metaRecusouComCerteza`.
+ */
+export class ErroDaApiInstagram extends Error {
+  constructor(
+    mensagem: string,
+    public readonly status: number,
+    public readonly temCorpoDeErro: boolean
+  ) {
+    super(mensagem)
+    this.name = 'ErroDaApiInstagram'
+  }
+}
+
+/** `true` só quando a Meta recusou explicitamente (4xx com erro da Graph API). */
+export function metaRecusouComCerteza(e: unknown): boolean {
+  return e instanceof ErroDaApiInstagram && e.temCorpoDeErro && e.status >= 400 && e.status < 500
+}
+
 async function fbFetch(url: string, init?: RequestInit) {
   const res = await fetch(url, init)
   const data = await res.json().catch(() => ({}))
   if (!res.ok || data?.error) {
     const msg = data?.error?.message || `Erro HTTP ${res.status} na API do Instagram`
-    throw new Error(msg)
+    throw new ErroDaApiInstagram(msg, res.status, !!data?.error)
   }
   return data
 }

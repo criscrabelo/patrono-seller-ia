@@ -156,24 +156,31 @@ describe('Slug — idempotência sem coluna nova', () => {
 describe('Publicação divulga o link RASTREADO, não o do produto', () => {
   const manual = lerCodigo('app/api/conteudos/[id]/publicar/route.ts')
   const cron = lerCodigo('app/api/cron/publicar/route.ts')
+  // P2.2: as duas rotas registram o trabalho; quem monta a legenda e fala
+  // com a Meta é o executor ÚNICO da publicação.
+  const executor = lerCodigo('lib/trabalhos-longos/publicar-instagram.ts')
 
   test('nenhuma rota passa linkProduto direto para a legenda', () => {
     // Era exatamente isto: `montarLegenda(..., c.produto?.linkProduto)`.
-    assert.ok(!/montarLegenda\([^)]*linkProduto/.test(manual))
-    assert.ok(!/montarLegenda\([^)]*linkProduto/.test(cron))
+    for (const codigo of [manual, cron, executor]) {
+      assert.ok(!/montarLegenda\([^)]*linkProduto/.test(codigo))
+    }
+    // E nenhuma rota monta legenda por conta própria.
+    assert.ok(!/montarLegenda\(/.test(manual) && !/montarLegenda\(/.test(cron))
   })
 
   test('as duas rotas obtêm o link rastreado antes de montar a legenda', () => {
     // A Etapa 2.c moveu a obtencao do link para dentro de
     // `prepararTentativaDePublicacao`, no fluxo. O invariante e o mesmo: a
     // URL tem de existir ANTES da legenda, senao o post sai sem ela.
-    for (const [nome, codigo] of [['manual', manual], ['cron', cron]] as const) {
+    for (const [nome, codigo] of [['executor', executor]] as const) {
       assert.match(codigo, /prepararTentativaDePublicacao/, `${nome} precisa preparar a tentativa`)
       const posPreparo = codigo.indexOf('prepararTentativaDePublicacao({')
       const posLegenda = codigo.indexOf('montarLegenda(')
-      assert.ok(posPreparo < posLegenda, `${nome} monta a legenda antes de preparar a tentativa`)
+      assert.ok(posPreparo > 0 && posPreparo < posLegenda, `${nome} monta a legenda antes de preparar a tentativa`)
       assert.match(codigo, /tentativa\.urlParaDivulgar/, `${nome} usa a URL que o fluxo decidiu`)
     }
+    for (const codigo of [manual, cron]) assert.match(codigo, /executorDaPublicacao\(\)/)
     // E o fluxo realmente obtem o link rastreado.
     const fluxo = lerCodigo('lib/publicacao-fluxo.ts')
     assert.match(fluxo, /obterLinkRastreavelDaPublicacao\({/)
@@ -184,10 +191,13 @@ describe('Publicação divulga o link RASTREADO, não o do produto', () => {
     // nas duas rotas.
     const fluxo = lerCodigo('lib/publicacao-fluxo.ts')
     assert.match(fluxo, /registrarLacunaDeRastreamento/)
-    // E cada rota continua expondo a lacuna a sua maneira.
-    assert.match(manual, /rastreamento: respostaDeRastreamento\(tentativa\)/)
+    // E cada caminho continua expondo a lacuna a sua maneira. P2.2: a
+    // resposta do "publicar agora" sai do executor; o cron lê o que o
+    // executor gravou de cada trabalho.
+    assert.match(executor, /rastreamento: respostaDeRastreamento\(tentativa\)/)
+    assert.match(executor, /await e\.salvar\(\{ rastreada: tentativa\.rastreada \}\)/)
     assert.match(cron, /publicacoesSemRastreamento/)
-    assert.match(cron, /if \(!tentativa\.rastreada\) publicacoesSemRastreamento\+\+/)
+    assert.match(cron, /if \(t\.contexto\?\.rastreada === false\) publicacoesSemRastreamento\+\+/)
   })
 
   test('a rota manual aceita chaveDaTentativa de quem chama', () => {
@@ -195,7 +205,9 @@ describe('Publicação divulga o link RASTREADO, não o do produto', () => {
     // mesma vai para o preflight e para a tentativa — é ela que fixa o link
     // que foi confirmado na bio.
     assert.match(manual, /typeof body\?\.chaveDaTentativa === 'string' && body\.chaveDaTentativa\.trim\(\)/)
-    assert.match(manual, /prepararTentativaDePublicacao\(\{[\s\S]*?chaveDaTentativa,/)
+    // P2.2: a mesma chave segue no pedido do trabalho e chega à tentativa.
+    assert.match(manual, /pedido: \{ conteudoId: conteudo\.id, tipoMidia, destino, chaveDaTentativa, origem: 'manual' \}/)
+    assert.match(executor, /prepararTentativaDePublicacao\(\{[\s\S]*?chaveDaTentativa: pedido\.chaveDaTentativa,/)
   })
 
   test('o destino NUNCA vem de quem chama', () => {

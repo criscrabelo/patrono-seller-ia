@@ -288,15 +288,21 @@ describe('Métricas de clique ficam null, com o motivo nomeado', () => {
 // ── Interface ───────────────────────────────────────────────────────────
 
 describe('A lacuna aparece na interface, não só no log', () => {
-  const rota = lerCodigo('app/api/conteudos/[id]/publicar/route.ts')
+  // P2.2: a resposta de sucesso do "publicar agora" é montada pelo executor
+  // único da publicação; a rota só a repassa (`r.resposta.corpo`).
+  const rota = lerCodigo('lib/trabalhos-longos/publicar-instagram.ts')
   // Só o CORPO da resposta. O resto do arquivo legitimamente manipula
   // accessToken e explicacao — isso fica no servidor e no log; o que não
   // pode é atravessar para o cliente.
   const corpoDaResposta = (() => {
     const i = rota.indexOf('rastreamento: respostaDeRastreamento')
     assert.ok(i > 0, 'o bloco de rastreamento da resposta precisa existir')
-    return rota.slice(rota.lastIndexOf('NextResponse.json({', i), rota.indexOf('} catch', i))
+    return rota.slice(rota.lastIndexOf('corpo: {', i), rota.indexOf('await e.salvar({ respostaDeSucesso', i))
   })()
+  test('a rota manual repassa exatamente a resposta do executor', () => {
+    const manual = lerCodigo('app/api/conteudos/[id]/publicar/route.ts')
+    assert.match(manual, /NextResponse\.json\(r\.resposta\.corpo, \{ status: r\.resposta\.status \}\)/)
+  })
   const lista = lerCodigo('app/api/conteudos/route.ts')
   const tela = lerCodigo('app/(dashboard)/conteudos/page.tsx')
 

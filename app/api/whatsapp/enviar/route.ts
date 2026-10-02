@@ -2,8 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { enviarTexto, enviarImagem, normalizarNumero } from '@/lib/whatsapp'
+import { normalizarNumero } from '@/lib/whatsapp'
+import { iniciarTrabalhoLongo } from '@/lib/trabalho-longo'
+import { executorDoEnvio, chaveDoEnvio, intervaloEntreEnvios } from '@/lib/trabalhos-longos/envio-whatsapp'
 
+// 3 s entre números: 11 números já passam do limite síncrono de 30 s da
+// Netlify. O envio vira trabalho longo; esta rota valida e registra.
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
@@ -23,45 +27,46 @@ export async function POST(req: NextRequest) {
     mensagem: string
     imagemUrl?: string
     delayMs?: number
+    chaveDoEnvio?: string
   }
 
   if (!body.numeros?.length || !body.mensagem) {
     return NextResponse.json({ error: 'Informe os números e a mensagem' }, { status: 400 })
   }
 
-  const extra = (integracao.extraData ?? {}) as Record<string, string>
-  const cfg = {
-    instanceId: integracao.accountId,
-    token: integracao.accessToken,
-    clientToken: extra.clientToken,
-  }
-
-  // Filtra e normaliza números
-  const numerosValidos = body.numeros
-    .map((n) => normalizarNumero(n))
-    .filter((n): n is string => n !== null)
+  // Filtra e normaliza números (sem repetir: a mesma pessoa recebe uma vez)
+  const numerosValidos = [...new Set(
+    body.numeros
+      .map((n) => normalizarNumero(n))
+      .filter((n): n is string => n !== null)
+  )]
 
   if (numerosValidos.length === 0) {
     return NextResponse.json({ error: 'Nenhum número válido encontrado' }, { status: 400 })
   }
 
-  const delay = Math.max(body.delayMs ?? 3000, 1500) // mínimo 1.5s para não ser banido
-  const resultados = []
-
-  for (let i = 0; i < numerosValidos.length; i++) {
-    const numero = numerosValidos[i]
-    const resultado = body.imagemUrl
-      // O workspace da sessão é o que o gate usa para apurar o orçamento.
-      ? await enviarImagem(cfg, { numero, imageUrl: body.imagemUrl, legenda: body.mensagem }, session.user.workspaceId)
-      : await enviarTexto(cfg, { numero, mensagem: body.mensagem }, session.user.workspaceId)
-    resultados.push(resultado)
-    if (i < numerosValidos.length - 1) {
-      await new Promise((r) => setTimeout(r, delay))
-    }
+  const agora = new Date()
+  const pedido = {
+    numeros: numerosValidos,
+    mensagem: body.mensagem,
+    ...(body.imagemUrl ? { imagemUrl: body.imagemUrl } : {}),
+    delayMs: intervaloEntreEnvios(body.delayMs), // mínimo 1.5s para não ser banido
   }
 
-  const enviados = resultados.filter((r) => r.ok).length
-  const erros = resultados.filter((r) => !r.ok).length
-
-  return NextResponse.json({ ok: true, enviados, erros, resultados })
+  // O workspace da sessão é o que o gate usa para apurar o orçamento: o
+  // executor envia com o workspace do trabalho, que é este
+  // (session.user.workspaceId).
+  const r = await iniciarTrabalhoLongo({
+    workspaceId: session.user.workspaceId,
+    tipo: 'LONGO_ENVIO_WHATSAPP',
+    chave: chaveDoEnvio(pedido, agora, body.chaveDoEnvio),
+    entityType: 'INTEGRACAO',
+    entityId: integracao.id,
+    contexto: { pedido },
+    executor: executorDoEnvio(),
+    origem: req.nextUrl.origin,
+    mensagemDeProcessando: `Enviando para ${numerosValidos.length} contato(s). Acompanhe nesta tela.`,
+    agora,
+  })
+  return NextResponse.json(r.resposta.corpo, { status: r.resposta.status })
 }

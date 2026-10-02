@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { chamadaDeOutroAgendador, RESPOSTA_DE_OUTRO_AGENDADOR } from '@/lib/agendador'
 import { MOTOR_NAO_PUBLICA } from '@/lib/motor-de-oportunidades'
 import { PLANO_NAO_EXECUTA } from '@/lib/plano-de-acao'
 import { portaPrisma } from '@/lib/automation-queue-prisma'
@@ -42,6 +43,10 @@ export async function GET(req: NextRequest) {
   }
   if (req.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  }
+  // P2.2: um agendador por vez — ver lib/agendador.ts.
+  if (chamadaDeOutroAgendador(req.headers)) {
+    return NextResponse.json(RESPOSTA_DE_OUTRO_AGENDADOR, { status: 409 })
   }
 
   // O ensaio é explícito e opt-in; o padrão é a operação real, para que

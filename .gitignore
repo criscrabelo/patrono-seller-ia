@@ -56,3 +56,6 @@ __pycache__/
 .verificacao-escrita-zero.json
 
 .env*
+
+# Netlify: artefatos de build e deploy local (podem conter o pacote das funções)
+.netlify/

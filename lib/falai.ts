@@ -198,9 +198,27 @@ async function falFetch(url: string, init?: RequestInit) {
       body: textBody.slice(0, 500),
       headers: headersDump,
     })
-    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
+    throw new RespostaDeErroDoFal(typeof msg === 'string' ? msg : JSON.stringify(msg), res.status)
   }
   return data
+}
+
+/**
+ * O fal.ai RESPONDEU com erro HTTP. Falha de rede chega como exceção do
+ * `fetch`, sem resposta — e aí não dá para saber se um pedido pago entrou
+ * na fila de lá. Só 4xx é recusa certa: 5xx pode ter aceitado e quebrado
+ * depois.
+ */
+export class RespostaDeErroDoFal extends Error {
+  constructor(mensagem: string, public readonly status: number) {
+    super(mensagem)
+    this.name = 'RespostaDeErroDoFal'
+  }
+}
+
+/** `true` só quando o fal.ai recusou o pedido com certeza (4xx). */
+export function falRecusouComCerteza(e: unknown): boolean {
+  return e instanceof RespostaDeErroDoFal && e.status >= 400 && e.status < 500
 }
 
 /** Envia o job de geração de vídeo. Retorna o requestId e as URLs de

@@ -378,17 +378,33 @@ describe('Link na bio: estratégia, link gerado e presença confirmada são trê
 
 describe('Toda publicação real passa pela mesma porta', () => {
   test('as duas rotas que publicavam por fora chamam a porta ANTES da Meta', () => {
-    for (const [rota, primeiraChamadaDaMeta] of [
-      ['app/api/conteudos/[id]/publicar/route.ts', 'criarContainerReel({'],
-      ['app/api/cron/publicar/route.ts', 'publicarReelInstagram({'],
-    ] as const) {
+    // P2.2: as rotas conferem a porta e só REGISTRAM o trabalho — nenhuma
+    // chamada à Meta mora mais nelas.
+    const META = /criarContainer\w*\(|publicarContainer\(|publicarReelInstagram\(|statusContainer\(/
+    for (const rota of ['app/api/conteudos/[id]/publicar/route.ts', 'app/api/cron/publicar/route.ts']) {
       const codigo = readFileSync(join(RAIZ, rota), 'utf8')
       const porta = codigo.indexOf('autorizarPublicacaoReal({')
-      const meta = codigo.indexOf(primeiraChamadaDaMeta)
+      const registro = codigo.indexOf('iniciarTrabalhoLongo({')
       assert.ok(porta > 0, `${rota} não chama a porta`)
-      assert.ok(meta > porta, `${rota} chama a Meta antes da porta`)
+      assert.ok(registro > porta, `${rota} registra o trabalho antes de conferir a porta`)
       assert.match(codigo, /if \(!porta\.liberada\)/)
+      assert.ok(!META.test(codigo), `${rota} voltou a falar com a Meta diretamente`)
     }
+
+    // O executor confere a porta antes do container E de novo antes do
+    // único passo que põe algo no ar.
+    const ex = readFileSync(join(RAIZ, 'lib/trabalhos-longos/publicar-instagram.ts'), 'utf8')
+    assert.match(ex, /autorizar: autorizarPublicacaoReal,/, 'a porta real é a dependência padrão')
+    const primeiraPorta = ex.indexOf('const porta = await conferirPorta()')
+    const container = ex.indexOf('await dep.criarContainerReel({')
+    const portaFinal = ex.indexOf('const portaFinal = await conferirPorta()')
+    const fasePublicando = ex.indexOf("await e.salvar({ fase: 'PUBLICANDO' })")
+    const publish = ex.indexOf('await dep.publicarContainer({')
+    assert.ok(primeiraPorta > 0 && container > primeiraPorta, 'container antes da porta')
+    assert.ok(portaFinal > container && publish > portaFinal, 'media_publish sem a segunda conferência da porta')
+    assert.ok(fasePublicando > portaFinal && publish > fasePublicando, 'a fase PUBLICANDO precisa ser gravada ANTES do media_publish')
+    assert.match(ex, /if \(!porta\.liberada\)/)
+    assert.match(ex, /if \(!portaFinal\.liberada\)/)
   })
 
   test('imagens, carrossel e stories não passam: o adapter real só publica Reel', () => {

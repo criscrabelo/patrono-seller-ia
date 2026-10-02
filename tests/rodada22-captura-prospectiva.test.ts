@@ -146,8 +146,12 @@ describe('Distribuição real — status "publicado" NÃO é prova', () => {
 describe('Gatilhos ligados no código', () => {
   test('A — só os caminhos de DISTRIBUIÇÃO REAL capturam a amostra', () => {
     // Revisão: publicação interna deixou de gerar amostra.
+    // P2.2: as duas rotas não falam mais com a Meta — registram o trabalho,
+    // e quem distribui (e captura) é o executor único da publicação.
+    const executor = lerFonte('lib/trabalhos-longos/publicar-instagram.ts')
+    assert.match(executor, /capturarSnapshotDePublicacao/, 'o executor distribui de verdade e precisa capturar')
     for (const rota of ['app/api/conteudos/[id]/publicar/route.ts', 'app/api/cron/publicar/route.ts']) {
-      assert.match(lerFonte(rota), /capturarSnapshotDePublicacao/, `${rota} distribui de verdade e precisa capturar`)
+      assert.match(lerFonte(rota), /executorDaPublicacao\(\)/, `${rota} precisa delegar ao executor`)
     }
     // A listagem marca como publicado DENTRO do app: nada circulou.
     assert.ok(
@@ -157,12 +161,16 @@ describe('Gatilhos ligados no código', () => {
   })
 
   test('no cron, só o caminho com mediaId captura', () => {
-    const cron = lerFonte('app/api/cron/publicar/route.ts')
-    const chamadas = cron.match(/await capturar\(/g) ?? []
-    assert.equal(chamadas.length, 1, 'os dois caminhos internos não podem capturar')
+    // P2.2: os dois caminhos internos do cron (sem vídeo, sem canal) ficam
+    // na rota e NÃO capturam; a captura mora no executor, uma vez só.
+    const cron = lerFonte('app/api/cron/publicar/route.ts').replace(/\/\/.*$/gm, '')
+    assert.ok(!/capturar\(|capturarSnapshot/.test(cron), 'os dois caminhos internos não podem capturar')
+    const executor = lerFonte('lib/trabalhos-longos/publicar-instagram.ts')
+    const chamadas = executor.match(/await capturarSnapshotDePublicacao\(/g) ?? []
+    assert.equal(chamadas.length, 1, 'uma captura só, no caminho distribuído')
     // E a única chamada vem depois do identificador externo ser gravado.
-    const posMediaId = cron.indexOf('publicacaoExternaId: mediaId')
-    assert.ok(posMediaId > 0 && cron.indexOf('await capturar(') > posMediaId)
+    const posMediaId = executor.indexOf('publicacaoExternaId: mediaId')
+    assert.ok(posMediaId > 0 && executor.indexOf('await capturarSnapshotDePublicacao(') > posMediaId)
   })
 
   test('B — a promoção tenta rotular quando fica elegível', () => {

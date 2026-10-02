@@ -17,6 +17,7 @@ import { STATUS_LABELS, type StatusConteudo } from '@/types'
 import { toast } from '@/hooks/use-toast'
 import { uploadFile } from '@/lib/supabase'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
+import { respostaFinal } from '@/lib/aguardar-trabalho'
 
 interface Conteudo {
   id: string
@@ -257,7 +258,8 @@ export default function ConteudosPage() {
     if (!publicarId) return
     setAdicionandoLegenda(true)
     const res = await fetch(`/api/conteudos/${publicarId}/adicionar-legenda`, { method: 'POST' })
-    const data = await res.json().catch(() => ({}))
+    // P2.2: a legenda roda como trabalho longo; espera o fim aqui mesmo.
+    const { ok, data } = await respostaFinal(res)
     setAdicionandoLegenda(false)
     if (data.processando) {
       toast({
@@ -266,7 +268,7 @@ export default function ConteudosPage() {
       })
       return
     }
-    if (!res.ok || !data.ok) {
+    if (!ok) {
       toast({
         title: 'Erro ao adicionar legendas',
         description: data.error ?? 'Tente novamente.',
@@ -290,10 +292,16 @@ export default function ConteudosPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tipoMidia: tipoMidiaIg, destino: destinoIg }),
     })
-    const data = await res.json().catch(() => ({}))
+    // P2.2: a publicação roda como trabalho longo; espera o fim aqui mesmo.
+    const { ok, data } = await respostaFinal(res)
     setPublicandoIg(false)
-    if (!res.ok) {
-      toast({ title: 'Falha ao publicar', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
+    if (data.processando) {
+      toast({ title: 'Publicação em andamento', description: data.mensagem ?? '' })
+      fetchConteudos()
+      return
+    }
+    if (!ok) {
+      toast({ title: data.incerto ? 'Publicação sem confirmação' : 'Falha ao publicar', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
       if (data.oauthError) setIgConectado(false)
       fetchConteudos()
       return

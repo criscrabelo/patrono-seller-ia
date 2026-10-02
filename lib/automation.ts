@@ -57,6 +57,10 @@ export const HUMAN_ACTION_REASONS = [
   'ACCOUNT_SUSPENDED', // conta bloqueada/suspensa em algum canal ou programa
   'AMBIGUOUS_RULE', // regra de conteúdo/política ambígua, não dá pra decidir sozinho
   'MISSING_AUTHORIZED_MEDIA', // produto sem mídia autorizada para gerar conteúdo
+  // P2.2: o provider pode ter executado (publicou, enviou, cobrou) e a
+  // confirmação não voltou. Só uma pessoa, olhando o canal, sabe — e
+  // repetir às cegas é como nasce a publicação duplicada.
+  'PROVIDER_OUTCOME_UNCONFIRMED',
 ] as const
 export type HumanActionReason = (typeof HUMAN_ACTION_REASONS)[number]
 

@@ -325,7 +325,13 @@ describe('6. Resend e Z-API — sem workspace inventado, sem estimativa enganosa
   })
 
   test('whatsapp propaga o workspace da sessão quando existe', () => {
-    assert.match(lerFonte('app/api/whatsapp/enviar/route.ts'), /session\.user\.workspaceId\)/)
+    // P2.2: o trabalho nasce com o workspace da SESSÃO, e o executor envia
+    // com o workspace do trabalho — o gate apura o orçamento do negócio certo.
+    const rota = lerCodigo('app/api/whatsapp/enviar/route.ts')
+    assert.match(rota, /iniciarTrabalhoLongo\(\{\s*workspaceId: session\.user\.workspaceId,/)
+    const executor = lerCodigo('lib/trabalhos-longos/envio-whatsapp.ts')
+    const envios = executor.match(/pedido\.mensagem \}?, e\.trabalho\.workspaceId\)/g) ?? []
+    assert.equal(envios.length, 2, 'send-text e send-image com o workspace do trabalho')
   })
 })
 
@@ -367,7 +373,13 @@ describe('7. Fallback só onde a capacidade existe de verdade', () => {
   })
 
   test('bloqueio da legenda devolve o SRT gratuito, não um erro seco', () => {
-    const rota = lerFonte('app/api/conteudos/[id]/adicionar-legenda/route.ts')
+    // P2.2: a legenda virou trabalho longo; a resposta do bloqueio sai do
+    // executor e a rota a repassa sem mudar.
+    assert.match(
+      lerFonte('app/api/conteudos/[id]/adicionar-legenda/route.ts'),
+      /NextResponse\.json\(r\.resposta\.corpo, \{ status: r\.resposta\.status \}\)/
+    )
+    const rota = lerFonte('lib/trabalhos-longos/legenda-video.ts')
     assert.match(rota, /bloqueadoPorCusto: true/)
     assert.match(rota, /srt,/)
     assert.match(rota, /pendenciaDeAutomacao: 'fal\.ai:adicionar-legenda'/)

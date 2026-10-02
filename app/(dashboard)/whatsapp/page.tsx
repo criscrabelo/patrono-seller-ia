@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
+import { respostaFinal } from '@/lib/aguardar-trabalho'
 
 interface ConteudoOpcao {
   id: string
@@ -144,14 +145,21 @@ export default function WhatsAppPage() {
           delayMs: delay * 1000,
         }),
       })
-      const data = await res.json()
-      if (!res.ok) {
+      // P2.2: o envio roda como trabalho longo; a lista vai se preenchendo.
+      const { ok, data } = await respostaFinal(res, {
+        aoAtualizar: (parcial) => setResultados(parcial.resultados ?? []),
+      })
+      if (data.processando) {
+        setResultados(data.resultados ?? [])
+        toast({ title: 'Envio em andamento', description: data.mensagem ?? '' })
+      } else if (!ok) {
         toast({ title: 'Erro no envio', description: data.error, variant: 'destructive' })
       } else {
         setResultados(data.resultados ?? [])
+        const incertos = data.incertos > 0 ? `, ${data.incertos} sem confirmação (não reenviados)` : ''
         toast({
-          title: `${data.enviados} enviado(s)${data.erros > 0 ? `, ${data.erros} com erro` : ''}`,
-          variant: data.erros === 0 ? 'success' : 'destructive',
+          title: `${data.enviados} enviado(s)${data.erros > 0 ? `, ${data.erros} com erro` : ''}${incertos}`,
+          variant: data.erros === 0 && !data.incertos ? 'success' : 'destructive',
         })
       }
     } catch {

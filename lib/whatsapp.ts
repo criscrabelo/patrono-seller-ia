@@ -23,6 +23,13 @@ export interface ResultadoEnvio {
   numero: string
   ok: boolean
   erro?: string
+  /**
+   * `true` quando o pedido à Z-API saiu e nenhuma resposta voltou (rede
+   * caiu, timeout). A mensagem PODE ter sido entregue: reenviar às cegas
+   * duplicaria para a pessoa. Resposta HTTP — de sucesso ou de erro — não
+   * é incerta: a Z-API disse o que fez.
+   */
+  incerto?: boolean
 }
 
 function zapiBase(cfg: ZApiConfig) {
@@ -101,21 +108,23 @@ export async function enviarTexto(
 ): Promise<ResultadoEnvio> {
   const numero = normalizarNumero(params.numero)
   if (!numero) return { numero: params.numero, ok: false, erro: 'Número inválido' }
+  let pedidoSaiu = false
   try {
     const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp', workspaceId)
     if (!permissao.permitido) return { numero: params.numero, ok: false, erro: permissao.motivo }
+    pedidoSaiu = true
     const res = await fetch(`${zapiBase(cfg)}/send-text`, {
       method: 'POST',
       headers: zapiHeaders(cfg),
       body: JSON.stringify({ phone: numero, message: params.mensagem }),
     })
-    const data = await res.json() as Record<string, unknown>
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
     if (!res.ok) {
       return { numero, ok: false, erro: (data.error as string) || `HTTP ${res.status}` }
     }
     return { numero, ok: true }
   } catch (e) {
-    return { numero, ok: false, erro: e instanceof Error ? e.message : 'Erro de conexão' }
+    return { numero, ok: false, erro: e instanceof Error ? e.message : 'Erro de conexão', ...(pedidoSaiu ? { incerto: true } : {}) }
   }
 }
 
@@ -127,9 +136,11 @@ export async function enviarImagem(
 ): Promise<ResultadoEnvio> {
   const numero = normalizarNumero(params.numero)
   if (!numero) return { numero: params.numero, ok: false, erro: 'Número inválido' }
+  let pedidoSaiu = false
   try {
     const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp', workspaceId)
     if (!permissao.permitido) return { numero: params.numero, ok: false, erro: permissao.motivo }
+    pedidoSaiu = true
     const res = await fetch(`${zapiBase(cfg)}/send-image`, {
       method: 'POST',
       headers: zapiHeaders(cfg),
@@ -139,13 +150,13 @@ export async function enviarImagem(
         caption: params.legenda ?? '',
       }),
     })
-    const data = await res.json() as Record<string, unknown>
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
     if (!res.ok) {
       return { numero, ok: false, erro: (data.error as string) || `HTTP ${res.status}` }
     }
     return { numero, ok: true }
   } catch (e) {
-    return { numero, ok: false, erro: e instanceof Error ? e.message : 'Erro de conexão' }
+    return { numero, ok: false, erro: e instanceof Error ? e.message : 'Erro de conexão', ...(pedidoSaiu ? { incerto: true } : {}) }
   }
 }
 

@@ -1,26 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { publicarReelInstagram, montarLegenda, renovarTokenInstagram } from '@/lib/instagram'
-import { capturarSnapshotDePublicacao } from '@/lib/ml-captura-publicacao'
-import {
-  prepararTentativaDePublicacao,
-  confirmarDistribuicao,
-  registrarFalhaDaTentativa,
-} from '@/lib/publicacao-fluxo'
+import { renovarTokenInstagram } from '@/lib/instagram'
 import { autorizarPublicacaoReal } from '@/lib/porta-de-publicacao-real'
 import { chaveDaTentativaPadrao } from '@/lib/link-de-publicacao'
-import { urlVaiNaLegenda } from '@/lib/capacidade-real-do-adapter'
+import { iniciarTrabalhoLongo, buscarTrabalho, modoDeExecucao } from '@/lib/trabalho-longo'
+import { executorDaPublicacao, chaveDaPublicacao } from '@/lib/trabalhos-longos/publicar-instagram'
+import { chamadaDeOutroAgendador, RESPOSTA_DE_OUTRO_AGENDADOR } from '@/lib/agendador'
 
-// Endpoint chamado pela Vercel Cron para publicar automaticamente os
-// conteúdos cuja data de agendamento já chegou.
+// Endpoint chamado pelo agendador para publicar os conteúdos cuja data de
+// agendamento já chegou.
 // - Sem vídeo (ou sem Instagram conectado): apenas marca como "publicado".
-// - Com vídeo + Instagram conectado: publica o Reels de verdade.
+// - Com vídeo + Instagram conectado: registra o trabalho de publicação do
+//   Reels. P2.2: quem fala com a Meta é o executor de trabalho longo — o
+//   MESMO do "publicar agora", com a MESMA chave. Esta rota não espera o
+//   Instagram processar: na Netlify isso estouraria o limite de 30 s.
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  // Segurança: este endpoint não tem sessão de usuária (quem chama é a
-  // Vercel Cron, não uma pessoa logada) — isso NÃO significa que pode
+  // Segurança: este endpoint não tem sessão de usuária (quem chama é o
+  // agendador, não uma pessoa logada) — isso NÃO significa que pode
   // aceitar chamadas públicas sem autenticação própria. Exige sempre o
   // segredo, tanto faz se CRON_SECRET está configurado ou não: se não
   // estiver, a rota se recusa a rodar em vez de ficar aberta por padrão.
@@ -32,6 +31,9 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization')
   if (auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  }
+  if (chamadaDeOutroAgendador(req.headers)) {
+    return NextResponse.json(RESPOSTA_DE_OUTRO_AGENDADOR, { status: 409 })
   }
 
   const agora = new Date()
@@ -74,30 +76,18 @@ export async function GET(req: NextRequest) {
 
   const devidos = await prisma.conteudo.findMany({
     where: { status: 'agendado', dataAgendamento: { lte: agora } },
-    include: { produto: { select: { linkProduto: true } } },
   })
 
   let publicadosApp = 0
-  let publicadosInstagram = 0
-  let falhas = 0
   // GATILHO A (P0.2 Bloco 4.1): a amostra de ML nasce quando um CANAL
   // confirma a distribuição — nunca quando o conteúdo é marcado como
-  // publicado só dentro do app. `capturarSnapshotDePublicacao` recusa
-  // sozinha quando não há identificador externo, então os dois caminhos
-  // internos abaixo (sem vídeo, sem Instagram conectado) não produzem
-  // amostra. Nunca lança: a publicação é o fato principal.
-  let amostrasCapturadas = 0
-  const capturar = async (workspaceId: string, contentId: string) => {
-    const r = await capturarSnapshotDePublicacao({ workspaceId, contentId, agora })
-    if (r.capturado) amostrasCapturadas++
-  }
+  // publicado só dentro do app. Os dois caminhos internos abaixo (sem
+  // vídeo, sem Instagram conectado) não produzem amostra; a captura mora
+  // no executor, depois do mediaId.
 
-  // P1.0 Etapa 2.c: o caminho agendado usa a MESMA autoridade central do
-  // "publicar agora". A chave da tentativa deriva do agendamento, entao uma
-  // reexecucao do cron reencontra a mesma Publicacao e o mesmo link.
-  let publicacoesSemRastreamento = 0
   // P1.9.2: agendado que a porta não liberou. Continua `agendado`, intacto.
   let bloqueadosPelaPorta = 0
+  const trabalhos: string[] = []
 
   for (const c of devidos) {
     // Sem vídeo: publicação apenas dentro do app.
@@ -133,7 +123,11 @@ export async function GET(req: NextRequest) {
     }
 
     // P1.9.2: A PORTA ÚNICA, a mesma da rota manual. Sem `executavelAgora`
-    // o agendado não sai — e não é marcado publicado: ele não circulou.
+    // o agendado não sai — e não é marcado publicado: ele não circulou. O
+    // executor confere de novo antes de falar com a Meta.
+    // P1.0 Etapa 2.c: a chave da tentativa deriva do agendamento, entao uma
+    // reexecucao do cron reencontra a mesma Publicacao, o mesmo link — e,
+    // agora, o mesmo trabalho.
     const chaveDaTentativa = chaveDaTentativaPadrao({
       contentId: c.id,
       canal: 'instagram',
@@ -144,6 +138,7 @@ export async function GET(req: NextRequest) {
       contentId: c.id,
       canal: 'instagram',
       chaveDaTentativa,
+      envio: { tipoMidia: 'video', destino: 'feed' },
       agora,
     })
     if (!porta.liberada) {
@@ -155,71 +150,44 @@ export async function GET(req: NextRequest) {
       continue
     }
 
-    const tentativa = await prepararTentativaDePublicacao({
+    // Mesmo trabalho que o "publicar agora" usaria para esta tentativa: o
+    // que já saiu não sai de novo, o que está incerto não é repetido, e
+    // falha recusada pela Meta é retomada na próxima execução.
+    const r = await iniciarTrabalhoLongo({
       workspaceId: c.workspaceId,
-      contentId: c.id,
-      canal: 'instagram',
-      chaveDaTentativa,
-      urlDiretaDoProduto: c.produto?.linkProduto ?? null,
-      dataAgendamento: c.dataAgendamento,
+      tipo: 'LONGO_PUBLICAR_INSTAGRAM',
+      chave: chaveDaPublicacao({ chaveDaTentativa }),
+      entityType: 'CONTEUDO',
+      entityId: c.id,
+      contexto: { pedido: { conteudoId: c.id, tipoMidia: 'video', destino: 'feed', chaveDaTentativa, origem: 'agendado' } },
+      executor: executorDaPublicacao(),
+      origem: req.nextUrl.origin,
+      mensagemDeProcessando: 'Publicação agendada em andamento.',
+      agora,
     })
-    if (!tentativa.rastreada) publicacoesSemRastreamento++
+    trabalhos.push(r.trabalhoId)
+  }
 
-    try {
-      const mediaId = await publicarReelInstagram({
-        accessToken: integracao.accessToken,
-        igUserId: integracao.accountId,
-        videoUrl: c.videoUrl,
-        // A legenda aprovada pelo preflight. URL só onde ela é clicável.
-        legenda: urlVaiNaLegenda('instagram')
-          ? montarLegenda(c.legendaInstagram, [], null, tentativa.urlParaDivulgar)
-          : (c.legendaInstagram ?? '').trim(),
-      })
-      await prisma.conteudo.update({
-        where: { id: c.id },
-        data: {
-          status: 'publicado',
-          dataPublicacao: agora,
-          publicacaoExternaId: mediaId,
-          erroPublicacao: null,
-        },
-      })
-      if (tentativa.publicacao) {
-        await confirmarDistribuicao({
-          workspaceId: c.workspaceId,
-          publicacaoId: tentativa.publicacao.id,
-          publicacaoExternaId: mediaId,
-          distribuidaEm: agora,
-        })
-      }
-      // DISTRIBUIÇÃO REAL: o canal devolveu `mediaId`. É aqui — e só aqui,
-      // neste cron — que a amostra de produção nasce.
-      await capturar(c.workspaceId, c.id)
-      publicadosInstagram++
-    } catch (e) {
-      // Falha REAL do provider. O conteudo continua "agendado" e a proxima
-      // execucao reusa a MESMA chave da tentativa — mesma Publicacao, que
-      // volta de FALHOU para DISTRIBUINDO.
-      if (tentativa.publicacao) {
-        await registrarFalhaDaTentativa({
-          workspaceId: c.workspaceId,
-          publicacaoId: tentativa.publicacao.id,
-        })
-      }
-      await prisma.conteudo.update({
-        where: { id: c.id },
-        data: { erroPublicacao: e instanceof Error ? e.message : 'Falha ao publicar' },
-      })
-      falhas++
-    }
+  // Situação de cada trabalho ao fim desta execução. Em segundo plano, a
+  // maioria ainda está PENDING/RUNNING: o resultado aparece na próxima.
+  const contagem: Record<string, number> = {}
+  let publicacoesSemRastreamento = 0
+  for (const id of trabalhos) {
+    const t = await buscarTrabalho(id)
+    if (!t) continue
+    contagem[t.estado] = (contagem[t.estado] ?? 0) + 1
+    if (t.contexto?.rastreada === false) publicacoesSemRastreamento++
   }
 
   return NextResponse.json({
     ok: true,
+    modo: modoDeExecucao(),
     publicadosApp,
-    publicadosInstagram,
-    falhas,
-    amostrasCapturadas,
+    trabalhosDePublicacao: trabalhos.length,
+    publicadosInstagram: contagem.SUCCEEDED ?? 0,
+    emAndamento: (contagem.PENDING ?? 0) + (contagem.RUNNING ?? 0),
+    falhas: contagem.FAILED_RETRYABLE ?? 0,
+    aguardandoVerificacaoHumana: contagem.WAITING ?? 0,
     publicacoesSemRastreamento,
     bloqueadosPelaPorta,
     tokensRenovados,

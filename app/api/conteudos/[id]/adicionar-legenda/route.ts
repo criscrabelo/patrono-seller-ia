@@ -2,36 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { iniciarTrabalhoLongo } from '@/lib/trabalho-longo'
 import {
-  adicionarLegendaVideo,
-  consultarStatusVideo,
-  obterResultadoLegenda,
-  montarSrt,
-  BloqueadoPorPoliticaDeCusto,
-} from '@/lib/falai'
-import { createClient } from '@supabase/supabase-js'
+  executorDaLegenda,
+  montarPedidoDeLegenda,
+  chaveDaLegenda,
+  textoDaLegenda,
+} from '@/lib/trabalhos-longos/legenda-video'
 
-// Processar legendas pode levar ~30-60s.
+// Processar legendas pode levar ~30-60s. Na Netlify (limite síncrono de 30 s)
+// o trabalho vai para a Background Function; aqui só se valida e registra.
+// Fora dela, o mesmo executor roda dentro da requisição.
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder'
-)
-
-async function baixarUploadParaSupabase(urlFal: string, userId: string): Promise<string> {
-  const resp = await fetch(urlFal)
-  if (!resp.ok) throw new Error(`Não consegui baixar o vídeo legendado (HTTP ${resp.status})`)
-  const buffer = Buffer.from(await resp.arrayBuffer())
-  const path = `${userId}/${Date.now()}-legendado.mp4`
-  const { data, error } = await supabaseAdmin.storage
-    .from('videos')
-    .upload(path, buffer, { contentType: 'video/mp4', upsert: false })
-  if (error) throw new Error(`Upload no Supabase falhou: ${error.message}`)
-  const { data: urlData } = supabaseAdmin.storage.from('videos').getPublicUrl(data.path)
-  return urlData.publicUrl
-}
 
 export async function POST(
   req: NextRequest,
@@ -53,80 +36,28 @@ export async function POST(
   }
 
   // Texto da legenda: prioriza narração (mais longa), depois textoTela, depois chamadaAcao
-  const texto =
-    (conteudo.narracao?.trim()) ||
-    (conteudo.textoTela?.trim()) ||
-    (conteudo.chamadaAcao?.trim()) ||
-    ''
-
-  if (!texto) {
+  if (!textoDaLegenda(conteudo)) {
     return NextResponse.json(
       { error: 'O conteúdo não tem texto para usar como legenda (narração, textoTela ou chamadaAcao).' },
       { status: 400 }
     )
   }
 
-  const duracao = conteudo.duracao || 10
-  const srt = montarSrt(texto, duracao)
-
-  try {
-    const { statusUrl, resultUrl } = await adicionarLegendaVideo(
-      {
-        videoUrl: conteudo.videoUrl,
-        srtContent: srt,
-        preset,
-      },
-      conteudo.workspaceId
-    )
-
-    // Aguarda o processamento (~30-50s para vídeos curtos)
-    let status = 'IN_PROGRESS'
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 5000))
-      const s = await consultarStatusVideo(statusUrl)
-      status = s.status
-      if (status === 'COMPLETED' || status === 'FAILED') break
-    }
-
-    if (status === 'FAILED') {
-      return NextResponse.json({ error: 'veed/subtitles falhou ao processar o vídeo' }, { status: 502 })
-    }
-    if (status !== 'COMPLETED') {
-      return NextResponse.json(
-        { ok: false, processando: true, mensagem: 'A legenda ainda está sendo gerada. Tente novamente em 30s.' }
-      )
-    }
-
-    const { videoUrl } = await obterResultadoLegenda(resultUrl)
-    const urlFinal = await baixarUploadParaSupabase(videoUrl, session.user.id)
-
-    await prisma.conteudo.update({
-      where: { id: conteudo.id },
-      data: { videoUrl: urlFinal },
-    })
-
-    return NextResponse.json({ ok: true, videoUrl: urlFinal })
-  } catch (e) {
-    if (e instanceof BloqueadoPorPoliticaDeCusto) {
-      // SEM EQUIVALENTE GRATUITO. Nenhuma função local queima legenda em um
-      // vídeo JÁ EXISTENTE — `renderer-ffmpeg` só monta vídeo a partir de
-      // imagem. Em vez de inventar uma capacidade que não existe, o SRT
-      // gerado (que é local e gratuito) volta para quem chamou, e a
-      // pendência fica registrada na Fila de Automação.
-      return NextResponse.json(
-        {
-          ok: false,
-          bloqueadoPorCusto: true,
-          erro: e.message,
-          srt,
-          pendenciaDeAutomacao: 'fal.ai:adicionar-legenda',
-          mensagem:
-            'A legendagem paga está bloqueada pela política de custo zero e ainda não há equivalente local. O arquivo SRT foi gerado sem custo e pode ser usado no editor.',
-        },
-        { status: 402 }
-      )
-    }
-    const msg = e instanceof Error ? e.message : 'Falha ao adicionar legendas'
-    return NextResponse.json({ error: msg }, { status: 502 })
-  }
+  const pedido = montarPedidoDeLegenda({
+    conteudo: { ...conteudo, videoUrl: conteudo.videoUrl },
+    userId: session.user.id,
+    preset,
+  })
+  const r = await iniciarTrabalhoLongo({
+    workspaceId: session.user.workspaceId,
+    tipo: 'LONGO_LEGENDA_VIDEO',
+    chave: chaveDaLegenda(pedido),
+    entityType: 'CONTEUDO',
+    entityId: conteudo.id,
+    contexto: { pedido },
+    executor: executorDaLegenda(),
+    origem: req.nextUrl.origin,
+    mensagemDeProcessando: 'A legenda está sendo gerada. Aguarde nesta tela.',
+  })
+  return NextResponse.json(r.resposta.corpo, { status: r.resposta.status })
 }
