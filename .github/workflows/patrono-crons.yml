@@ -55,6 +55,7 @@ on:
           - sincronizar-catalogo
           - ml-janela-observacao
           - publicar
+          - expurgar-tarefas
       modo:
         description: 'ensaio = não grava nada; operacao = grava'
         required: true
@@ -138,6 +139,8 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             qs=""
             if [ "${DISPATCH_MODO}" = "ensaio" ]; then qs="?modo=ensaio"; fi
+            # Expurgo: "operacao" pede execução; a rota ainda exige EXPURGO_TAREFAS_ATIVO=true.
+            if [ "${DISPATCH_ALVO}" = "expurgar-tarefas" ] && [ "${DISPATCH_MODO}" = "operacao" ]; then qs="?modo=execucao"; fi
             echo "Disparo manual: ${DISPATCH_ALVO} (${DISPATCH_MODO})"
             if [ "${DISPATCH_ALVO}" = "publicar" ] && [ "${PUBLICAR_ATIVO:-}" != "true" ]; then
               echo "publicar está desligado (PATRONO_CRON_PUBLICAR_ATIVO != true). Nada feito."
@@ -161,6 +164,10 @@ jobs:
 
             # 03:00 UTC — janela de observação do ML.
             if [ "${hora}" = "03" ]; then chamar "ml-janela-observacao"; fi
+
+            # 04:00 UTC — retenção dos registros de tarefas (P2.9). Pede
+            # execução; sem EXPURGO_TAREFAS_ATIVO=true no app, é só ensaio.
+            if [ "${hora}" = "04" ]; then chamar "expurgar-tarefas" "?modo=execucao"; fi
 
             # 12:00 UTC — publicar. Desligado até decisão explícita.
             if [ "${hora}" = "12" ]; then

@@ -20,6 +20,7 @@ import {
   type LinhaDaFila,
 } from './automation-queue-repositorio'
 import type { EstadoDoJob, ClasseDeJob } from './automation-queue-contrato'
+import type { PortaDeRetencao, TarefaParaRetencao } from './retencao-de-tarefas'
 
 type LinhaCrua = {
   id: string
@@ -201,4 +202,50 @@ export const portaDosTrabalhosLongos = {
     const r = await prisma.automationJob.updateMany({ where: { id, workerId }, data: dados })
     return r.count === 1
   },
+}
+
+// ── P2.9: retenção dos trabalhos longos ─────────────────────────────────
+//
+// Leitura e escrita da política de lib/retencao-de-tarefas.ts. Toda escrita
+// é condicionada à linha ainda estar EXATAMENTE como foi lida (workspace,
+// estado e updatedAt): se um trabalho voltou a andar entre o relatório e a
+// aplicação, ele não é tocado.
+
+export function portaDeRetencaoPrisma(): PortaDeRetencao {
+  return {
+    async workspaces() {
+      const linhas = await prisma.automationJob.findMany({
+        where: { tipo: { startsWith: 'LONGO_' } },
+        select: { workspaceId: true },
+        distinct: ['workspaceId'],
+      })
+      return linhas.map((l) => l.workspaceId)
+    },
+
+    async listar(workspaceId, limite) {
+      const linhas = await prisma.automationJob.findMany({
+        where: { workspaceId, tipo: { startsWith: 'LONGO_' }, estado: { notIn: ['PENDING', 'RUNNING'] } },
+        select: { id: true, workspaceId: true, tipo: true, estado: true, updatedAt: true, contexto: true },
+        orderBy: { updatedAt: 'asc' },
+        take: limite,
+      })
+      return linhas.map((l) => ({ ...l, contexto: (l.contexto as Record<string, unknown> | null) ?? null }))
+    },
+
+    async anonimizar(t: TarefaParaRetencao, contexto: Record<string, unknown>) {
+      const r = await prisma.automationJob.updateMany({
+        where: { id: t.id, workspaceId: t.workspaceId, estado: t.estado as never, updatedAt: t.updatedAt },
+        // `ultimoErro` sai junto: mensagem de provider pode citar o número.
+        data: { contexto: contexto as never, ultimoErro: null },
+      })
+      return r.count === 1
+    },
+
+    async excluir(t: TarefaParaRetencao) {
+      const r = await prisma.automationJob.deleteMany({
+        where: { id: t.id, workspaceId: t.workspaceId, estado: t.estado as never, updatedAt: t.updatedAt },
+      })
+      return r.count === 1
+    },
+  }
 }
