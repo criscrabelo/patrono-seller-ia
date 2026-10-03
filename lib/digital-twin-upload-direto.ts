@@ -41,6 +41,14 @@ export const LIMITES_DO_UPLOAD_DIRETO = {
 
 export type TipoDeUploadDireto = keyof typeof LIMITES_DO_UPLOAD_DIRETO
 
+/**
+ * P2.12 — `file_size_limit` do bucket `digital-twin-private`: o maior limite
+ * por tipo (vídeo, 50 MB). É a segunda barreira: o storage recusa o PUT
+ * acima disso mesmo que alguém pule a validação do passo ①. Aplicado por
+ * `scripts/limite-bucket-digital-twin.mjs`.
+ */
+export const LIMITE_DO_BUCKET_BYTES = Math.max(...Object.values(LIMITES_DO_UPLOAD_DIRETO).map((l) => l.maximoBytes))
+
 export function ehTipoDeUploadDireto(tipo: unknown): tipo is TipoDeUploadDireto {
   return typeof tipo === 'string' && Object.prototype.hasOwnProperty.call(LIMITES_DO_UPLOAD_DIRETO, tipo)
 }

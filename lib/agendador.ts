@@ -32,6 +32,27 @@ export function chamadaDeOutroAgendador(
   return agendadorAtivo(env) === 'netlify' && cabecalhos.get(CABECALHO_DO_AGENDADOR) !== 'netlify'
 }
 
+/**
+ * P2.12 — Versão ESTRITA, para rotinas que apagam (limpeza de uploads
+ * órfãos). Só aceita a chamada quando `AGENDADOR_DOS_CRONS` está declarado
+ * explicitamente (`github` ou `netlify`) E a chamada se identifica como
+ * vinda dele. Sem agendador declarado, ninguém dispara — nem o GitHub, ao
+ * contrário da regra geral acima, que continua valendo para as outras rotas.
+ */
+export function chamadaDoAgendadorDeclarado(
+  cabecalhos: { get(nome: string): string | null },
+  env: Record<string, string | undefined> = process.env
+): { ok: true; agendador: Agendador } | { ok: false; motivo: string } {
+  const declarado = env.AGENDADOR_DOS_CRONS
+  if (declarado !== 'github' && declarado !== 'netlify') {
+    return { ok: false, motivo: 'AGENDADOR_DOS_CRONS não declarado (github ou netlify): nenhum agendador dispara esta rotina.' }
+  }
+  if (cabecalhos.get(CABECALHO_DO_AGENDADOR) !== declarado) {
+    return { ok: false, motivo: `Chamada não veio do agendador ativo (${declarado}). Recusada para não executar a rotina duas vezes.` }
+  }
+  return { ok: true, agendador: declarado }
+}
+
 export const RESPOSTA_DE_OUTRO_AGENDADOR = {
   error: 'Outro agendador está ativo (AGENDADOR_DOS_CRONS). Esta chamada foi recusada para não executar a rotina duas vezes.',
 } as const

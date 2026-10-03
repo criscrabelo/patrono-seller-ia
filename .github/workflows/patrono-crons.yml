@@ -43,6 +43,9 @@ on:
   schedule:
     # De hora em hora. O passo decide o que é devido nesta hora.
     - cron: '0 * * * *'
+    # 04:30 UTC — só a limpeza de uploads órfãos (P2.12), no mesmo horário
+    # da Scheduled Function da Netlify. Um job a mais por dia (~30 min/mês).
+    - cron: '30 4 * * *'
   workflow_dispatch:
     inputs:
       alvo:
@@ -56,6 +59,7 @@ on:
           - ml-janela-observacao
           - publicar
           - expurgar-tarefas
+          - limpar-uploads-orfaos
       modo:
         description: 'ensaio = não grava nada; operacao = grava'
         required: true
@@ -87,6 +91,8 @@ jobs:
           PUBLICAR_ATIVO: ${{ vars.PATRONO_CRON_PUBLICAR_ATIVO }}
           DISPATCH_ALVO: ${{ inputs.alvo }}
           DISPATCH_MODO: ${{ inputs.modo }}
+          # Qual das agendas disparou (vazio no disparo manual).
+          AGENDA: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
 
@@ -126,10 +132,18 @@ jobs:
               --output /tmp/resposta.json \
               --write-out '%{http_code}' \
               --header "Authorization: Bearer ${CRON_SECRET}" \
+              --header "x-patrono-agendador: github" \
               "${url}") || codigo="000"
             echo "HTTP ${codigo}"
             head -c 2000 /tmp/resposta.json || true
             echo ""
+            # A limpeza de órfãos só aceita o agendador declarado em
+            # AGENDADOR_DOS_CRONS no app. 409 = o agendador ativo não é o
+            # GitHub (ou nenhum foi declarado): recusa esperada, não falha.
+            if [ "${codigo}" = "409" ] && [ "${rota}" = "limpar-uploads-orfaos" ]; then
+              echo "${rota}: recusada pelo app — o GitHub não é o agendador declarado. Nada feito."
+              return 0
+            fi
             if [ "${codigo}" != "200" ]; then
               echo "FALHOU: ${rota} devolveu ${codigo}" >&2
               falhas=$((falhas + 1))
@@ -140,13 +154,18 @@ jobs:
             qs=""
             if [ "${DISPATCH_MODO}" = "ensaio" ]; then qs="?modo=ensaio"; fi
             # Expurgo: "operacao" pede execução; a rota ainda exige EXPURGO_TAREFAS_ATIVO=true.
-            if [ "${DISPATCH_ALVO}" = "expurgar-tarefas" ] && [ "${DISPATCH_MODO}" = "operacao" ]; then qs="?modo=execucao"; fi
+            if { [ "${DISPATCH_ALVO}" = "expurgar-tarefas" ] || [ "${DISPATCH_ALVO}" = "limpar-uploads-orfaos" ]; } && [ "${DISPATCH_MODO}" = "operacao" ]; then qs="?modo=execucao"; fi
             echo "Disparo manual: ${DISPATCH_ALVO} (${DISPATCH_MODO})"
             if [ "${DISPATCH_ALVO}" = "publicar" ] && [ "${PUBLICAR_ATIVO:-}" != "true" ]; then
               echo "publicar está desligado (PATRONO_CRON_PUBLICAR_ATIVO != true). Nada feito."
               exit 0
             fi
             chamar "${DISPATCH_ALVO}" "${qs}"
+          elif [ "${AGENDA}" = "30 4 * * *" ]; then
+            # 04:30 UTC — uploads do Digital Twin enviados e nunca
+            # confirmados (P2.12). Pede execução; sem
+            # LIMPEZA_UPLOADS_ORFAOS_ATIVA=true no app, é só ensaio.
+            chamar "limpar-uploads-orfaos" "?modo=execucao"
           else
             hora=$(date -u +%H)
             echo "Hora UTC: ${hora}"

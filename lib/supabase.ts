@@ -83,6 +83,42 @@ export async function infoDoObjetoPrivado(bucket: string, path: string): Promise
   return { tamanho: d.size ?? d.metadata?.size ?? null, mime: d.contentType ?? d.metadata?.mimetype ?? null }
 }
 
+/**
+ * P2.12 — Arquivos (não pastas) diretamente sob `prefixo/`, com as datas e o
+ * tamanho que o storage registrou. Lança em qualquer erro: quem limpa nunca
+ * decide com uma lista parcial.
+ */
+export async function listarObjetosPrivados(
+  bucket: string,
+  prefixo: string
+): Promise<{ nome: string; criadoEm: Date | null; atualizadoEm: Date | null; tamanho: number | null }[]> {
+  const saida: { nome: string; criadoEm: Date | null; atualizadoEm: Date | null; tamanho: number | null }[] = []
+  const pagina = 1000
+  for (let offset = 0; ; offset += pagina) {
+    const { data, error } = await supabaseAdmin.storage.from(bucket).list(prefixo, { limit: pagina, offset, sortBy: { column: 'name', order: 'asc' } })
+    if (error || !data) throw new Error(`Listagem privada falhou: ${error?.message ?? 'sem dados'}`)
+    for (const o of data) {
+      if (!o.id) continue // pasta
+      const tamanho = (o.metadata as { size?: number } | null)?.size
+      saida.push({
+        nome: `${prefixo}/${o.name}`,
+        criadoEm: o.created_at ? new Date(o.created_at) : null,
+        atualizadoEm: o.updated_at ? new Date(o.updated_at) : null,
+        tamanho: typeof tamanho === 'number' ? tamanho : null,
+      })
+    }
+    if (data.length < pagina) return saida
+  }
+}
+
+/** P2.12 — Apaga vários objetos; devolve os caminhos que o storage confirmou apagar. */
+export async function apagarObjetosPrivados(bucket: string, caminhos: string[]): Promise<string[]> {
+  if (!caminhos.length) return []
+  const { data, error } = await supabaseAdmin.storage.from(bucket).remove(caminhos)
+  if (error || !data) throw new Error(`Remoção privada falhou: ${error?.message ?? 'sem dados'}`)
+  return data.map((o) => o.name)
+}
+
 export async function deleteFilePrivado(bucket: string, path: string) {
   const { error } = await supabaseAdmin.storage.from(bucket).remove([path])
   if (error) throw new Error(`Remoção privada falhou: ${error.message}`)

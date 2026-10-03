@@ -18,7 +18,7 @@ export interface ContextoNetlify {
 }
 
 export async function dispararRotina(
-  rota: 'executar-fila' | 'oportunidades' | 'sincronizar-catalogo' | 'ml-janela-observacao' | 'publicar' | 'expurgar-tarefas',
+  rota: 'executar-fila' | 'oportunidades' | 'sincronizar-catalogo' | 'ml-janela-observacao' | 'publicar' | 'expurgar-tarefas' | 'limpar-uploads-orfaos',
   contexto: ContextoNetlify | undefined,
   env: Record<string, string | undefined> = process.env,
   enviar: typeof fetch = fetch,
