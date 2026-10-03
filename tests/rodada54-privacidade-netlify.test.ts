@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { dadosInstitucionais, versaoDaPolitica, DOMINIO_DO_SITE } from '../lib/institucional'
+import { PRAZO_PADRAO_DE_ANONIMIZACAO_DIAS, PRAZO_PADRAO_DE_EXCLUSAO_DIAS } from '../lib/retencao-de-tarefas'
 
 const RAIZ = join(__dirname, '..')
 const PAGINA = readFileSync(join(RAIZ, 'app/(institucional)/privacidade/page.tsx'), 'utf8')
@@ -76,13 +77,30 @@ describe('Texto aprovado (P2.8)', () => {
     assert.match(TEXTO, /Recursos de IA oferecidos pela própria hospedagem não são usados\./)
   })
 
-  test('WhatsApp e tarefas: registro no servidor, sem prazo fixo', () => {
+  test('WhatsApp e tarefas: registro no servidor; nenhum prazo além dos aprovados', () => {
     assert.match(TEXTO, /os números, a mensagem e o resultado de cada envio\s+ficam registrados no servidor/)
     assert.match(TEXTO, /pelo tempo necessário a essa finalidade e ao cumprimento das obrigações legais/)
     // Os únicos prazos permitidos já existiam ou foram aprovados: sessão (30),
-    // prévias (7) e transição da Vercel (14). Nenhum outro "N dias".
+    // prévias (7), transição da Vercel (14) e, desde a P2.9.1, a retenção
+    // dos registros de tarefas (30 sem atividade / 180 da última atividade).
     const semPermitidos = TEXTO.replace(/até 30 dias/g, '').replace(/expiração de 7 dias/g, '').replace(/14 dias após a mudança/g, '')
+      .replace(/após 30 dias sem atividade/g, '').replace(/após 180 dias contados da última atividade/g, '')
     assert.ok(!/\d+\s+dias/.test(semPermitidos), 'prazo de retenção afirmado sem aprovação')
+  })
+
+  test('P2.9.1: retenção dos registros de tarefas, igual à política técnica do código', () => {
+    const s8 = TEXTO.slice(TEXTO.indexOf('8. Retenção e exclusão'), TEXTO.indexOf('9. Propriedade da mídia'))
+    assert.match(s8, /Registros de tarefas em segundo plano/)
+    assert.match(s8, /Registros de tarefas concluídas que contenham dados pessoais operacionais — como os números e a mensagem de um envio de WhatsApp — são anonimizados após 30 dias sem atividade./)
+    assert.match(s8, /permanecem apenas os dados mínimos necessários ao controle técnico: o estado da tarefa, contagens e o identificador que impede que o mesmo pedido seja repetido./)
+    assert.match(s8, /O registro anonimizado é excluído após 180 dias contados da última atividade./)
+    assert.match(s8, /Tarefas ativas — em andamento ou aguardando execução — não entram nesse processo./)
+    assert.match(s8, /Registros sujeitos a obrigação legal ou necessários ao exercício regular de direitos podem ser conservados, quando aplicável./)
+    // A frase genérica não pode mais contradizer o prazo.
+    assert.match(s8, /Salvo os registros de tarefas descritos a seguir, não há prazos fixos por categoria/)
+    // O texto e o código dizem o mesmo número.
+    assert.equal(PRAZO_PADRAO_DE_ANONIMIZACAO_DIAS, 30)
+    assert.equal(PRAZO_PADRAO_DE_EXCLUSAO_DIAS, 180)
   })
 
   test('âncora de exclusão na seção 8', () => {

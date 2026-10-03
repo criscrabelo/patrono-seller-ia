@@ -200,8 +200,17 @@ export default function PaginaPrivacidade() {
         <h2 id="exclusao" className={`${h2} scroll-mt-20`}>8. Retenção e exclusão</h2>
         <p className={p}>
           Os dados são mantidos pelo tempo necessário às finalidades desta política e ao cumprimento das obrigações
-          legais aplicáveis. Não há prazos fixos por categoria: o período fica limitado a essas necessidades.
+          legais aplicáveis. Salvo os registros de tarefas descritos a seguir, não há prazos fixos por categoria: o
+          período fica limitado a essas necessidades.
         </p>
+        <h3 className={h3}>Registros de tarefas em segundo plano</h3>
+        <ul className={lista}>
+          <li>Registros de tarefas concluídas que contenham dados pessoais operacionais — como os números e a mensagem de um envio de WhatsApp — são anonimizados após 30 dias sem atividade.</li>
+          <li>Após a anonimização, permanecem apenas os dados mínimos necessários ao controle técnico: o estado da tarefa, contagens e o identificador que impede que o mesmo pedido seja repetido.</li>
+          <li>O registro anonimizado é excluído após 180 dias contados da última atividade.</li>
+          <li>Tarefas ativas — em andamento ou aguardando execução — não entram nesse processo.</li>
+          <li>Registros sujeitos a obrigação legal ou necessários ao exercício regular de direitos podem ser conservados, quando aplicável.</li>
+        </ul>
         <h3 className={h3}>Encerramento da conta e exclusão de dados</h3>
         <p className={p}>
           A titular pode solicitar o encerramento da conta e a exclusão dos dados pelo canal da seção 11. A exclusão
