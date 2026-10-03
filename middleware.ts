@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
+import { urlCanonica } from './lib/dominio'
 
 /**
  * Proteção de rotas — política "negar por padrão".
@@ -38,10 +39,16 @@ const PREFIXOS_API_PUBLICOS = ['/api/auth', '/api/l/', '/api/cron']
 //   sessão; exige o cabeçalho oficial Tiktok-Signature (HMAC do client
 //   secret) e janela de tempo. Ver app/api/webhooks/tiktok/route.ts.
 //
+// - /.netlify/functions/trabalho-longo-background → disparo da Background
+//   Function (P2.2). Na Netlify o middleware do Next também intercepta
+//   /.netlify/* (medido na P2.1: 307 para o login) — sem esta exceção,
+//   nenhum trabalho longo rodaria em produção. A função só executa um
+//   jobId assinado (HMAC com NEXTAUTH_SECRET) e ainda PENDING no banco.
+//
 // O callback OAuth do TikTok Shop NÃO está aqui de propósito: ele chega no
 // navegador da própria usuária, que já traz a sessão — exigir sessão é o
 // que prende a autorização ao workspace certo.
-const ROTAS_API_PUBLICAS_EXATAS = ['/api/webhooks/tiktok']
+const ROTAS_API_PUBLICAS_EXATAS = ['/api/webhooks/tiktok', '/.netlify/functions/trabalho-longo-background']
 
 function ehPublica(pathname: string): boolean {
   if (ROTAS_PUBLICAS.includes(pathname)) return true
@@ -51,6 +58,10 @@ function ehPublica(pathname: string): boolean {
 
 export default async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
+
+  // P2.7: www.<domínio> → <domínio>, pelo domínio da configuração.
+  const canonica = urlCanonica(req.nextUrl, req.headers.get('host') ?? req.nextUrl.host, process.env)
+  if (canonica) return NextResponse.redirect(canonica, 308)
 
   if (ehPublica(pathname)) return NextResponse.next()
 

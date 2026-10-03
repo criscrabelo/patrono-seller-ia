@@ -166,7 +166,8 @@ describe('Middleware: só o webhook do TikTok vira público, por caminho exato',
 
   test('a lista é exata e os prefixos de sempre não mudaram', () => {
     const m = lerCodigo('middleware.ts')
-    assert.match(m, /const ROTAS_API_PUBLICAS_EXATAS = \['\/api\/webhooks\/tiktok'\]/)
+    // P2.7: + o disparo da Background Function (ver rodada53).
+    assert.match(m, /const ROTAS_API_PUBLICAS_EXATAS = \['\/api\/webhooks\/tiktok', '\/\.netlify\/functions\/trabalho-longo-background'\]/)
     assert.match(m, /ROTAS_API_PUBLICAS_EXATAS\.includes\(pathname\)/)
     assert.match(m, /const PREFIXOS_API_PUBLICOS = \['\/api\/auth', '\/api\/l\/', '\/api\/cron'\]/)
   })

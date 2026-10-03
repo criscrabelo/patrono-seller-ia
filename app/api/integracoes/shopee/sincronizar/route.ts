@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   const extra = integracao.extraData as Record<string, string> | null
 
   if (acao === 'gerar_links') {
-    // Gera links rastreáveis (patrono.link/slug) para todos os produtos Shopee
+    // Gera links rastreáveis (/api/l/slug, no domínio configurado) para todos os produtos Shopee
     const produtos = await prisma.produto.findMany({
       where: {
         workspaceId: session.user.workspaceId,

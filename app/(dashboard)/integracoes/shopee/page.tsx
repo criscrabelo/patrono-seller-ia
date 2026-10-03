@@ -228,7 +228,7 @@ export default function ShopeeIntegracaoPage() {
                 <Link2 className="w-4 h-4 text-accent" /> Gerar Links Rastreáveis
               </h3>
               <p className="text-xs text-muted-foreground mt-1">
-                Cria links <code className="text-accent">patrono.link/slug</code> para todos os seus produtos Shopee cadastrados.
+                Cria links rastreáveis <code className="text-accent">/api/l/slug</code>, no domínio do Patrono, para todos os seus produtos Shopee cadastrados.
                 Cada clique é rastreado no dashboard de monetização.
               </p>
             </div>
@@ -393,7 +393,7 @@ export default function ShopeeIntegracaoPage() {
         <div className="space-y-2 text-xs text-muted-foreground">
           {[
             { n: '1', t: 'Conecte sua conta Shopee', d: 'Modo afiliado (affiliate.shopee.com.br) ou vendedor (Open Platform)' },
-            { n: '2', t: 'Gere links rastreáveis', d: 'O Patrono cria links patrono.link/slug para cada produto Shopee cadastrado' },
+            { n: '2', t: 'Gere links rastreáveis', d: 'O Patrono cria um link rastreável, no domínio dele, para cada produto Shopee cadastrado' },
             { n: '3', t: 'Compartilhe o conteúdo', d: 'Use os links gerados no TikTok, Instagram e outras plataformas' },
             { n: '4', t: 'Acompanhe os resultados', d: 'Cliques e conversões aparecem no dashboard de monetização em tempo real' },
           ].map(({ n, t, d }) => (
