@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { normalizarNumero } from '@/lib/whatsapp'
 import { iniciarTrabalhoLongo } from '@/lib/trabalho-longo'
 import { executorDoEnvio, chaveDoEnvio, intervaloEntreEnvios } from '@/lib/trabalhos-longos/envio-whatsapp'
+import { CODIGO_WHATSAPP_BLOQUEADO, envioDeWhatsappPermitido } from '@/lib/transferencia-internacional'
 
 // 3 s entre números: 11 números já passam do limite síncrono de 30 s da
 // Netlify. O envio vira trabalho longo; esta rota valida e registra.
@@ -14,6 +15,14 @@ export const maxDuration = 60
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+
+  // P2.11: números e mensagem são dados de TERCEIROS, sem mecanismo de
+  // transferência internacional nesta hospedagem. Recusa ANTES de ler o
+  // corpo: nada é lido nem gravado na fila.
+  const hospedagem = envioDeWhatsappPermitido()
+  if (!hospedagem.permitido) {
+    return NextResponse.json({ error: hospedagem.motivo, codigo: CODIGO_WHATSAPP_BLOQUEADO }, { status: 403 })
+  }
 
   const integracao = await prisma.integracao.findUnique({
     where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'whatsapp' } },

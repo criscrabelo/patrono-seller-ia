@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { verificarConexao } from '@/lib/whatsapp'
+import { envioDeWhatsappPermitido } from '@/lib/transferencia-internacional'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,12 +11,16 @@ export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
+  // P2.11: a tela avisa e desabilita o envio onde ele é recusado.
+  const hospedagem = envioDeWhatsappPermitido()
+  const envio = hospedagem.permitido ? { envioPermitido: true } : { envioPermitido: false, motivoDoBloqueio: hospedagem.motivo }
+
   const integracao = await prisma.integracao.findUnique({
     where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'whatsapp' } },
   })
 
   if (!integracao || integracao.status !== 'conectado' || !integracao.accountId || !integracao.accessToken) {
-    return NextResponse.json({ configurado: false })
+    return NextResponse.json({ configurado: false, ...envio })
   }
 
   const extra = (integracao.extraData ?? {}) as Record<string, string>
@@ -26,8 +31,8 @@ export async function GET() {
       token: integracao.accessToken,
       clientToken: extra.clientToken,
     })
-    return NextResponse.json({ configurado: true, conectado, numero })
+    return NextResponse.json({ configurado: true, conectado, numero, ...envio })
   } catch {
-    return NextResponse.json({ configurado: true, conectado: false })
+    return NextResponse.json({ configurado: true, conectado: false, ...envio })
   }
 }

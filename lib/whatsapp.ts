@@ -1,4 +1,5 @@
 import { guardarChamadaPaga } from './cost-safety-gate'
+import { envioDeWhatsappPermitido } from './transferencia-internacional'
 // Integração com Z-API para envio de mensagens WhatsApp em massa.
 // Docs: https://developer.z-api.io
 
@@ -108,6 +109,10 @@ export async function enviarTexto(
 ): Promise<ResultadoEnvio> {
   const numero = normalizarNumero(params.numero)
   if (!numero) return { numero: params.numero, ok: false, erro: 'Número inválido' }
+  // P2.11: dados de terceiros sem mecanismo de transferência nesta
+  // hospedagem — recusa antes de qualquer pedido à Z-API.
+  const hospedagem = envioDeWhatsappPermitido()
+  if (!hospedagem.permitido) return { numero: params.numero, ok: false, erro: hospedagem.motivo }
   let pedidoSaiu = false
   try {
     const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp', workspaceId)
@@ -136,6 +141,10 @@ export async function enviarImagem(
 ): Promise<ResultadoEnvio> {
   const numero = normalizarNumero(params.numero)
   if (!numero) return { numero: params.numero, ok: false, erro: 'Número inválido' }
+  // P2.11: dados de terceiros sem mecanismo de transferência nesta
+  // hospedagem — recusa antes de qualquer pedido à Z-API.
+  const hospedagem = envioDeWhatsappPermitido()
+  if (!hospedagem.permitido) return { numero: params.numero, ok: false, erro: hospedagem.motivo }
   let pedidoSaiu = false
   try {
     const permissao = await envioPermitidoPelaPolitica('enviar-whatsapp', workspaceId)

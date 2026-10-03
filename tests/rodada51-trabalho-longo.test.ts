@@ -633,6 +633,10 @@ describe(
 
     // ── WhatsApp ──────────────────────────────────────────────────────
 
+    // P2.11: o envio só roda em ambiente local/teste declarado; estes
+    // testes exercitam o executor nesse ambiente controlado.
+    const AMBIENTE_DE_TESTE = { NODE_ENV: 'test' }
+
     const zapiFalsa = (comportamento: (numero: string) => { ok: boolean; erro?: string; incerto?: boolean }) => {
       const envios: string[] = []
       const dep: DependenciasDoEnvio = {
@@ -650,13 +654,13 @@ describe(
       const nums = ['5511900000001', '5511900000002', '5511900000003']
       const { dep, envios } = zapiFalsa((n) => (n.endsWith('2') ? { ok: false, erro: 'fetch failed', incerto: true } : { ok: true }))
       const p = pedidoWa(nums)
-      const r = await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep) })
+      const r = await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep, AMBIENTE_DE_TESTE) })
       assert.equal(r.estado, 'WAITING', 'há envio sem confirmação: uma pessoa olha')
       assert.equal(r.resposta.corpo.enviados, 2)
       assert.equal(r.resposta.corpo.incertos, 1)
       assert.deepEqual(envios, nums)
 
-      await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep) })
+      await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep, AMBIENTE_DE_TESTE) })
       assert.deepEqual(envios, nums, 'nenhuma mensagem saiu duas vezes')
     })
 
@@ -665,10 +669,10 @@ describe(
       const { dep, envios } = zapiFalsa(() => ({ ok: true }))
       const p = pedidoWa(nums)
       // Sem orçamento: nenhum envio cabe.
-      const r1 = await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep), orcamentoMs: 0 })
+      const r1 = await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep, AMBIENTE_DE_TESTE), orcamentoMs: 0 })
       assert.equal(r1.estado, 'PENDING')
       assert.equal(envios.length, 0)
-      const r2 = await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep) })
+      const r2 = await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep, AMBIENTE_DE_TESTE) })
       assert.equal(r2.estado, 'SUCCEEDED')
       assert.deepEqual(envios, nums)
     })
@@ -685,7 +689,7 @@ describe(
         },
       })
       const { dep, envios } = zapiFalsa(() => ({ ok: true }))
-      const r = await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep) })
+      const r = await iniciar({ ...p, tipo: 'LONGO_ENVIO_WHATSAPP', entityId: integracaoWa, executor: executorDoEnvio(dep, AMBIENTE_DE_TESTE) })
       assert.deepEqual(envios, [nums[1]], 'o número que estava no caminho não recebeu de novo')
       assert.equal(r.estado, 'WAITING')
       assert.equal(r.resposta.corpo.incertos, 1)

@@ -64,6 +64,25 @@ export async function criarUrlAssinada(bucket: string, path: string, expiraEmSeg
   return data.signedUrl
 }
 
+/**
+ * P2.11 — URL assinada para o NAVEGADOR enviar o arquivo direto ao bucket
+ * privado: o arquivo não passa pela função. O token só vale para `path`,
+ * sem sobrescrever (sem upsert).
+ */
+export async function criarUrlDeEnvioPrivado(bucket: string, path: string): Promise<{ signedUrl: string; token: string }> {
+  const { data, error } = await supabaseAdmin.storage.from(bucket).createSignedUploadUrl(path)
+  if (error || !data) throw new Error(`Falha ao gerar URL de envio: ${error?.message ?? 'sem dados'}`)
+  return { signedUrl: data.signedUrl, token: data.token }
+}
+
+/** Tamanho e tipo que o storage registrou para o objeto — nunca o conteúdo. `null` se não existe. */
+export async function infoDoObjetoPrivado(bucket: string, path: string): Promise<{ tamanho: number | null; mime: string | null } | null> {
+  const { data, error } = await supabaseAdmin.storage.from(bucket).info(path)
+  if (error || !data) return null
+  const d = data as { size?: number | null; contentType?: string | null; metadata?: { size?: number; mimetype?: string } | null }
+  return { tamanho: d.size ?? d.metadata?.size ?? null, mime: d.contentType ?? d.metadata?.mimetype ?? null }
+}
+
 export async function deleteFilePrivado(bucket: string, path: string) {
   const { error } = await supabaseAdmin.storage.from(bucket).remove([path])
   if (error) throw new Error(`Remoção privada falhou: ${error.message}`)

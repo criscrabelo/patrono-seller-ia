@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto'
 import { prisma } from '../prisma'
 import { enviarTexto, enviarImagem, type ResultadoEnvio } from '../whatsapp'
 import type { Desfecho, Execucao, ExecutorDeTrabalho } from '../trabalho-longo'
+import { CODIGO_WHATSAPP_BLOQUEADO, envioDeWhatsappPermitido } from '../transferencia-internacional'
 
 export interface PedidoDeEnvio {
   numeros: string[]
@@ -67,8 +68,21 @@ function resumo(pedido: PedidoDeEnvio, resultados: Record<string, Registro>) {
   }
 }
 
-export function executorDoEnvio(dep: DependenciasDoEnvio = DEPENDENCIAS_REAIS): ExecutorDeTrabalho {
+export function executorDoEnvio(
+  dep: DependenciasDoEnvio = DEPENDENCIAS_REAIS,
+  env: Record<string, string | undefined> = process.env
+): ExecutorDeTrabalho {
   return async (e: Execucao): Promise<Desfecho> => {
+    // P2.11: trabalho que já estava na fila e chegou a uma hospedagem sem
+    // mecanismo de transferência termina aqui, sem ler nem enviar números.
+    const hospedagem = envioDeWhatsappPermitido(env)
+    if (!hospedagem.permitido) {
+      return {
+        fim: 'falhou',
+        erro: CODIGO_WHATSAPP_BLOQUEADO,
+        resposta: { status: 403, corpo: { error: hospedagem.motivo, codigo: CODIGO_WHATSAPP_BLOQUEADO } },
+      }
+    }
     const ctx = e.trabalho.contexto
     const pedido = ctx.pedido as PedidoDeEnvio
     const resultados: Record<string, Registro> = { ...((ctx.resultados as Record<string, Registro>) ?? {}) }

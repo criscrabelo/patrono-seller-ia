@@ -30,7 +30,7 @@ type Aba = 'enviar' | 'contatos'
 export default function WhatsAppPage() {
   useGuardModulo('whatsapp')
   const [aba, setAba] = useState<Aba>('enviar')
-  const [status, setStatus] = useState<{ configurado: boolean; conectado?: boolean; numero?: string } | null>(null)
+  const [status, setStatus] = useState<{ configurado: boolean; conectado?: boolean; numero?: string; envioPermitido?: boolean; motivoDoBloqueio?: string } | null>(null)
   const [carregando, setCarregando] = useState(true)
 
   // Contatos
@@ -193,6 +193,17 @@ export default function WhatsAppPage() {
           <RefreshCw className="w-3.5 h-3.5" /> Verificar conexão
         </Button>
       </div>
+
+      {/* P2.11 — envio indisponível nesta hospedagem */}
+      {status && status.envioPermitido === false && (
+        <div className="flex gap-3 rounded-xl border border-warning/30 bg-warning/5 p-4">
+          <AlertCircle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-warning">Envio de mensagens indisponível</p>
+            <p className="text-xs text-muted-foreground mt-1">{status.motivoDoBloqueio}</p>
+          </div>
+        </div>
+      )}
 
       {/* Status Z-API */}
       {!status?.configurado ? (
@@ -404,7 +415,7 @@ export default function WhatsAppPage() {
             <Button
               size="lg"
               onClick={enviarMassa}
-              disabled={enviando || !status?.conectado || numerosAtivos === 0 || !mensagem.trim()}
+              disabled={enviando || !status?.conectado || status?.envioPermitido === false || numerosAtivos === 0 || !mensagem.trim()}
               style={{ background: enviando ? undefined : '#25D366' }}
               className="text-white font-semibold"
             >

@@ -177,18 +177,50 @@ export default function DigitalTwinPage() {
     }
   }
 
+  // P2.11 — o arquivo vai do navegador DIRETO ao armazenamento (Brasil), sem
+  // passar pelo servidor da aplicação: ① pede a URL assinada (só metadados),
+  // ② envia o arquivo ao armazenamento, ③ pede a confirmação. Qualquer falha
+  // para aqui — não existe envio alternativo pelo servidor.
   async function enviarArquivo(type: string, file: File) {
     setEnviando(type)
-    const form = new FormData()
-    form.append('type', type)
-    form.append('file', file)
-    const res = await fetch('/api/digital-twin/assets', { method: 'POST', body: form })
-    setEnviando(null)
-    if (res.ok) {
-      toast({ title: 'Arquivo enviado com sucesso.', variant: 'success' })
-      carregar()
-    } else {
+    try {
+      const autorizacao = await fetch('/api/digital-twin/assets/url-de-envio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, mimeType: file.type, size: file.size }),
+      })
+      const dados = await autorizacao.json().catch(() => ({}))
+      if (!autorizacao.ok) {
+        toast({ title: dados.error || 'Não consegui enviar o arquivo.', variant: 'destructive' })
+        return
+      }
+
+      const envio = await fetch(dados.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': dados.contentType, 'x-upsert': 'false' },
+        body: file,
+      })
+      if (!envio.ok) {
+        toast({ title: 'Não consegui enviar o arquivo.', variant: 'destructive' })
+        return
+      }
+
+      const confirmacao = await fetch('/api/digital-twin/assets/confirmar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intencao: dados.intencao }),
+      })
+      if (confirmacao.ok) {
+        toast({ title: 'Arquivo enviado com sucesso.', variant: 'success' })
+        carregar()
+      } else {
+        const erro = await confirmacao.json().catch(() => ({}))
+        toast({ title: erro.error || 'Não consegui enviar o arquivo.', variant: 'destructive' })
+      }
+    } catch {
       toast({ title: 'Não consegui enviar o arquivo.', variant: 'destructive' })
+    } finally {
+      setEnviando(null)
     }
   }
 
@@ -331,12 +363,12 @@ export default function DigitalTwinPage() {
               </p>
               <label className="flex items-center gap-2 text-xs text-white cursor-pointer">
                 <Upload className="w-4 h-4" /> Foto frontal
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && enviarArquivo('FACE_IMAGE', e.target.files[0])} />
+                <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && enviarArquivo('FACE_IMAGE', e.target.files[0])} />
                 {enviando === 'FACE_IMAGE' && <Loader2 className="w-3 h-3 animate-spin" />}
               </label>
               <label className="flex items-center gap-2 text-xs text-white cursor-pointer">
                 <Upload className="w-4 h-4" /> Vídeo de referência
-                <input type="file" accept="video/*" className="hidden" onChange={(e) => e.target.files?.[0] && enviarArquivo('REFERENCE_VIDEO', e.target.files[0])} />
+                <input type="file" accept="video/mp4,video/webm,video/quicktime" className="hidden" onChange={(e) => e.target.files?.[0] && enviarArquivo('REFERENCE_VIDEO', e.target.files[0])} />
                 {enviando === 'REFERENCE_VIDEO' && <Loader2 className="w-3 h-3 animate-spin" />}
               </label>
             </section>
@@ -361,7 +393,7 @@ export default function DigitalTwinPage() {
                 <span className="text-xs text-white/40">ou</span>
                 <label className="flex items-center gap-2 text-xs text-white cursor-pointer">
                   <Upload className="w-4 h-4" /> Enviar arquivo de áudio
-                  <input type="file" accept="audio/*" className="hidden" onChange={(e) => e.target.files?.[0] && enviarArquivo('VOICE_REFERENCE', e.target.files[0])} />
+                  <input type="file" accept="audio/webm,audio/ogg,audio/mpeg,audio/mp4,audio/wav,audio/x-wav,audio/aac,audio/x-m4a" className="hidden" onChange={(e) => e.target.files?.[0] && enviarArquivo('VOICE_REFERENCE', e.target.files[0])} />
                 </label>
               </div>
             </section>
