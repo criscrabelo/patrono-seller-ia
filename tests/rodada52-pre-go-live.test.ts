@@ -23,7 +23,7 @@ import {
   montarUrlRastreada,
 } from '../lib/link-de-publicacao'
 import { lerCabecalhoDeAssinatura, TAMANHO_MAXIMO_DO_CORPO } from '../lib/tiktok-webhook'
-import { bancoPermitidoNoAmbiente, contextoDeImplantacao } from '../lib/guarda-de-ambiente'
+import { bancoPermitidoNoAmbiente, contextoDeImplantacao, resumoDoAmbiente } from '../lib/guarda-de-ambiente'
 import { lerPoliticaDeCusto, avaliarCusto } from '../lib/cost-safety-gate'
 
 const RAIZ = join(__dirname, '..')
@@ -302,8 +302,30 @@ describe('Preview e teste nunca abrem o banco de produção', () => {
   const PROD = `postgresql://u:p@pooler.exemplo:6543/postgres?ref=${REF}`
   const TESTE = 'postgresql://u:p@pooler.exemplo:6543/postgres?ref=refdeteste99'
 
-  test('sem a referência configurada, a trava fica inerte (nada muda hoje)', () => {
-    assert.deepEqual(bancoPermitidoNoAmbiente({ DATABASE_URL: PROD, VERCEL_ENV: 'preview' }), { ok: true, trava: 'inerte' })
+  test('sem referência e sem sinal de plataforma (máquina local, suítes), a trava fica inerte', () => {
+    assert.deepEqual(bancoPermitidoNoAmbiente({ DATABASE_URL: PROD }), { ok: true, trava: 'inerte' })
+  })
+
+  test('P2.6: ambiente NÃO-produção sem a referência falha FECHADO', () => {
+    for (const ctx of [{ VERCEL_ENV: 'preview' }, { VERCEL_ENV: 'development' }, { CONTEXT: 'deploy-preview' }, { CONTEXT: 'branch-deploy' }, { PATRONO_AMBIENTE: 'teste' }]) {
+      // Mesmo com o banco de TESTE: sem saber qual é o proibido, não abre nenhum.
+      assert.equal(bancoPermitidoNoAmbiente({ DATABASE_URL: TESTE, ...ctx }).ok, false, JSON.stringify(ctx))
+    }
+    // Produção sem a referência continua funcionando (a trava só fica inerte).
+    assert.equal(bancoPermitidoNoAmbiente({ DATABASE_URL: PROD, VERCEL_ENV: 'production' }).ok, true)
+  })
+
+  test('P2.6: num Preview, NENHUMA combinação de variável promove a produção', () => {
+    const base = { DATABASE_URL: PROD, PATRONO_REF_DO_BANCO_DE_PRODUCAO: REF }
+    for (const plataforma of [{ VERCEL_ENV: 'preview' }, { VERCEL_ENV: 'development' }, { CONTEXT: 'deploy-preview' }, { CONTEXT: 'branch-deploy' }]) {
+      for (const tentativa of [{}, { PATRONO_AMBIENTE: 'producao' }, { PATRONO_AMBIENTE: 'PRODUCAO' }, { PATRONO_AMBIENTE: ' producao ' }, { CONTEXT: 'production' }]) {
+        const env = { ...base, ...tentativa, ...plataforma }
+        assert.equal(contextoDeImplantacao(env), 'nao-producao', JSON.stringify(env))
+        assert.equal(bancoPermitidoNoAmbiente(env).ok, false, JSON.stringify(env))
+      }
+    }
+    // E o caso real de um erro futuro: alguém cola a DATABASE_URL de produção no Preview.
+    assert.equal(bancoPermitidoNoAmbiente({ ...base, VERCEL_ENV: 'preview', PATRONO_AMBIENTE: 'teste' }).ok, false)
   })
 
   test('com a referência: banco de produção só em produção explícita', () => {
@@ -314,9 +336,12 @@ describe('Preview e teste nunca abrem o banco de produção', () => {
     for (const ctx of [{ VERCEL_ENV: 'preview' }, { VERCEL_ENV: 'development' }, { CONTEXT: 'deploy-preview' }, { CONTEXT: 'branch-deploy' }, { PATRONO_AMBIENTE: 'teste' }, {}]) {
       assert.equal(bancoPermitidoNoAmbiente({ ...base, ...ctx }).ok, false, JSON.stringify(ctx))
     }
-    // O explícito vence o da plataforma, nos dois sentidos.
+    // O explícito só REBAIXA: "teste" num deploy de produção vira não-produção...
     assert.equal(bancoPermitidoNoAmbiente({ ...base, PATRONO_AMBIENTE: 'teste', VERCEL_ENV: 'production' }).ok, false)
-    assert.equal(contextoDeImplantacao({ PATRONO_AMBIENTE: 'producao', CONTEXT: 'deploy-preview' }), 'producao')
+    // ...e nunca promove um deploy que a plataforma marca como prévia.
+    assert.equal(contextoDeImplantacao({ PATRONO_AMBIENTE: 'producao', CONTEXT: 'deploy-preview' }), 'nao-producao')
+    // Sem sinal de plataforma (site de produção da Netlify em execução), o explícito vale.
+    assert.equal(contextoDeImplantacao({ PATRONO_AMBIENTE: 'producao' }), 'producao')
   })
 
   test('banco de teste em preview segue normal', () => {
@@ -325,6 +350,26 @@ describe('Preview e teste nunca abrem o banco de produção', () => {
 
   test('referência curta demais não vira passe livre', () => {
     assert.equal(bancoPermitidoNoAmbiente({ DATABASE_URL: PROD, PATRONO_REF_DO_BANCO_DE_PRODUCAO: 'ref', VERCEL_ENV: 'production' }).ok, false)
+  })
+
+  test('P2.6: a linha de diagnóstico prova o isolamento sem expor NENHUM valor', () => {
+    const segredos = {
+      DATABASE_URL: `postgresql://usuario:SENHA-SECRETA-123@pooler.exemplo:6543/postgres?ref=refdeteste99`,
+      NEXT_PUBLIC_SUPABASE_URL: 'https://refdeteste99.supabase.exemplo',
+      PATRONO_REF_DO_BANCO_DE_PRODUCAO: REF,
+      NEXTAUTH_SECRET: 'SEGREDO-DE-SESSAO-XYZ',
+      CRON_SECRET: 'CRON-XYZ',
+      SUPABASE_SERVICE_ROLE_KEY: 'SERVICE-ROLE-XYZ',
+    }
+    const preview = resumoDoAmbiente({ ...segredos, VERCEL_ENV: 'preview', PATRONO_AMBIENTE: 'teste' })
+    assert.equal(
+      preview,
+      'contexto=nao-producao trava=ativa banco=nao-producao supabase=nao-producao iaPaga=sem-chave pagoHabilitado=nao cron=segredo-presente agendador=nenhum publicacaoReal=nenhuma'
+    )
+    for (const v of [...Object.values(segredos), 'usuario', 'pooler.exemplo']) assert.ok(!preview.includes(v), `vazou ${v}`)
+    const prod = resumoDoAmbiente({ DATABASE_URL: PROD, NEXT_PUBLIC_SUPABASE_URL: `https://${REF}.x`, PATRONO_REF_DO_BANCO_DE_PRODUCAO: REF, VERCEL_ENV: 'production', ANTHROPIC_API_KEY: 'k', PUBLICACAO_REAL_INSTAGRAM: 'true' })
+    assert.match(prod, /contexto=producao trava=ativa banco=producao supabase=producao iaPaga=chave-presente .* publicacaoReal=PUBLICACAO_REAL_INSTAGRAM$/)
+    assert.ok(!prod.includes(REF))
   })
 
   test('a trava roda ANTES de o Prisma existir', () => {
