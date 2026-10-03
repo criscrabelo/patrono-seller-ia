@@ -50,12 +50,44 @@ export function formatarCnpj(valor: string | null | undefined): string | null {
   return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
 }
 
+/**
+ * Domínio oficial do site — dado INSTITUCIONAL, como a razão social e o
+ * CNPJ: é o que a Política de Privacidade declara. A aplicação NÃO o usa
+ * para montar URL nenhuma; links, e-mails e redirecionamentos vêm de
+ * `PUBLIC_BASE_URL` (lib/link-de-publicacao.ts, lib/dominio.ts).
+ */
+export const DOMINIO_DO_SITE = 'patronodigital.ia.br'
+
+/**
+ * Data de vigência da Política de Privacidade da hospedagem Netlify (P2.8).
+ * Vem de `PATRONO_VERSAO_DA_POLITICA` (dd/mm/aaaa), definida no go-live —
+ * a política vale a partir da mudança de hospedagem, não antes. Ausente ou
+ * fora do formato: a página diz que a versão vigora com a mudança.
+ */
+export function versaoDaPolitica(env: Record<string, string | undefined> = process.env): string | null {
+  const v = (env.PATRONO_VERSAO_DA_POLITICA ?? '').trim()
+  const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (!m) return null
+  const [dia, mes, ano] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const d = new Date(Date.UTC(ano, mes - 1, dia))
+  return d.getUTCFullYear() === ano && d.getUTCMonth() === mes - 1 && d.getUTCDate() === dia ? v : null
+}
+
 export interface DadosInstitucionais {
   razaoSocial: string
   produto: string
   /** Formatado; `null` quando a configuração está ausente ou inválida. */
   cnpj: string | null
   contato: string
+  dominio: string
+  /** `null` até o go-live definir `PATRONO_VERSAO_DA_POLITICA`. */
+  versaoDaPolitica: string | null
+  /**
+   * Parágrafo de transição da Vercel na seção 6.1 — aprovado por até 14
+   * dias após o go-live. Ligado por `PATRONO_TRANSICAO_DE_HOSPEDAGEM=vercel`
+   * no go-live; retirado removendo a variável no 14º dia.
+   */
+  transicaoDaVercel: boolean
 }
 
 export function dadosInstitucionais(
@@ -67,8 +99,14 @@ export function dadosInstitucionais(
     // A configuração sobrepõe só quando é válida; inválida cai no cadastro.
     cnpj: formatarCnpj(env.PATRONO_EMPRESA_CNPJ) ?? formatarCnpj(CNPJ_DA_EMPRESA),
     contato: CONTATO_EMAIL,
+    dominio: DOMINIO_DO_SITE,
+    versaoDaPolitica: versaoDaPolitica(env),
+    transicaoDaVercel: env.PATRONO_TRANSICAO_DE_HOSPEDAGEM === 'vercel',
   }
 }
 
-/** Data da versão vigente dos textos institucionais. */
+/**
+ * Data da versão vigente dos Termos de Uso. A Política de Privacidade tem
+ * data própria (`versaoDaPolitica`), definida no go-live da Netlify.
+ */
 export const VERSAO_DOS_TEXTOS = '02/10/2026'

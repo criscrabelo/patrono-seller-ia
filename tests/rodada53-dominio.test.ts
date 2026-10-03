@@ -90,12 +90,16 @@ describe('Middleware com o domínio definitivo', () => {
 describe('Nenhum domínio de produção fixo no código', () => {
   test('app/, lib/, netlify/ e middleware só conhecem o domínio pela configuração', () => {
     const PROIBIDOS = /patronodigital|patrono-seller-ia\.vercel\.app|patrono\.link/i
+    // P2.8: única exceção — o domínio como DADO INSTITUCIONAL (o que a
+    // Política de Privacidade declara), ao lado da razão social e do CNPJ.
+    // A aplicação nunca o usa para montar URL.
+    const EXCECAO = join(RAIZ, 'lib', 'institucional.ts')
     const achados: string[] = []
     const varrer = (dir: string) => {
       for (const n of readdirSync(dir)) {
         const p = join(dir, n)
         if (statSync(p).isDirectory()) varrer(p)
-        else if (/\.(ts|tsx|mjs|js)$/.test(n) && PROIBIDOS.test(readFileSync(p, 'utf8'))) achados.push(p.slice(RAIZ.length + 1))
+        else if (p !== EXCECAO && /\.(ts|tsx|mjs|js)$/.test(n) && PROIBIDOS.test(readFileSync(p, 'utf8'))) achados.push(p.slice(RAIZ.length + 1))
       }
     }
     for (const d of ['app', 'lib', 'netlify']) varrer(join(RAIZ, d))
@@ -103,5 +107,19 @@ describe('Nenhum domínio de produção fixo no código', () => {
     if (PROIBIDOS.test(readFileSync(join(RAIZ, 'netlify.toml'), 'utf8'))) achados.push('netlify.toml')
     if (PROIBIDOS.test(readFileSync(join(RAIZ, 'next.config.ts'), 'utf8'))) achados.push('next.config.ts')
     assert.deepEqual(achados, [])
+  })
+
+  test('o domínio institucional não é usado para montar URL', () => {
+    // Quem importa DOMINIO_DO_SITE: só a própria fonte institucional.
+    const usos: string[] = []
+    const varrer = (dir: string) => {
+      for (const n of readdirSync(dir)) {
+        const p = join(dir, n)
+        if (statSync(p).isDirectory()) varrer(p)
+        else if (/\.(ts|tsx)$/.test(n) && /DOMINIO_DO_SITE/.test(readFileSync(p, 'utf8'))) usos.push(n)
+      }
+    }
+    for (const d of ['app', 'lib', 'netlify']) varrer(join(RAIZ, d))
+    assert.deepEqual(usos, ['institucional.ts'])
   })
 })
