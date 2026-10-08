@@ -14,9 +14,12 @@ export const metadata: Metadata = {
  *
  * Cada afirmação descreve o que o código e a infraestrutura fazem. O que não
  * pôde ser comprovado foi redigido de forma geral, sem inventar país,
- * mecanismo ou prazo: a seção 6 não nomeia mecanismo de transferência
- * internacional (pendência registrada internamente e bloqueio de go-live).
- * Os testes `rodada50` e `rodada54` conferem as contradições conhecidas.
+ * mecanismo ou prazo. P2.14.2: a seção 6 nomeia o mecanismo da hospedagem
+ * (art. 33, IX c/c art. 7º, V), restrito aos fluxos contratuais da usuária,
+ * conforme REGISTRO-INTERNO-TRANSFERENCIA-NETLIFY.md; WhatsApp e avatar
+ * ficam fora das funções no exterior (lib/transferencia-internacional.ts,
+ * upload direto do avatar). Os testes `rodada50`, `rodada54` e `rodada58`
+ * conferem o texto contra o código.
  */
 export default function PaginaPrivacidade() {
   const e = dadosInstitucionais()
@@ -158,10 +161,19 @@ export default function PaginaPrivacidade() {
           </p>
         </div>
         <p className={p}>
-          <strong>Mecanismo jurídico:</strong> quando a LGPD exigir mecanismo específico para a transferência
-          internacional, a {e.razaoSocial} o validará antes da ativação ou da continuidade do uso de cada fornecedor,
-          nos termos do art. 33 da LGPD e da Resolução CD/ANPD nº 19/2024. A titular pode pedir pelo canal da seção 11
-          informações sobre o mecanismo adotado para cada fornecedor.
+          <strong>Mecanismo jurídico:</strong> para a hospedagem da aplicação (seção 6.1), a transferência
+          internacional ocorre na medida necessária para executar o contrato com a usuária, a pedido dela — criar e
+          manter a conta, guardar e exibir os dados do negócio, publicar os conteúdos que ela solicitar e enviar
+          mensagens operacionais (art. 33, inciso IX, combinado com o art. 7º, inciso V, da LGPD, e art. 9º, inciso
+          II, alínea &quot;c&quot;, do Regulamento aprovado pela Resolução CD/ANPD nº 19/2024). O fornecedor atua como
+          operador, segundo as instruções da {e.razaoSocial}. Funcionalidades que tratem dados de terceiros, como o
+          envio de mensagens de WhatsApp, ou dados fornecidos com base em consentimento, como a imagem e a voz do
+          recurso de avatar, não são executadas pela hospedagem no exterior enquanto não houver mecanismo de
+          transferência aplicável a elas. Quando alguém acessa um link da usuária, os dados técnicos da conexão
+          passam pela rede do fornecedor apenas para concluir o redirecionamento, e a aplicação não armazena o
+          endereço IP de quem acessa. Para os demais fornecedores, a {e.razaoSocial} valida o mecanismo antes da
+          ativação ou da continuidade do uso de cada um. A titular pode pedir pelo canal da seção 11 informações
+          sobre o mecanismo adotado para cada fornecedor.
         </p>
         <p className={p}>
           <strong>Medidas de segurança</strong> na transferência: tráfego somente por conexão criptografada (HTTPS) e

@@ -34,18 +34,28 @@ export default function RegisterPage() {
   async function onSubmit(data: Form) {
     setLoading(true)
     setError('')
-    const res = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: data.name, email: data.email, password: data.password }),
-    })
-    const json = await res.json()
-    if (!res.ok) {
-      setError(json.error || 'Erro ao criar conta.')
-    } else {
-      setSuccess(true)
+    // Falha de rede, resposta de erro sem JSON (ex.: página 500/502 da
+    // hospedagem) ou JSON inesperado: sempre sai do "Enviando..." com uma
+    // mensagem, em vez de travar a tela.
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: data.name, email: data.email, password: data.password }),
+      })
+      const json: { error?: unknown } | null = await res.json().catch(() => null)
+      if (res.ok) {
+        setSuccess(true)
+      } else if (json && typeof json.error === 'string' && json.error) {
+        setError(json.error)
+      } else {
+        setError('Não foi possível criar a conta agora. Tente novamente em instantes.')
+      }
+    } catch {
+      setError('Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const inputClass = `w-full rounded-lg border border-border bg-background px-3.5 py-2.5 text-sm

@@ -64,9 +64,13 @@ describe('Texto aprovado (P2.8)', () => {
     assert.ok(!/não ficam guardados/.test(TEXTO))
   })
 
-  test('transferência internacional sem mecanismo nomeado (ajuste 2)', () => {
+  test('transferência internacional: só o mecanismo registrado (ajuste 2, revisto na P2.14.2)', () => {
     assert.match(TEXTO, /Eventuais transferências internacionais de dados pessoais\s+observarão a LGPD e a Resolução CD\/ANPD nº 19\/2024\./)
-    for (const proibido of [/art\. 33, (inciso )?IX/i, /cláusulas[- ]padrão/i, /Data Privacy Framework|\bDPF\b/i, /\bSCCs?\b/, /decisão de adequação/i, /normas corporativas globais/i]) {
+    // P2.14.2: o único mecanismo nomeado é o do registro interno, e só no
+    // parágrafo "Mecanismo jurídico". Nenhum outro pode ser afirmado.
+    const fora = TEXTO.replace(/<strong>Mecanismo jurídico:<\/strong>[\s\S]*?<\/p>/, '')
+    assert.ok(!/art\. 33, (inciso )?IX/i.test(fora), 'art. 33, IX citado fora do parágrafo do mecanismo')
+    for (const proibido of [/cláusulas[- ]padrão/i, /Data Privacy Framework|\bDPF\b/i, /\bSCCs?\b/, /decisão de adequação/i, /normas corporativas globais/i]) {
       assert.ok(!proibido.test(TEXTO), `mecanismo afirmado: ${proibido}`)
     }
   })
