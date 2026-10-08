@@ -144,7 +144,8 @@ before(async () => {
   if (!TEM_BANCO) return
   for (const n of ['A', 'B']) {
     const ws = await prisma.workspace.create({
-      data: { name: `R46-${n}`, ownerId: `${marca}-${n}` },
+      // P2.14.5.12: o ciclo só cria tarefas em workspace AUTOMATIC e despausado.
+      data: { name: `R46-${n}`, ownerId: `${marca}-${n}`, automationPaused: false, automationMode: 'AUTOMATIC' },
       select: { id: true },
     })
     criados.push(ws.id)
@@ -306,6 +307,40 @@ describe(
       await rodar(true)
       assert.equal(await prisma.publicacao.count({ where: { workspaceId: wsA } }), 0)
       assert.equal(await prisma.conteudo.count({ where: { workspaceId: wsA } }), 0)
+    })
+
+    test('P2.14.5.12: pausado, MANUAL e ASSISTED não criam nem cancelam tarefa', async () => {
+      try {
+        await prisma.automationJob.deleteMany({ where: { workspaceId: wsB } })
+        await rodar(true, wsB)
+        const antes = await prisma.automationJob.count({ where: { workspaceId: wsB } })
+        assert.ok(antes > 0, 'o cenário precisa ter tarefa enfileirada')
+
+        for (const controles of [
+          { automationPaused: true, automationMode: 'AUTOMATIC' },
+          { automationPaused: false, automationMode: 'MANUAL' },
+          { automationPaused: false, automationMode: 'ASSISTED' },
+        ]) {
+          await prisma.workspace.update({ where: { id: wsB }, data: controles })
+          const r = await rodar(true, wsB)
+          const linha = r.porWorkspace[0]
+          assert.equal(linha.jobsCriados, 0, JSON.stringify(controles))
+          assert.equal(linha.jobsCancelados, 0, JSON.stringify(controles))
+          assert.equal(await prisma.automationJob.count({ where: { workspaceId: wsB } }), antes)
+          if (controles.automationMode === 'ASSISTED') {
+            assert.equal(linha.modo, 'ASSISTED')
+            assert.ok(linha.candidatos.length > 0 && linha.candidatos.length <= 3)
+            assert.ok(linha.candidatos.every((c) => c.motivoDaPosicao.length > 0))
+          } else {
+            assert.equal(linha.candidatos.length, 0)
+          }
+        }
+      } finally {
+        await prisma.workspace.update({
+          where: { id: wsB },
+          data: { automationPaused: false, automationMode: 'AUTOMATIC' },
+        })
+      }
     })
 
     test('um workspace quebrado não derruba os outros', async () => {

@@ -34,12 +34,18 @@
 import { prisma } from './prisma'
 import {
   calcularOpportunityScoreComposto,
+  PARTICIPACAO_DA_ADERENCIA,
   type OpportunityScoreComponents,
 } from './opportunity-score-composite'
 import type { AffiliateOpportunity, OrigemOportunidade } from './affiliate-discovery'
 import { produtoPodeAparecerNoVideo } from './media-rights-produto'
 import { ML_DATA_ORIGINS } from './ml-types'
 import { calcularMetricasPorProduto } from './metricas-clique'
+import { PERFIL_DA_LOJA } from './config'
+import { buscarProvider } from './affiliate-providers'
+import { avaliarPreco } from './preco-verificado'
+// `plano-de-acao` importa deste módulo só TIPOS: não há ciclo em execução.
+import { aplicarDiversidade } from './plano-de-acao'
 
 // ── Vocabulário ─────────────────────────────────────────────────────────
 
@@ -62,6 +68,8 @@ export const MOTIVOS_NAO_PRONTA = [
   'SEM_DESTINO',
   /** Nenhum canal do workspace consegue publicar isto hoje. */
   'SEM_CANAL_CAPAZ',
+  /** P2.14.5.12: regra de compliance que impede o produto (ex.: provedor não permite cadastro). */
+  'COMPLIANCE_BLOQUEANTE',
 ] as const
 export type MotivoNaoPronta = (typeof MOTIVOS_NAO_PRONTA)[number]
 
@@ -213,12 +221,22 @@ export function classificarConfianca(p: {
   temHistoricoReal: boolean
   dadosAusentes: string[]
   origem: OrigemOportunidade
+  /**
+   * P2.14.5.12: fração do peso do score que veio de dado real (0–1). Só
+   * pode REBAIXAR a confiança — nunca a eleva.
+   */
+  cobertura?: number
 }): NivelDeConfianca {
   if (!p.temHistoricoReal) return 'SEM_HISTORICO_REAL'
   const oficial = p.origem === 'OFFICIAL_API' || p.origem === 'AUTHORIZED_PARTNER_API'
-  if (p.dadosAusentes.length === 0 && oficial) return 'ALTA'
-  if (p.dadosAusentes.length <= 2) return 'MEDIA'
-  return 'BAIXA'
+  let nivel: NivelDeConfianca = 'BAIXA'
+  if (p.dadosAusentes.length === 0 && oficial) nivel = 'ALTA'
+  else if (p.dadosAusentes.length <= 2) nivel = 'MEDIA'
+  if (typeof p.cobertura === 'number') {
+    if (p.cobertura < 0.5) return 'BAIXA'
+    if (p.cobertura < 0.8 && nivel === 'ALTA') return 'MEDIA'
+  }
+  return nivel
 }
 
 // ── Receita potencial ───────────────────────────────────────────────────
@@ -298,6 +316,321 @@ export function classificarProntidao(p: {
   }
 }
 
+// ── Aderência ao perfil da loja (P2.14.5.12 / .1) ───────────────────────
+
+/** Teto do perfil dentro da aderência; os outros 20 são da afinidade. */
+export const TETO_DO_PERFIL = 80
+
+export interface AvaliacaoDeAderencia {
+  /**
+   * Aderência (0–100) = perfil (0–80) + afinidade aplicada (0–20).
+   * `null` = perfil sem nenhum critério avaliável — nunca uma nota fabricada.
+   */
+  nota: number | null
+  /** Perfil BoraComprar (0–80). `null` = desconhecido. */
+  perfil: number | null
+  /** Bônus de afinidade que ENTROU na nota (0–20). */
+  afinidade: number
+  /**
+   * Afinidade detectada, entre ou não na nota (0–20). Serve ao desempate
+   * mesmo quando o perfil é desconhecido.
+   */
+  afinidadeDetectada: number
+  sinaisDeAfinidade: string[]
+  usadoPelaTitular: boolean
+  positivos: string[]
+  negativos: string[]
+  desconhecidos: string[]
+}
+
+type MarcaPreferida = {
+  nome: string
+  termos: readonly string[]
+  diferenciaMaiusculas?: boolean
+  excetoCategorias?: readonly string[]
+}
+
+type PerfilDaLoja = {
+  categoriasDoCadastro: readonly string[]
+  subcategoriasPrioritarias: Record<string, readonly string[]>
+  faixaDePreco: { minimo: number; maximo: number; premiumAte: number }
+  priorizarFacilDeDemonstrar: boolean
+  priorizarSemPresencaDaTitular: boolean
+  afinidadeDaTitular: {
+    marcasPreferidas: ReadonlyArray<MarcaPreferida>
+    estilo: readonly string[]
+    marcadorDeUso: string
+    bonus: { marcaPreferida: number; estilo: number; comprado: number; usado: number }
+    teto: number
+    perfilMinimoParaBonus: number
+  }
+}
+
+/** `origemDados` que significa "informado/comprado pela titular" nesta fase (sem migration). */
+export const ORIGEM_COMPRADO_PELA_TITULAR = 'USER_PROVIDED'
+
+export function produtoCompradoPelaTitular(origemDados: string | null | undefined): boolean {
+  return (origemDados ?? '').trim().toUpperCase() === ORIGEM_COMPRADO_PELA_TITULAR
+}
+
+const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+const escaparRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** Palavra/expressão inteira, sem acento, sem diferenciar maiúsculas; aceita plural simples. */
+function contemTermo(textoSemAcento: string, termo: string): boolean {
+  const t = escaparRegex(semAcento(termo))
+  return new RegExp(`(^|[^a-z0-9])${t}(s|es)?(?=$|[^a-z0-9])`).test(textoSemAcento)
+}
+
+function contemMarca(textoOriginal: string, textoSemAcento: string, marca: MarcaPreferida, categoria: string): boolean {
+  if (marca.excetoCategorias?.includes(categoria)) return false
+  if (marca.diferenciaMaiusculas) {
+    return marca.termos.some((t) =>
+      new RegExp(`(^|[^A-Za-z0-9])${escaparRegex(t)}(?=$|[^A-Za-z0-9])`).test(textoOriginal)
+    )
+  }
+  return marca.termos.some((t) => contemTermo(textoSemAcento, t))
+}
+
+/**
+ * Aderência ao perfil da BoraComprar.
+ *
+ * PERFIL (0–80): média SÓ dos critérios com dado real (categoria/subcategoria
+ * e preço), escalada para 80. Critério sem dado vai para `desconhecidos`.
+ *
+ * AFINIDADE (0–20): bônus pessoal da titular — marca preferida +10, estilo
+ * +5, comprado +5 OU usado +10 (não acumulam). Só entra na nota se o perfil
+ * for conhecido e ≥ 40/80. Nunca é prova de demanda e nunca penaliza quem
+ * não tem marca preferida.
+ */
+export function avaliarAderenciaAoPerfil(
+  p: {
+    categoria: string
+    preco: number | null
+    origemDados: string | null | undefined
+    nome?: string | null
+    descricao?: string | null
+    observacoes?: string | null
+  },
+  perfil: PerfilDaLoja = PERFIL_DA_LOJA
+): AvaliacaoDeAderencia {
+  const notas: number[] = []
+  const positivos: string[] = []
+  const negativos: string[] = []
+  const desconhecidos: string[] = []
+
+  const categoria = (p.categoria ?? '').trim()
+  const textoOriginal = [p.nome, p.descricao, p.observacoes].filter(Boolean).join(' \n ')
+  const texto = semAcento(textoOriginal)
+
+  // Categoria: a subcategoria (pelo texto) revela prioridade mesmo em "Outros".
+  const subcategorias = Object.entries(perfil.subcategoriasPrioritarias)
+    .filter(([, termos]) => termos.some((t) => contemTermo(texto, t)))
+    .map(([nome]) => nome)
+  const categoriaPrioritaria = perfil.categoriasDoCadastro.includes(categoria)
+  if (subcategorias.length > 0 || categoriaPrioritaria) {
+    notas.push(100)
+    if (categoriaPrioritaria) positivos.push(`Categoria "${categoria}" é prioridade da loja.`)
+    if (subcategorias.length > 0) positivos.push(`Subcategoria prioritária da loja: ${subcategorias.join(', ')}.`)
+  } else if (!categoria || categoria === 'Outros') {
+    desconhecidos.push('aderência da categoria ("Outros" ou vazia, sem subcategoria reconhecida)')
+  } else {
+    notas.push(0)
+    negativos.push(`Categoria "${categoria}" fora das prioridades da loja.`)
+  }
+
+  // Preço: referência, não trava.
+  if (typeof p.preco === 'number') {
+    const { minimo, maximo, premiumAte } = perfil.faixaDePreco
+    const valor = `R$ ${p.preco.toFixed(2)}`
+    if (p.preco >= minimo && p.preco <= maximo) {
+      notas.push(100)
+      positivos.push(`Preço ${valor} dentro da faixa da loja (R$ ${minimo}–${maximo}).`)
+    } else if (p.preco < minimo || p.preco <= premiumAte) {
+      notas.push(50)
+      negativos.push(`Preço ${valor} fora da faixa de referência (R$ ${minimo}–${maximo}) — neutro, não elimina.`)
+    } else {
+      notas.push(20)
+      negativos.push(`Preço ${valor} acima de R$ ${premiumAte} — concorre pela demanda e comissão, não pela faixa.`)
+    }
+  } else {
+    desconhecidos.push('preço (para checar a faixa da loja)')
+  }
+
+  if (perfil.priorizarFacilDeDemonstrar) desconhecidos.push('facilidade de demonstrar (não informada)')
+  if (perfil.priorizarSemPresencaDaTitular) desconhecidos.push('se o conteúdo dispensa a presença da titular (não informado)')
+
+  const perfilNota =
+    notas.length > 0 ? Math.round((notas.reduce((s, n) => s + n, 0) / notas.length) * (TETO_DO_PERFIL / 100)) : null
+
+  // ── Afinidade da titular ──────────────────────────────────────────────
+  const af = perfil.afinidadeDaTitular
+  const sinaisDeAfinidade: string[] = []
+  let bruto = 0
+  const marca = af.marcasPreferidas.find((m) => contemMarca(textoOriginal, texto, m, categoria))
+  if (marca) {
+    bruto += af.bonus.marcaPreferida
+    sinaisDeAfinidade.push(`marca preferida da titular (${marca.nome})`)
+  }
+  const estilo = af.estilo.find((t) => contemTermo(texto, t))
+  if (estilo) {
+    bruto += af.bonus.estilo
+    sinaisDeAfinidade.push(`estilo da titular (${estilo})`)
+  }
+  const usado = semAcento(p.observacoes ?? '').includes(semAcento(af.marcadorDeUso))
+  const comprado = produtoCompradoPelaTitular(p.origemDados)
+  if (usado) {
+    bruto += af.bonus.usado
+    sinaisDeAfinidade.push('usado pela titular')
+  } else if (comprado) {
+    bruto += af.bonus.comprado
+    sinaisDeAfinidade.push('comprado pela titular')
+  }
+  const afinidadeDetectada = Math.min(af.teto, bruto)
+
+  const aplica = perfilNota !== null && perfilNota >= af.perfilMinimoParaBonus
+  const afinidade = aplica ? afinidadeDetectada : 0
+  if (afinidadeDetectada > 0) {
+    const sinais = sinaisDeAfinidade.join('; ')
+    if (aplica) positivos.push(`Afinidade da titular +${afinidade}: ${sinais}.`)
+    else if (perfilNota === null) positivos.push(`Afinidade da titular (${sinais}) — perfil desconhecido: não entra na nota, só no desempate.`)
+    else positivos.push(`Afinidade da titular (${sinais}) — não aplicada: perfil ${perfilNota}/${TETO_DO_PERFIL} abaixo de ${af.perfilMinimoParaBonus}.`)
+  }
+
+  return {
+    nota: perfilNota === null ? null : perfilNota + afinidade,
+    perfil: perfilNota,
+    afinidade,
+    afinidadeDetectada,
+    sinaisDeAfinidade,
+    usadoPelaTitular: usado,
+    positivos,
+    negativos,
+    desconhecidos,
+  }
+}
+
+// ── Compliance do produto (P2.14.5.12) ──────────────────────────────────
+
+export const NIVEIS_DE_RISCO = ['BAIXO', 'MEDIO', 'ALTO'] as const
+export type NivelDeRisco = (typeof NIVEIS_DE_RISCO)[number]
+
+/**
+ * Saúde, suplementos e promessa de resultado: risco ALTO (não elimina; o
+ * modo automático não escolhe). "Beleza" sozinha NÃO é sensível — decisão
+ * da titular em 08/10/2026. Busca por palavra, sem acento.
+ */
+export const CATEGORIAS_DE_RISCO_ALTO: readonly string[] = ['Saúde']
+export const TERMOS_DE_RISCO_ALTO: readonly RegExp[] = [
+  /\bsuplement\w*/,
+  /\bemagrec\w*/,
+  /\bperd(a|er) de peso\b/,
+  /\bqueima de gordura\b/,
+  /\bdetox\b/,
+  /\bcura(r|s|do|da)?\b/,
+  /\btratament\w*/,
+  /\bmedicament\w*/,
+  /\bremedio\w*/,
+  /\bmilagr\w*/,
+  /\bgarantid[oa]s?\b/,
+  /\b100% (eficaz|garantido)/,
+  /\bdoenca\w*/,
+  /\bclinicamente comprovad\w*/,
+  /\b(indicacao|prescricao|recomendacao) medica\b/,
+]
+
+/**
+ * P2.14.5.12.1 — cuidados capilares de beleza NÃO são tratamento de saúde
+ * (decisão da titular em 08/10/2026). Estas expressões são retiradas do
+ * texto antes da busca de risco alto; hidratação, nutrição, reconstrução e
+ * proteção térmica já não disparam nenhum termo.
+ */
+export const EXPRESSOES_CAPILARES_LIBERADAS: readonly RegExp[] = [
+  /\btratamentos? capilar(es)?\b/g,
+  /\btratamentos? (para|dos|de) (os )?cabelos?\b/g,
+]
+
+/** Alerta, sem bloqueio e sem tirar do modo automático. */
+export const TERMOS_DE_RISCO_MEDIO: readonly RegExp[] = [/\banti-?queda\b/, /\bqueda de cabelo\b/]
+
+export interface AvaliacaoDeCompliance {
+  /** `true` elimina o candidato. */
+  bloqueante: boolean
+  motivoDoBloqueio: string | null
+  nivel: NivelDeRisco
+  riscos: string[]
+  /** Mídia sem direito: o candidato fica, mas a mídia não é usada e não se publica. */
+  publicacaoImpedida: boolean
+}
+
+export function avaliarComplianceDoProduto(p: {
+  disponivel: boolean
+  providerId: string | null
+  categoria: string
+  textos: Array<string | null | undefined>
+  temLink: boolean
+  midiaAutorizada: boolean
+  motivoDaMidia: string
+  preco: number | null
+  verificadoEm: Date | null
+  agora: Date
+}): AvaliacaoDeCompliance {
+  if (!p.disponivel) {
+    return { bloqueante: true, motivoDoBloqueio: 'Produto indisponível ou removido da origem.', nivel: 'ALTO', riscos: [], publicacaoImpedida: true }
+  }
+  const provider = p.providerId ? buscarProvider(p.providerId) : undefined
+  if (provider && provider.cadastroDisponivel === false) {
+    return {
+      bloqueante: true,
+      motivoDoBloqueio: `O programa "${provider.nome}" não permite cadastro.`,
+      nivel: 'ALTO',
+      riscos: [],
+      publicacaoImpedida: true,
+    }
+  }
+
+  const riscos: string[] = []
+  let nivel: NivelDeRisco = 'BAIXO'
+  const subir = (n: NivelDeRisco) => {
+    if (NIVEIS_DE_RISCO.indexOf(n) > NIVEIS_DE_RISCO.indexOf(nivel)) nivel = n
+  }
+
+  if (CATEGORIAS_DE_RISCO_ALTO.includes(p.categoria)) {
+    riscos.push(`Categoria "${p.categoria}" exige cuidado com alegações (risco alto).`)
+    subir('ALTO')
+  }
+  const texto = semAcento(p.textos.filter(Boolean).join(' \n '))
+  const textoSemCapilar = EXPRESSOES_CAPILARES_LIBERADAS.reduce((t, re) => t.replace(re, ' '), texto)
+  if (TERMOS_DE_RISCO_ALTO.some((re) => re.test(textoSemCapilar))) {
+    riscos.push('Texto do produto sugere suplemento, tratamento, alegação médica ou promessa de resultado (risco alto).')
+    subir('ALTO')
+  }
+  if (TERMOS_DE_RISCO_MEDIO.some((re) => re.test(texto))) {
+    riscos.push('Texto menciona antiqueda/queda de cabelo — cuidado com alegação de resultado (risco médio).')
+    subir('MEDIO')
+  }
+
+  if (!p.midiaAutorizada) {
+    riscos.push(`Mídia sem direito de uso verificado — não será usada nem publicada. ${p.motivoDaMidia}`.trim())
+    subir('MEDIO')
+  }
+  if (!p.temLink) {
+    riscos.push('Sem link de destino cadastrado.')
+    subir('MEDIO')
+  }
+  const preco = avaliarPreco({ preco: p.preco, verificadoEm: p.verificadoEm, agora: p.agora })
+  if (preco.status === 'PRECO_NAO_VERIFICADO' || preco.status === 'PRECO_DESATUALIZADO') {
+    riscos.push('Preço informado, sem verificação recente na origem — o conteúdo não afirmará preço.')
+    subir('MEDIO')
+  }
+  if (p.providerId && !provider) {
+    riscos.push(`Programa "${p.providerId}" não está no registro de programas.`)
+    subir('MEDIO')
+  }
+
+  return { bloqueante: false, motivoDoBloqueio: null, nivel, riscos, publicacaoImpedida: !p.midiaAutorizada }
+}
+
 // ── A oportunidade pontuada ─────────────────────────────────────────────
 
 export interface OportunidadePontuada {
@@ -325,6 +658,29 @@ export interface OportunidadePontuada {
 
   receitaPotencialEstimada: number | null
   baseDaEstimativa: string
+
+  // ── P2.14.5.12: explicação para curadoria ────────────────────────────
+  /** O que pesa a favor, só com dado real. */
+  motivosPositivos?: string[]
+  /** Riscos e alertas de compliance (não eliminam). */
+  riscos?: string[]
+  /** Tudo o que o motor NÃO sabe, em linguagem clara. */
+  desconhecidos?: string[]
+  nivelDeRisco?: NivelDeRisco
+  /** `true` = eliminado (ex.: provedor não permite cadastro, indisponível). */
+  complianceBloqueante?: boolean
+  motivoDoBloqueio?: string | null
+  /** Mídia sem direito: pode ser escolhido, mas não se publica. */
+  publicacaoImpedida?: boolean
+  compradoPelaTitular?: boolean
+  /** `#usei` em Observações (Fase 1, temporário). */
+  usadoPelaTitular?: boolean
+  /** Perfil BoraComprar 0–80 (`null` = desconhecido). */
+  aderenciaDoPerfil?: number | null
+  /** Bônus de afinidade que entrou na aderência (0–20). */
+  afinidadeDaTitular?: number
+  /** Afinidade detectada (0–20), usada só no desempate. */
+  afinidadeParaDesempate?: number
 }
 
 /** Campos que o score usa. O que não vier fica em `dadosAusentes`. */
@@ -353,6 +709,11 @@ export interface ProdutoDoCatalogo {
   createdAt: Date
   /** Taxa da oferta, quando algum link do produto a registra. */
   comissaoPercentual: number | null
+  /** P2.14.5.12 — textos para o compliance e data real de verificação do preço. */
+  descricao?: string | null
+  beneficios?: string[]
+  observacoes?: string | null
+  sincronizadoEm?: Date | null
 }
 
 export interface ContextoDoWorkspace {
@@ -403,6 +764,33 @@ export function pontuarProduto(
     canaisCapazes: contexto.canaisCapazes,
   })
 
+  // P2.14.5.12: compliance determinístico e aderência ao perfil da loja.
+  const compliance = avaliarComplianceDoProduto({
+    disponivel,
+    providerId: produto.providerId,
+    categoria: produto.categoria,
+    textos: [produto.nome, produto.descricao, produto.observacoes, ...(produto.beneficios ?? [])],
+    temLink: !!produto.linkProduto,
+    midiaAutorizada: midia.visivel,
+    motivoDaMidia: midia.motivo,
+    preco: produto.preco,
+    verificadoEm: produto.sincronizadoEm ?? null,
+    agora: contexto.agora,
+  })
+  if (compliance.bloqueante && prontidao.classificacao !== 'NAO_ELEGIVEL') {
+    prontidao.classificacao = 'NAO_ELEGIVEL'
+    prontidao.motivos.push('COMPLIANCE_BLOQUEANTE')
+    prontidao.explicacoes.push(compliance.motivoDoBloqueio ?? 'Regra de compliance impede este produto.')
+  }
+  const aderencia = avaliarAderenciaAoPerfil({
+    categoria: produto.categoria,
+    preco: produto.preco,
+    origemDados: produto.origemDados,
+    nome: produto.nome,
+    descricao: produto.descricao,
+    observacoes: produto.observacoes,
+  })
+
   const origem = origemDaOportunidade(produto.origemDados)
   const comissaoEstimadaBRL =
     produto.preco !== null && produto.comissaoPercentual !== null
@@ -437,6 +825,11 @@ export function pontuarProduto(
     requiresUserConsent: true,
     rulesConfidence: origem === 'OFFICIAL_API' ? 'HIGH' : 'MEDIUM',
     automationCost: 'FREE',
+    // Demanda: o catálogo interno não tem — fica desconhecida, nunca zero.
+    avaliacao: null,
+    numeroDeAvaliacoes: null,
+    estoque: null,
+    aderenciaAoPerfil: aderencia.nota,
   }
 
   // A NOTA vem do motor que já existe. Este módulo não calcula outra.
@@ -449,6 +842,7 @@ export function pontuarProduto(
     temHistoricoReal: desempenho.nota !== null,
     dadosAusentes,
     origem,
+    cobertura: componentes.cobertura,
   })
 
   const receita = estimarReceitaPotencial({
@@ -457,9 +851,45 @@ export function pontuarProduto(
     taxaConversao: desempenho.taxaConversao,
   })
 
+  // ── Explicação para a curadoria (P2.14.5.12) ─────────────────────────
+  const ROTULO_AUSENTE: Record<string, string> = {
+    preco: 'preço',
+    comissaoPercentual: 'comissão do programa',
+    taxaConversaoObservada: 'conversão observada (menos de 5 cliques ou nenhuma publicação)',
+    receitaPorClique: 'receita por clique',
+    provider: 'programa de afiliados de origem',
+    imagens: 'imagens do produto',
+    linkProduto: 'link de destino',
+  }
+  const desconhecidos = [
+    ...dadosAusentes.map((c) => ROTULO_AUSENTE[c] ?? c),
+    'vendas e velocidade de vendas (a fonte não informa)',
+    'avaliações de compradores (a fonte não informa)',
+    'estoque (a fonte não informa)',
+    ...aderencia.desconhecidos,
+  ]
+  const motivosPositivos = [
+    ...aderencia.positivos,
+    midia.visivel ? 'Mídia com direito de uso verificado.' : '',
+    produto.linkProduto ? 'Tem link de destino cadastrado.' : '',
+    comissaoEstimadaBRL !== null ? `Comissão estimada de R$ ${comissaoEstimadaBRL.toFixed(2)} por venda.` : '',
+    desempenho.nota !== null && desempenho.nota >= 60 ? `Bom desempenho real observado (${desempenho.nota}/100).` : '',
+  ].filter(Boolean)
+  const riscos = [...compliance.riscos, ...aderencia.negativos]
+
   const porqueDestaPosicao = [
-    `Sinais de mercado: ${componentes.externalMarketSignals}/100.`,
+    componentes.externalMarketSignals === null
+      ? 'Sinais de mercado: desconhecidos (sem vendas, tendência, comissão ou avaliações) — não entram na nota.'
+      : `Sinais de mercado: ${componentes.externalMarketSignals}/100.`,
     `Capacidade de automatizar: ${componentes.automationFeasibility}/100.`,
+    `Base de evidência (mercado, automatização, histórico e ML com dado real): ${componentes.base}/100.`,
+    aderencia.nota === null
+      ? 'Aderência ao perfil BoraComprar: sem base para avaliar — não entra na nota.'
+      : `Aderência ao perfil BoraComprar: ${aderencia.nota}/100 = perfil ${aderencia.perfil}/${TETO_DO_PERFIL} + afinidade da titular ${aderencia.afinidade}/20 — vale ${Math.round(PARTICIPACAO_DA_ADERENCIA * 100)}% da nota.`,
+    aderencia.afinidadeDetectada > 0
+      ? `Afinidade da titular (${aderencia.sinaisDeAfinidade.join('; ')}) é bônus de aderência, não prova de demanda.`
+      : '',
+    `Nota apoiada em dado real: ${Math.round(componentes.cobertura * 100)}% do peso de evidência.`,
     desempenho.nota === null
       ? 'Sem histórico real suficiente — a nota vem só do que dá para saber antes de publicar.'
       : `Desempenho observado: ${desempenho.nota}/100.`,
@@ -487,6 +917,18 @@ export function pontuarProduto(
     porqueDestaPosicao,
     receitaPotencialEstimada: receita.valor,
     baseDaEstimativa: receita.base,
+    motivosPositivos,
+    riscos,
+    desconhecidos,
+    nivelDeRisco: compliance.nivel,
+    complianceBloqueante: compliance.bloqueante,
+    motivoDoBloqueio: compliance.motivoDoBloqueio,
+    publicacaoImpedida: compliance.publicacaoImpedida,
+    compradoPelaTitular: produtoCompradoPelaTitular(produto.origemDados),
+    usadoPelaTitular: aderencia.usadoPelaTitular,
+    aderenciaDoPerfil: aderencia.perfil,
+    afinidadeDaTitular: aderencia.afinidade,
+    afinidadeParaDesempate: aderencia.afinidadeDetectada,
   }
 }
 
@@ -532,6 +974,10 @@ export async function montarFilaDeOportunidades(params: {
       status: true,
       removidoDaOrigemEm: true,
       createdAt: true,
+      descricao: true,
+      beneficios: true,
+      observacoes: true,
+      sincronizadoEm: true,
       linksDinamicos: { select: { comissao: true }, take: 5 },
     },
   })
@@ -592,19 +1038,168 @@ export async function montarFilaDeOportunidades(params: {
     return { ...pontuada, workspaceId }
   })
 
-  // Ordem: score desc. Empate desempata por confiança — entre duas notas
-  // iguais, a que se apoia em dado real vem primeiro.
-  const pesoDaConfianca: Record<NivelDeConfianca, number> = {
-    ALTA: 3,
-    MEDIA: 2,
-    BAIXA: 1,
-    SEM_HISTORICO_REAL: 0,
-  }
-  fila.sort(
-    (a, b) => b.score - a.score || pesoDaConfianca[b.confianca] - pesoDaConfianca[a.confianca]
-  )
-
+  ordenarFila(fila)
   return typeof params?.limite === 'number' ? fila.slice(0, params.limite) : fila
+}
+
+// ── Ordem da fila (P2.14.5.12.1) ────────────────────────────────────────
+
+/** Largura da faixa de evidência dentro da qual vale o desempate por aderência. */
+export const FAIXA_DE_DESEMPATE = 5
+
+const PESO_DA_CONFIANCA: Record<NivelDeConfianca, number> = {
+  ALTA: 3,
+  MEDIA: 2,
+  BAIXA: 1,
+  SEM_HISTORICO_REAL: 0,
+}
+
+/** Faixa da BASE de evidência (sem aderência): 70–74 → 14. */
+export function faixaDeEvidencia(o: Pick<OportunidadePontuada, 'componentes' | 'score'>): number {
+  return Math.floor((o.componentes?.base ?? o.score) / FAIXA_DE_DESEMPATE)
+}
+
+type Desempate = 'faixa' | 'perfil' | 'afinidade' | 'score' | 'confianca' | null
+
+/**
+ * Qual critério põe `a` à frente de `b` (ou o contrário). Ordem da regra da
+ * titular: faixa de evidência → aderência ao perfil → afinidade da titular
+ * → score → confiança. Facilidade de conteúdo ainda não tem dado nesta fase
+ * e não diferencia ninguém. Só ORDENA: não soma ponto a ninguém.
+ */
+export function criterioDeDesempate(a: OportunidadePontuada, b: OportunidadePontuada): { diferenca: number; criterio: Desempate } {
+  const fa = faixaDeEvidencia(a)
+  const fb = faixaDeEvidencia(b)
+  if (fa !== fb) return { diferenca: fb - fa, criterio: 'faixa' }
+  // Perfil desconhecido não é "maior": vem depois de qualquer perfil conhecido.
+  const pa = a.aderenciaDoPerfil ?? -1
+  const pb = b.aderenciaDoPerfil ?? -1
+  if (pa !== pb) return { diferenca: pb - pa, criterio: 'perfil' }
+  const aa = a.afinidadeParaDesempate ?? 0
+  const ab = b.afinidadeParaDesempate ?? 0
+  if (aa !== ab) return { diferenca: ab - aa, criterio: 'afinidade' }
+  if (a.score !== b.score) return { diferenca: b.score - a.score, criterio: 'score' }
+  const ca = PESO_DA_CONFIANCA[a.confianca]
+  const cb = PESO_DA_CONFIANCA[b.confianca]
+  if (ca !== cb) return { diferenca: cb - ca, criterio: 'confianca' }
+  return { diferenca: 0, criterio: null }
+}
+
+/** Ordena a fila no lugar, do mais promissor ao menos. */
+export function ordenarFila<T extends OportunidadePontuada>(fila: T[]): T[] {
+  return fila.sort((a, b) => criterioDeDesempate(a, b).diferenca)
+}
+
+const ROTULO_DO_DESEMPATE: Record<Exclude<Desempate, null>, string> = {
+  faixa: 'evidência mais alta',
+  perfil: 'maior aderência ao perfil BoraComprar',
+  afinidade: 'maior afinidade da titular',
+  score: 'score maior',
+  confianca: 'confiança maior',
+}
+
+// ── Seleção por modo de automação (P2.14.5.12) ──────────────────────────
+
+export type ModoDeAutomacao = 'MANUAL' | 'ASSISTED' | 'AUTOMATIC'
+
+/** Quantos candidatos a curadoria (ASSISTED) apresenta. */
+export const CANDIDATOS_NA_CURADORIA = 3
+/** Quantos produtos o modo automático escolhe por ciclo. */
+export const ESCOLHAS_NO_AUTOMATICO = 1
+
+export interface CandidatoSelecionado extends OportunidadePontuada {
+  posicao: number
+  /** Por que ficou nesta posição em relação aos vizinhos. */
+  motivoDaPosicao: string
+}
+
+export interface SelecaoPorModo {
+  modo: ModoDeAutomacao
+  pausado: boolean
+  candidatos: CandidatoSelecionado[]
+  /** Quem saiu e por quê (compliance, risco, diversidade, topo). */
+  descartados: { produtoId: string; motivo: string }[]
+  explicacao: string
+}
+
+/**
+ * Decide o que cada modo entrega, SEM recalcular nada: a fila já vem
+ * pontuada e ordenada por `montarFilaDeOportunidades` (`ordenarFila`: faixa
+ * de evidência, aderência, afinidade, score, confiança).
+ *
+ *   pausado ou MANUAL → nenhum candidato, nenhuma tarefa automática
+ *   ASSISTED          → os 3 melhores elegíveis, para a titular escolher 1;
+ *                       nada é gerado nem publicado antes da escolha
+ *   AUTOMATIC         → no máximo 1, excluindo risco ALTO
+ *
+ * Elegível = não eliminado por compliance e não NAO_ELEGIVEL. A diversidade
+ * é a mesma do plano de ação (`aplicarDiversidade`).
+ */
+export function selecionarParaModo(
+  fila: OportunidadePontuada[],
+  controles: { automationMode: string | null | undefined; automationPaused: boolean }
+): SelecaoPorModo {
+  const modo: ModoDeAutomacao =
+    controles.automationMode === 'ASSISTED' || controles.automationMode === 'AUTOMATIC'
+      ? controles.automationMode
+      : 'MANUAL'
+  const base = { modo, pausado: controles.automationPaused, candidatos: [], descartados: [] }
+
+  if (controles.automationPaused) {
+    return { ...base, explicacao: 'Automação pausada: nenhum candidato e nenhuma tarefa automática.' }
+  }
+  if (modo === 'MANUAL') {
+    return { ...base, explicacao: 'Modo manual: o Patrono não escolhe produto nem cria tarefa automática.' }
+  }
+
+  const descartados: { produtoId: string; motivo: string }[] = []
+  const elegiveis = fila.filter((o) => {
+    if (o.complianceBloqueante || o.classificacao === 'NAO_ELEGIVEL') {
+      descartados.push({ produtoId: o.produtoId, motivo: o.motivoDoBloqueio ?? 'Não elegível (indisponível ou bloqueado).' })
+      return false
+    }
+    if (modo === 'AUTOMATIC' && o.nivelDeRisco === 'ALTO') {
+      descartados.push({ produtoId: o.produtoId, motivo: 'Risco de compliance alto: o modo automático não escolhe; só a curadoria.' })
+      return false
+    }
+    return true
+  })
+
+  const limite = modo === 'ASSISTED' ? CANDIDATOS_NA_CURADORIA : ESCOLHAS_NO_AUTOMATICO
+  const diversidade = aplicarDiversidade(elegiveis, limite)
+  descartados.push(...diversidade.descartados)
+
+  const escolhidos = diversidade.escolhidos
+  const candidatos: CandidatoSelecionado[] = escolhidos.map((o, i) => {
+    const acima = escolhidos[i - 1]
+    const abaixo = escolhidos[i + 1]
+    const partes = [`${i + 1}º de ${elegiveis.length} elegível(is), score ${o.score} (confiança ${o.confianca}).`]
+    const relacao = (de: OportunidadePontuada, ate: OportunidadePontuada, posicaoDoOutro: number, frente: boolean) => {
+      const { criterio } = criterioDeDesempate(frente ? de : ate, frente ? ate : de)
+      const diff = Math.abs(de.score - ate.score)
+      if (criterio === 'faixa' || criterio === null) {
+        return `${diff} ponto(s) ${frente ? 'acima' : 'abaixo'} do ${posicaoDoOutro}º.`
+      }
+      const faixa = faixaDeEvidencia(de) * FAIXA_DE_DESEMPATE
+      return (
+        `Mesma faixa de evidência que o ${posicaoDoOutro}º (${faixa}–${faixa + FAIXA_DE_DESEMPATE - 1}); ` +
+        `${frente ? 'ficou à frente' : 'ficou atrás'} por ${ROTULO_DO_DESEMPATE[criterio]}` +
+        (diff > 0 ? ` (score ${de.score} × ${ate.score}).` : '.')
+      )
+    }
+    if (acima) partes.push(relacao(o, acima, i, false))
+    if (abaixo) partes.push(relacao(o, abaixo, i + 2, true))
+    return { ...o, posicao: i + 1, motivoDaPosicao: partes.join(' ') }
+  })
+
+  const explicacao =
+    candidatos.length === 0
+      ? `Nenhum produto elegível para o modo ${modo}.`
+      : modo === 'ASSISTED'
+        ? `Curadoria: ${candidatos.length} candidato(s) para a titular escolher 1. Nada é gerado nem publicado antes da escolha.`
+        : 'Automático: 1 produto escolhido. Nesta fase, nenhuma publicação real é executada.'
+
+  return { modo, pausado: false, candidatos, descartados, explicacao }
 }
 
 // ── Detecção de mudança ─────────────────────────────────────────────────

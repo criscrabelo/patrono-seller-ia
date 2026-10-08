@@ -61,6 +61,18 @@ export interface AffiliateOpportunity {
   trending?: boolean | null
   historicalConversionRate?: number | null
   channelFit?: string[]
+  // ── Demanda (P2.14.5.12) — só quando a FONTE informa. Ausente = desconhecido.
+  /** Nota média de avaliação, 0 a 5, como a fonte publica. */
+  avaliacao?: number | null
+  /** Quantidade de avaliações que sustenta a nota. */
+  numeroDeAvaliacoes?: number | null
+  /** Unidades em estoque informadas pela fonte. `0` = indisponível. */
+  estoque?: number | null
+  /**
+   * Aderência ao perfil da loja (0–100), calculada pelo motor a partir de
+   * dados reais do produto contra o perfil declarado. `null` = sem base.
+   */
+  aderenciaAoPerfil?: number | null
   origin: OrigemOportunidade
   source: string
   lastVerifiedAt: string

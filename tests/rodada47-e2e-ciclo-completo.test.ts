@@ -64,7 +64,8 @@ let userA = ''
 
 async function montarWorkspace(nome: string) {
   const ws = await prisma.workspace.create({
-    data: { name: `R47-${nome}`, ownerId: `${marca}-${nome}` },
+    // P2.14.5.12: o ciclo só cria tarefas em workspace AUTOMATIC e despausado.
+    data: { name: `R47-${nome}`, ownerId: `${marca}-${nome}`, automationPaused: false, automationMode: 'AUTOMATIC' },
     select: { id: true },
   })
   criados.push(ws.id)

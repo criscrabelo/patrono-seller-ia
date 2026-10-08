@@ -430,7 +430,7 @@ describe(
 
     before(async () => {
       for (const n of ['A', 'B']) {
-        const ws = await prisma.workspace.create({ data: { name: `R49-${n}`, ownerId: `${marca}-${n}` }, select: { id: true } })
+        const ws = await prisma.workspace.create({ data: { name: `R49-${n}`, ownerId: `${marca}-${n}`, automationPaused: false, automationMode: 'AUTOMATIC' }, select: { id: true } })
         const u = await prisma.user.create({
           data: { email: `${marca}-${n}@teste.local`, name: 'U', password: 'x', workspaceId: ws.id },
           select: { id: true },

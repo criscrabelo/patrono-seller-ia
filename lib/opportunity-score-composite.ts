@@ -18,10 +18,24 @@ import type { MLDecisionType } from './ml-types'
 import { chaveOportunidade, type OpportunityMLPrediction } from './ml-engine'
 
 export interface OpportunityScoreComponents {
-  externalMarketSignals: number
+  /** `null` = nenhum sinal de mercado conhecido (P2.14.5.12) — nunca 0. */
+  externalMarketSignals: number | null
   automationFeasibility: number
   historicalPerformance: number | null
   mlPrediction: number | null
+  /**
+   * Aderência ao perfil da loja (P2.14.5.12): perfil 0–80 + afinidade da
+   * titular 0–20. `null` = sem base para avaliar. NÃO é evidência: fica
+   * fora da base e da cobertura.
+   */
+  aderenciaAoPerfil: number | null
+  /** Score só de evidência (mercado, automatização, histórico, ML), 0–100. */
+  base: number
+  /**
+   * Fração (0–1) do peso de EVIDÊNCIA que veio de dado real. É a base da
+   * confiança: um score alto com cobertura baixa ainda é um palpite.
+   */
+  cobertura: number
   final: number
   motivos: string[]
   decisionType: MLDecisionType
@@ -38,6 +52,15 @@ const PESOS = {
   historicalPerformance: 0.15,
   mlPrediction: 0.15,
 }
+const PESO_NOMINAL_TOTAL = Object.values(PESOS).reduce((s, p) => s + p, 0)
+
+/**
+ * P2.14.5.12.1 — a aderência ao perfil (com a afinidade da titular dentro)
+ * tem participação FIXA no score final: não herda o peso dos blocos de
+ * evidência que faltam. Sem isso, num produto sem dado de mercado ela
+ * chegaria a ~32% da nota. Decisão da titular em 08/10/2026.
+ */
+export const PARTICIPACAO_DA_ADERENCIA = 0.13
 
 export function calcularOpportunityScoreComposto(
   op: AffiliateOpportunity,
@@ -50,17 +73,31 @@ export function calcularOpportunityScoreComposto(
   const mlPredictionScore =
     extras.mlPrediction?.predictedConversionProbability != null ? extras.mlPrediction.predictedConversionProbability * 100 : null
 
+  const aderenciaAoPerfil = typeof op.aderenciaAoPerfil === 'number' ? op.aderenciaAoPerfil : null
+
+  // Evidência: só entra quem tem dado real; o peso de quem não tem é
+  // redistribuído APENAS entre os blocos de evidência.
   const componentesDisponiveis: { valor: number; peso: number }[] = [
-    { valor: potencial.nota, peso: PESOS.externalMarketSignals },
     { valor: automatizabilidade.nota, peso: PESOS.automationFeasibility },
   ]
+  if (potencial.nota != null) componentesDisponiveis.push({ valor: potencial.nota, peso: PESOS.externalMarketSignals })
   if (historicalPerformance != null) componentesDisponiveis.push({ valor: historicalPerformance, peso: PESOS.historicalPerformance })
   if (mlPredictionScore != null) componentesDisponiveis.push({ valor: mlPredictionScore, peso: PESOS.mlPrediction })
 
   const pesoTotal = componentesDisponiveis.reduce((s, c) => s + c.peso, 0)
-  const final = Math.round(componentesDisponiveis.reduce((s, c) => s + c.valor * c.peso, 0) / pesoTotal)
+  const base = componentesDisponiveis.reduce((s, c) => s + c.valor * c.peso, 0) / pesoTotal
+
+  // Aderência desconhecida: a nota é só a evidência (nunca 0,87 × base).
+  const final = Math.round(
+    aderenciaAoPerfil == null
+      ? base
+      : (1 - PARTICIPACAO_DA_ADERENCIA) * base + PARTICIPACAO_DA_ADERENCIA * aderenciaAoPerfil
+  )
+
+  const cobertura = Math.round((pesoTotal / PESO_NOMINAL_TOTAL) * 100) / 100
 
   const motivos = [...potencial.motivos, ...automatizabilidade.motivos]
+  if (potencial.nota == null) motivos.push('sem nenhum sinal de mercado conhecido — o bloco não entra na nota')
   if (historicalPerformance == null) motivos.push('sem histórico de performance real para este produto/categoria ainda')
   if (mlPredictionScore == null) motivos.push('sem previsão de ML disponível (modelo ainda não ACTIVE ou dados insuficientes)')
 
@@ -71,6 +108,9 @@ export function calcularOpportunityScoreComposto(
     automationFeasibility: automatizabilidade.nota,
     historicalPerformance,
     mlPrediction: mlPredictionScore,
+    aderenciaAoPerfil,
+    base: Math.round(base),
+    cobertura,
     final,
     motivos,
     decisionType,
@@ -119,9 +159,18 @@ export class MLBlendedScorer implements OpportunityScorer {
  */
 export function explicarEmLinguagemSimples(components: OpportunityScoreComponents, produtoNome: string): string {
   const partes: string[] = [`Escolhi "${produtoNome}" porque:`]
-  partes.push(`- Tendência e comissão no mercado: ${components.externalMarketSignals}/100`)
+  partes.push(
+    components.externalMarketSignals == null
+      ? '- Tendência e comissão no mercado: desconhecidas'
+      : `- Tendência e comissão no mercado: ${components.externalMarketSignals}/100`
+  )
   partes.push(`- Consigo fazer isso sozinho, sem te incomodar: ${components.automationFeasibility}/100`)
   if (components.historicalPerformance != null) partes.push(`- Histórico real de conversão nessa categoria: ${Math.round(components.historicalPerformance)}/100`)
   if (components.mlPrediction != null) partes.push(`- O que aprendi com publicações anteriores: ${Math.round(components.mlPrediction)}/100`)
+  if (components.aderenciaAoPerfil != null) {
+    partes.push(
+      `- Combina com o perfil da loja: ${components.aderenciaAoPerfil}/100 (vale ${Math.round(PARTICIPACAO_DA_ADERENCIA * 100)}% da nota; não é prova de demanda)`
+    )
+  }
   return partes.join('\n')
 }

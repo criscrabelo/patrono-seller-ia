@@ -22,7 +22,7 @@
 import type { AffiliateOpportunity, OpportunityScorer } from './affiliate-discovery'
 
 export interface FeasibilityBreakdown {
-  potencial: number // 0-100
+  potencial: number | null // 0-100; null = nenhum sinal de mercado conhecido
   automatizabilidade: number // 0-100
   final: number // 0-100, combinação ponderada
   motivos: string[]
@@ -100,8 +100,19 @@ export function notaAutomatizabilidade(op: AffiliateOpportunity): { nota: number
   return { nota: Math.max(0, Math.min(100, nota)), motivos }
 }
 
-/** Nota de potencial de venda (0-100) — ranking/tendência/comissão, sem inventar dado ausente. */
-export function notaPotencial(op: AffiliateOpportunity): { nota: number; motivos: string[] } {
+/** Avaliações mínimas para a nota média da fonte entrar no potencial. */
+export const AVALIACOES_MINIMAS_PARA_NOTA = 10
+
+/**
+ * Nota de potencial de venda (0-100) — ranking/tendência/comissão/avaliações,
+ * sem inventar dado ausente.
+ *
+ * P2.14.5.12: sem NENHUM sinal de mercado a nota é `null` (desconhecida),
+ * nunca 0. Antes, o catálogo interno — que não tem ranking, tendência nem
+ * avaliação — recebia 0 e esse zero pesava no score final como se fosse um
+ * produto ruim. Quem combina notas redistribui o peso de um `null`.
+ */
+export function notaPotencial(op: AffiliateOpportunity): { nota: number | null; motivos: string[] } {
   const motivos: string[] = []
   let nota = 0
   let pesosSomados = 0
@@ -135,9 +146,24 @@ export function notaPotencial(op: AffiliateOpportunity): { nota: number; motivos
     motivos.push('sem dado de comissão')
   }
 
+  // Avaliações: só com volume mínimo — uma nota 5 com 2 avaliações não diz nada.
+  if (
+    typeof op.avaliacao === 'number' &&
+    typeof op.numeroDeAvaliacoes === 'number' &&
+    op.numeroDeAvaliacoes >= AVALIACOES_MINIMAS_PARA_NOTA
+  ) {
+    nota += Math.max(0, Math.min(100, (op.avaliacao / 5) * 100)) * 0.2
+    pesosSomados += 0.2
+  } else if (typeof op.avaliacao === 'number') {
+    motivos.push(`avaliações insuficientes (mínimo ${AVALIACOES_MINIMAS_PARA_NOTA})`)
+  } else {
+    motivos.push('sem avaliações informadas pela fonte')
+  }
+
   // Reponderar pelo que de fato foi avaliado, para não punir dobrado a
-  // ausência de dado (já registrada em `motivos`).
-  const notaFinal = pesosSomados > 0 ? nota / pesosSomados : 0
+  // ausência de dado (já registrada em `motivos`). Nada avaliado = null.
+  if (pesosSomados === 0) return { nota: null, motivos }
+  const notaFinal = nota / pesosSomados
   return { nota: Math.round(Math.max(0, Math.min(100, notaFinal))), motivos }
 }
 
@@ -155,7 +181,12 @@ export function calcularFeasibility(op: AffiliateOpportunity): FeasibilityBreakd
   const potencial = notaPotencial(op)
   const automatizabilidade = notaAutomatizabilidade(op)
 
-  const final = Math.round(potencial.nota * PESO_POTENCIAL + automatizabilidade.nota * PESO_AUTOMATIZABILIDADE)
+  // Potencial desconhecido: o peso vai inteiro para a automatizabilidade,
+  // em vez de entrar como zero.
+  const final =
+    potencial.nota === null
+      ? automatizabilidade.nota
+      : Math.round(potencial.nota * PESO_POTENCIAL + automatizabilidade.nota * PESO_AUTOMATIZABILIDADE)
 
   return {
     potencial: potencial.nota,

@@ -22,7 +22,12 @@
  */
 
 import { prisma } from './prisma'
-import { montarFilaDeOportunidades } from './motor-de-oportunidades'
+import {
+  montarFilaDeOportunidades,
+  selecionarParaModo,
+  type ModoDeAutomacao,
+  type SelecaoPorModo,
+} from './motor-de-oportunidades'
 import { montarPlanoDeAcao, type CapacidadesTecnicas, type PlanoDeAcao } from './plano-de-acao'
 import { jobsDeGeracaoDoPlano, jobsDeLacunaDeFormato, TIPO_JOB_GERACAO } from './fabrica-de-conteudo'
 import {
@@ -76,8 +81,31 @@ export function capacidadesDeclaradas(
 
 // ── Observabilidade ─────────────────────────────────────────────────────
 
+/** Resumo de um candidato no relatório (P2.14.5.12) — sem dado pessoal. */
+export interface CandidatoNoRelatorio {
+  posicao: number
+  produtoId: string
+  produtoNome: string
+  categoria: string
+  score: number
+  confianca: string
+  nivelDeRisco: string | null
+  compradoPelaTitular: boolean
+  publicacaoImpedida: boolean
+  motivosPositivos: string[]
+  riscos: string[]
+  desconhecidos: string[]
+  motivoDaPosicao: string
+  porqueDestaPosicao: string[]
+}
+
 export interface RelatorioDoWorkspace {
   workspaceId: string
+  /** P2.14.5.12: modo lido do workspace e o que o ciclo fez com ele. */
+  modo: ModoDeAutomacao
+  pausado: boolean
+  acaoDoModo: string
+  candidatos: CandidatoNoRelatorio[]
   canaisConectados: string[]
   oportunidadesAvaliadas: number
   prontasParaPublicacao: number
@@ -144,10 +172,17 @@ export async function planejarWorkspace(params: {
 }): Promise<{
   canaisConectados: string[]
   fila: Awaited<ReturnType<typeof montarFilaDeOportunidades>>
+  selecao: SelecaoPorModo
   plano: PlanoDeAcao
   desejados: JobDesejado[]
   lacunas: JobDesejado[]
 }> {
+  // P2.14.5.12: o modo do workspace decide se há tarefa automática.
+  const controles = await prisma.workspace.findUnique({
+    where: { id: params.workspaceId },
+    select: { automationPaused: true, automationMode: true },
+  })
+
   // Canais que conseguem publicar HOJE. Sem integração conectada nada fica
   // PRONTA_PARA_PUBLICACAO — e isso é correto, não é falha.
   const integracoes = await prisma.integracao.findMany({
@@ -163,9 +198,19 @@ export async function planejarWorkspace(params: {
     limite: params.limite ?? TOPO_DA_FILA,
   })
 
+  // Workspace sem registro conta como pausado: o seguro é não agir.
+  const selecao = selecionarParaModo(fila, {
+    automationMode: controles?.automationMode,
+    automationPaused: controles?.automationPaused ?? true,
+  })
+
+  // Só o AUTOMATIC planeja tarefas, e só para o produto escolhido.
+  // Pausado/MANUAL: nada. ASSISTED: só candidatos; nada antes da escolha.
+  const automatico = !selecao.pausado && selecao.modo === 'AUTOMATIC'
+  const escolhidos = new Set(selecao.candidatos.map((c) => c.produtoId))
   const plano = montarPlanoDeAcao({
     workspaceId: params.workspaceId,
-    fila,
+    fila: automatico ? fila.filter((o) => escolhidos.has(o.produtoId)) : [],
     canaisConectados,
     capacidades: params.capacidades,
     agora: params.agora,
@@ -182,7 +227,26 @@ export async function planejarWorkspace(params: {
     ...lacunas,
   ]
 
-  return { canaisConectados, fila, plano, desejados, lacunas }
+  return { canaisConectados, fila, selecao, plano, desejados, lacunas }
+}
+
+function resumirCandidato(c: SelecaoPorModo['candidatos'][number]): CandidatoNoRelatorio {
+  return {
+    posicao: c.posicao,
+    produtoId: c.produtoId,
+    produtoNome: c.produtoNome,
+    categoria: c.categoria,
+    score: c.score,
+    confianca: c.confianca,
+    nivelDeRisco: c.nivelDeRisco ?? null,
+    compradoPelaTitular: c.compradoPelaTitular ?? false,
+    publicacaoImpedida: c.publicacaoImpedida ?? false,
+    motivosPositivos: c.motivosPositivos ?? [],
+    riscos: c.riscos ?? [],
+    desconhecidos: c.desconhecidos ?? [],
+    motivoDaPosicao: c.motivoDaPosicao,
+    porqueDestaPosicao: c.porqueDestaPosicao,
+  }
 }
 
 /**
@@ -216,6 +280,10 @@ export async function rodarCicloDeOportunidades(params: {
   for (const workspaceId of alvos) {
     const linha: RelatorioDoWorkspace = {
       workspaceId,
+      modo: 'MANUAL',
+      pausado: true,
+      acaoDoModo: '',
+      candidatos: [],
       canaisConectados: [],
       oportunidadesAvaliadas: 0,
       prontasParaPublicacao: 0,
@@ -236,6 +304,10 @@ export async function rodarCicloDeOportunidades(params: {
 
     try {
       const r = await planejarWorkspace({ workspaceId, agora: params.agora, capacidades, limite: params.limite })
+      linha.modo = r.selecao.modo
+      linha.pausado = r.selecao.pausado
+      linha.acaoDoModo = r.selecao.explicacao
+      linha.candidatos = r.selecao.candidatos.map(resumirCandidato)
       linha.canaisConectados = r.canaisConectados
       linha.oportunidadesAvaliadas = r.fila.length
       linha.prontasParaPublicacao = r.fila.filter((o) => o.classificacao === 'PRONTA_PARA_PUBLICACAO').length
@@ -245,7 +317,15 @@ export async function rodarCicloDeOportunidades(params: {
       linha.lacunasDeFormato = r.lacunas.length
       linha.nasceriamWaiting = contarQueNasceriamWaiting(r.desejados)
 
-      if (params.escrever) {
+      const automatico = !r.selecao.pausado && r.selecao.modo === 'AUTOMATIC'
+      if (!automatico) {
+        // Nenhuma tarefa automática: não cria e também não cancela as que
+        // já existem (pausar não apaga trabalho já enfileirado).
+        linha.jobsCriados = 0
+        linha.jobsMantidos = 0
+        linha.jobsCancelados = 0
+        linha.recusados = 0
+      } else if (params.escrever) {
         const sinc = await sincronizarFilaComPlano({
           porta: params.porta,
           workspaceId,
