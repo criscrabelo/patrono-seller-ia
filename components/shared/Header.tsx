@@ -9,6 +9,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/produtos': 'Produtos',
   '/produtos/novo': 'Novo Produto',
   '/produtos/imagens': 'Importar Imagens',
+  '/oportunidades': 'Oportunidades',
   '/conteudos': 'Banco de Conteúdos',
   '/conteudos/gerar': 'Gerar Conteúdo',
   '/aprovacao': 'Aprovações',

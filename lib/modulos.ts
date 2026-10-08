@@ -4,6 +4,7 @@ export const MODULOS = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'produtos', label: 'Produtos' },
   { key: 'produtos-imagens', label: 'Importar Imagens' },
+  { key: 'oportunidades', label: 'Oportunidades' },
   { key: 'conteudos-gerar', label: 'Gerar Conteúdo' },
   { key: 'conteudos', label: 'Banco de Conteúdos' },
   { key: 'videos', label: 'Vídeos Gerados' },

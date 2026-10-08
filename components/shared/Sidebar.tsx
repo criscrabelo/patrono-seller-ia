@@ -26,6 +26,7 @@ import {
   SlidersHorizontal,
   Handshake,
   Receipt,
+  Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
@@ -38,6 +39,7 @@ const navItems: Array<{ href: string; label: string; icon: typeof LayoutDashboar
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, modulo: 'dashboard' },
   { href: '/produtos', label: 'Produtos', icon: Package, modulo: 'produtos' },
   { href: '/produtos/imagens', label: 'Importar Imagens', icon: ImagePlus, modulo: 'produtos-imagens' },
+  { href: '/oportunidades', label: 'Oportunidades', icon: Sparkles, modulo: 'oportunidades' },
   { href: '/conteudos/gerar', label: 'Gerar Conteúdo', icon: Zap, modulo: 'conteudos-gerar' },
   { href: '/conteudos', label: 'Banco de Conteúdos', icon: Library, modulo: 'conteudos' },
   { href: '/videos', label: 'Vídeos Gerados', icon: Film, modulo: 'videos' },

@@ -350,7 +350,7 @@ type MarcaPreferida = {
   excetoCategorias?: readonly string[]
 }
 
-type PerfilDaLoja = {
+export type PerfilDaLoja = {
   categoriasDoCadastro: readonly string[]
   subcategoriasPrioritarias: Record<string, readonly string[]>
   faixaDePreco: { minimo: number; maximo: number; premiumAte: number }
@@ -720,6 +720,12 @@ export interface ContextoDoWorkspace {
   /** Canais conectados que conseguem publicar hoje. */
   canaisCapazes: string[]
   agora: Date
+  /**
+   * P2.14.5.13: perfil da loja gravado no workspace. Ausente = perfil
+   * padrão de lib/config.ts. Só muda a ADERÊNCIA; pesos e bônus ficam no
+   * código.
+   */
+  perfil?: PerfilDaLoja
 }
 
 /**
@@ -789,7 +795,7 @@ export function pontuarProduto(
     nome: produto.nome,
     descricao: produto.descricao,
     observacoes: produto.observacoes,
-  })
+  }, contexto.perfil)
 
   const origem = origemDaOportunidade(produto.origemDados)
   const comissaoEstimadaBRL =
@@ -947,6 +953,8 @@ export async function montarFilaDeOportunidades(params: {
   /** Canais que conseguem publicar. Sem isso, nada fica PRONTA. */
   canaisCapazes?: string[]
   limite?: number
+  /** P2.14.5.13: perfil da loja do workspace (ausente = padrão). */
+  perfil?: PerfilDaLoja
 }): Promise<OportunidadePontuada[]> {
   const workspaceId = (params?.workspaceId ?? '').trim()
   if (!workspaceId) return []
@@ -1014,6 +1022,7 @@ export async function montarFilaDeOportunidades(params: {
   const contexto: ContextoDoWorkspace = {
     canaisCapazes: params?.canaisCapazes ?? [],
     agora,
+    perfil: params?.perfil,
   }
 
   const fila = produtos.map((p) => {
@@ -1027,8 +1036,7 @@ export async function montarFilaDeOportunidades(params: {
     })
 
     // A taxa da oferta vem do link, que é onde ela é registrada.
-    const comissoes = p.linksDinamicos.map((l) => l.comissao).filter((c): c is number => typeof c === 'number')
-    const comissaoPercentual = comissoes.length > 0 ? comissoes[0] : null
+    const comissaoPercentual = comissaoDaOferta(p.linksDinamicos)
 
     const pontuada = pontuarProduto(
       { ...p, comissaoPercentual },
@@ -1040,6 +1048,12 @@ export async function montarFilaDeOportunidades(params: {
 
   ordenarFila(fila)
   return typeof params?.limite === 'number' ? fila.slice(0, params.limite) : fila
+}
+
+/** Taxa da oferta: a primeira registrada nos links do produto, ou null. */
+export function comissaoDaOferta(links: { comissao: number | null }[]): number | null {
+  const comissoes = links.map((l) => l.comissao).filter((c): c is number => typeof c === 'number')
+  return comissoes.length > 0 ? comissoes[0] : null
 }
 
 // ── Ordem da fila (P2.14.5.12.1) ────────────────────────────────────────
