@@ -6,10 +6,14 @@
 //   pooler de SESSÃO (aws-1-sa-east-1:5432, IPv4) — o host direto `db.<ref>`
 //   só responde por IPv6 e não é alcançável desta rede.
 // - DATABASE_URL e DIRECT_URL apontam para o mesmo pooler de sessão.
-// - `--cofre` também carrega TOKENS_ENCRYPTION_KEY de `.env.producao-cofre`.
+// - `--cofre` também carrega TOKENS_ENCRYPTION_KEY da cópia local da chave de
+//   produção: %LOCALAPPDATA%\PatronoSeller\cofre-producao\.env.producao-cofre
+//   (FORA do OneDrive — a pasta do projeto é sincronizada). Outro caminho só
+//   via PATRONO_ARQUIVO_COFRE.
 // - Nada é impresso além da saída do comando, com URLs de banco mascaradas.
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const REF = 'aftqchhuknsqijsengoo'
 const i = process.argv.indexOf('--')
@@ -26,8 +30,10 @@ url.password = origem.password
 
 const env = { ...process.env, DATABASE_URL: url.toString(), DIRECT_URL: url.toString() }
 if (process.argv.slice(2, i).includes('--cofre')) {
-  const c = lerEnv('.env.producao-cofre').TOKENS_ENCRYPTION_KEY
-  if (!/^[0-9a-f]{64}$/.test(c ?? '')) throw new Error('.env.producao-cofre sem chave válida. Abortado.')
+  const arquivo = process.env.PATRONO_ARQUIVO_COFRE || join(process.env.LOCALAPPDATA ?? '', 'PatronoSeller', 'cofre-producao', '.env.producao-cofre')
+  if (/onedrive/i.test(arquivo)) throw new Error('A cópia da chave não pode ficar em pasta sincronizada (OneDrive). Abortado.')
+  const c = lerEnv(arquivo).TOKENS_ENCRYPTION_KEY
+  if (!/^[0-9a-f]{64}$/.test(c ?? '')) throw new Error('Cópia da chave de produção ausente ou inválida. Abortado.')
   env.TOKENS_ENCRYPTION_KEY = c
   delete env.TOKENS_ENCRYPTION_KEY_ANTERIOR
 }

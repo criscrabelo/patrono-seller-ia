@@ -5,6 +5,8 @@
 //
 // 1. gera 32 bytes aleatórios (chave NOVA; nunca reaproveita a de teste);
 // 2. confere que o kid é diferente do kid da chave de teste;
+// (P2.14.9: depois de criada, a cópia foi MOVIDA para fora do OneDrive:
+//  %LOCALAPPDATA%\PatronoSeller\cofre-producao\ — é de lá que o envelope lê.)
 // 3. grava a cópia de segurança em `.env.producao-cofre` (ignorado pelo git),
 //    necessária para cifrar o legado localmente e para o rollback; a titular
 //    copia para o cofre pessoal e o arquivo é apagado ao fim da 0B;
