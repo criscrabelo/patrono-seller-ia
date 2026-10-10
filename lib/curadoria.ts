@@ -593,7 +593,7 @@ export async function persistirColeta(p: {
     entradas: JSON.stringify(redigir({ avaliados: p.linhas.length, apresentados: escolhidos })),
     explicacao: escolhidos.map((e) => `${e.posicao}º ${e.nome}: ${e.porque.join(' ')}`.trim()),
   }
-  const evento = { id: randomUUID(), payload: JSON.stringify(redigir({ avaliados: p.linhas.length, chaves: escolhidos.map((e) => e.chaveDeOrigem) })) }
+  const evento = { id: randomUUID(), payload: JSON.stringify(redigir({ avaliados: p.linhas.length, apresentados: escolhidos.length, chaves: escolhidos.map((e) => e.chaveDeOrigem) })) }
   const auditoria = p.auditoria
     ? Prisma_sql`
       , auditoria AS (

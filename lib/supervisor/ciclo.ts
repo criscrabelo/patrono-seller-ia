@@ -24,6 +24,7 @@ import { solicitarAprovacao, type Risco } from '../aprovacoes'
 import { coletarCandidatos, escolherCandidato, listarApresentados, FONTE_TITULAR } from '../curadoria'
 import { iniciarRun, transitar } from './run'
 import { flagLigada } from '../feature-flags'
+import { CHAVE_TIKTOK_SHOP, evidenciaDoTikTokShop } from '../tiktok-shop-evidencia'
 
 export const TIPO_ESCOLHA = 'ESCOLHER_PRODUTO'
 export const TIPO_EXCECAO = 'EXCECAO'
@@ -98,9 +99,9 @@ export function diagnosticar(p: {
   if (p.tiktokShopPendente) {
     // Estratégico e de uma vez só: chave fixa — se a titular ignorar, não volta.
     out.push({
-      chave: 'estrategia:tiktok-shop-descoberta',
+      chave: CHAVE_TIKTOK_SHOP,
       titulo: 'Liberar a descoberta automática no TikTok Shop',
-      resumo: 'Para o Patrono achar produtos sozinho (sem depender do catálogo cadastrado), é preciso criar uma vez o app no TikTok Shop Partner Center e autorizar sua conta de criadora. Só você pode fazer.',
+      resumo: 'Para eu achar produtos sozinho, sem depender do catálogo, o TikTok Shop precisa liberar um acesso oficial e você autorizar a sua conta de criadora. Só você pode fazer; o item sai daqui sozinho quando a conexão existir.',
       porque: [
         'A descoberta oficial é a API "Creator Search Open Collaboration Product" (escopo 1021508).',
         'Sem ela, o Patrono só ranqueia produtos já cadastrados ou informados por você.',
@@ -130,7 +131,7 @@ export async function executarCiclo(p: {
   const resumo: string[] = []
 
   if (killSwitchGlobalAtivo(env)) {
-    return { runId: null, estadoFinal: 'CANCELADO', resumo: ['Kill switch global ligado: o Patrono não rodou.'], apresentados: 0, excecoes: 0, pedidoDeAprovacao: null, escolhaAutomatica: null }
+    return { runId: null, estadoFinal: 'CANCELADO', resumo: ['O desligamento geral está ativo: não rodei.'], apresentados: 0, excecoes: 0, pedidoDeAprovacao: null, escolhaAutomatica: null }
   }
 
   const politica = await politicaAtiva(p.workspaceId)
@@ -154,7 +155,7 @@ export async function executarCiclo(p: {
         prisma.candidatoDeProduto.count({ where: { workspaceId: p.workspaceId, fonte: FONTE_TITULAR, produtoId: null, status: { in: ['NOVO', 'APRESENTADO'] } } }),
         flagLigada('TIKTOK_SHOP_CATALOGO', p.workspaceId, env),
       ])
-      const tiktokShopPendente = !tiktokShopLigado && !integracoes.some((i) => i.plataforma === 'tiktok-shop' && i.status === 'conectado')
+      const tiktokShopPendente = !tiktokShopLigado && !(await evidenciaDoTikTokShop(p.workspaceId, agora))
       const excecoes = diagnosticar({ agora, integracoes, produtosAtivos, informadosAbertos, tiktokShopPendente })
       for (const e of excecoes) {
         await solicitarAprovacao({
@@ -162,13 +163,13 @@ export async function executarCiclo(p: {
           fatos: { risco: e.risco }, acaoProposta: { link: e.link }, agora,
         })
       }
-      if (excecoes.length) resumo.push(`${excecoes.length} ponto(s) de atenção para você.`)
+      if (excecoes.length) resumo.push(excecoes.length === 1 ? 'Encontrei 1 ponto que precisa de você.' : `Encontrei ${excecoes.length} pontos que precisam de você.`)
 
       // ── Descobrir, validar, ranquear (curadoria) ──
       const coleta = await coletarCandidatos({ workspaceId: p.workspaceId, userId: p.userId, agora })
       await ir('VALIDANDO', { avaliados: coleta.avaliados, bloqueados: coleta.bloqueados })
       await ir('RANQUEANDO')
-      resumo.push(`Analisou ${coleta.avaliados} produto(s); ${coleta.apresentados} entre os melhores.`)
+      resumo.push(`Analisei ${coleta.avaliados} ${coleta.avaliados === 1 ? 'produto' : 'produtos'} e selecionei ${coleta.apresentados} ${coleta.apresentados === 1 ? 'oportunidade' : 'oportunidades'}.`)
       await ir('DECIDINDO')
 
       const apresentados = await listarApresentados(p.workspaceId)
@@ -177,7 +178,7 @@ export async function executarCiclo(p: {
       let escolhaAutomatica: ResultadoDoCiclo['escolhaAutomatica'] = null
 
       if (!melhor) {
-        resumo.push('Nenhum produto apto para recomendar agora.')
+        resumo.push('Nenhum produto está apto para recomendar agora.')
       } else {
         const fatos = { risco: riscoDe(melhor), categoria: melhor.categoria, preco: melhor.preco }
         const avaliacao = avaliarAcao(politica.regras, { tipo: 'ESCOLHER_PRODUTO', ...fatos }, seguranca)
@@ -189,11 +190,11 @@ export async function executarCiclo(p: {
 
         if (avaliacao.resultado === 'BLOQUEAR') {
           await registrarDecisao({ workspaceId: p.workspaceId, tipo: 'ESCOLHA_DE_PRODUTO', ator: 'PATRONO', decisao: `Não escolheu "${melhor.nome}": bloqueado pela política.`, explicacao: avaliacao.motivos, entidadeTipo: 'CandidatoDeProduto', entidadeId: melhor.id, politicaVersao: politica.versao, chaveIdempotencia: `ciclo:${run.id}:bloqueio` })
-          resumo.push(`"${melhor.nome}" não pode ser escolhido: ${avaliacao.motivos.join(' ')}`)
+          resumo.push(`Não escolhi “${melhor.nome}”: ${avaliacao.motivos.join(' ')}`)
         } else if (avaliacao.resultado === 'PERMITIR') {
           await escolherCandidato({ workspaceId: p.workspaceId, userId: p.userId, candidatoId: melhor.id, agora, ator: 'PATRONO', regra: `politica:v${politica.versao}` })
           escolhaAutomatica = { candidatoId: melhor.id, nome: melhor.nome }
-          resumo.push(`Escolheu sozinho "${melhor.nome}" (permitido pela política v${politica.versao}).`)
+          resumo.push(`Escolhi sozinho “${melhor.nome}”, dentro das suas regras. Nenhuma ação sua foi necessária.`)
         } else {
           const ap = await solicitarAprovacao({
             workspaceId: p.workspaceId,
@@ -213,12 +214,12 @@ export async function executarCiclo(p: {
           if (ap.status === 'APROVADA') {
             await escolherCandidato({ workspaceId: p.workspaceId, userId: p.userId, candidatoId: melhor.id, agora, ator: 'PATRONO', regra: ap.decididoPorRegraId ? `ApprovalRule:${ap.decididoPorRegraId}` : null })
             escolhaAutomatica = { candidatoId: melhor.id, nome: melhor.nome }
-            resumo.push(`Escolheu "${melhor.nome}" por uma regra sua.`)
+            resumo.push(`Escolhi “${melhor.nome}” seguindo uma regra sua.`)
           } else if (ap.status === 'PENDENTE') {
             pedido = { id: ap.id, titulo: ap.titulo, status: ap.status }
-            resumo.push(`Recomenda "${melhor.nome}" — aguardando sua aprovação.`)
+            resumo.push(`Recomendo “${melhor.nome}”. Falta só a sua aprovação em Precisa de você.`)
           } else {
-            resumo.push(`"${melhor.nome}" já tinha sido ${ap.status.toLowerCase()} antes.`)
+            resumo.push(`Você já tinha decidido sobre “${melhor.nome}”; mantive a sua decisão.`)
           }
         }
       }

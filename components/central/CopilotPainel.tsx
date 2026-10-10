@@ -58,19 +58,19 @@ export function CopilotPainel({ aoAlterar }: { aoAlterar?: () => void }) {
     <div className="card-stat flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <Sparkles className="w-4 h-4 text-accent" />
-        <p className="text-sm font-semibold text-white">Pergunte ao Patrono</p>
-        <span className="text-[10px] text-muted-foreground">comandos prontos · sem custo</span>
+        <p className="text-sm font-semibold text-white">Fale com o Patrono</p>
+        <span className="text-[10px] text-muted-foreground">respostas na hora · sem custo</span>
       </div>
 
       {trocas.length > 0 && (
         <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
           {trocas.map((t, i) => (
             <div key={i} className="space-y-1">
-              <p className="text-xs text-muted-foreground">Você: {t.pergunta}</p>
+              <p className="text-xs text-muted-foreground text-right">{t.pergunta}</p>
               {t.erro ? (
                 <p className="text-sm text-danger">{t.erro}</p>
               ) : (
-                <div className="text-sm text-white space-y-0.5">
+                <div className="rounded-lg bg-secondary/60 px-3 py-2 text-sm text-white space-y-0.5">
                   {t.resposta?.texto.map((linha, j) => <p key={j}>{linha}</p>)}
                 </div>
               )}
@@ -80,6 +80,7 @@ export function CopilotPainel({ aoAlterar }: { aoAlterar?: () => void }) {
       )}
 
       <div className="flex flex-wrap gap-1.5">
+        {trocas.length === 0 && <p className="w-full text-xs text-muted-foreground">Toque numa pergunta ou escreva a sua:</p>}
         {sugestoes.map((s) => (
           <button
             key={s}
@@ -103,7 +104,7 @@ export function CopilotPainel({ aoAlterar }: { aoAlterar?: () => void }) {
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
           maxLength={300}
-          placeholder='Ex.: "o que precisa de mim?"'
+          placeholder="Escreva do seu jeito, ex.: o que precisa de mim?"
           className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-white placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
         />
         <button

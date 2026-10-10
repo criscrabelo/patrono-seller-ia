@@ -140,7 +140,7 @@ export async function decidirAprovacao(p: { workspaceId: string; id: string; dec
     })
     if (r.count !== 1) throw new ErroDeAprovacao(409, 'Este pedido acabou de ser decidido.')
     await registrarDecisao(
-      { workspaceId: p.workspaceId, tipo: 'APROVACAO', ator: 'TITULAR', atorUserId: p.userId, decisao: `${status}.`, explicacao: p.motivo ? [p.motivo] : [], entidadeTipo: 'ApprovalRequest', entidadeId: p.id, chaveIdempotencia: `aprovacao:${pedido.chave}` },
+      { workspaceId: p.workspaceId, tipo: 'APROVACAO', ator: 'TITULAR', atorUserId: p.userId, decisao: `${status}.`, explicacao: p.motivo ? [p.motivo] : [], entradas: { pedidoTipo: pedido.tipo, titulo: pedido.titulo }, entidadeTipo: 'ApprovalRequest', entidadeId: p.id, chaveIdempotencia: `aprovacao:${pedido.chave}` },
       tx
     )
     await registrarEvento(

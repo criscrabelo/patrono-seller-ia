@@ -39,9 +39,9 @@ describe('Fase 1 — partes puras', () => {
   })
 
   test('ledger em linguagem simples; ruído técnico some', () => {
-    assert.match(frasesDoEvento({ tipo: 'CANDIDATES_PRESENTED', payload: { avaliados: 22, chaves: ['a', 'b', 'c'] } })!, /22 produto.*3 melhores/)
+    assert.match(frasesDoEvento({ tipo: 'CANDIDATES_PRESENTED', payload: { avaliados: 22, chaves: ['a', 'b', 'c'] } })!, /Analisei 22 produtos e selecionei 3 oportunidades/)
     assert.equal(frasesDoEvento({ tipo: 'RUN_STATE_CHANGED', payload: { para: 'VALIDANDO' } }), null)
-    assert.match(frasesDoEvento({ tipo: 'RUN_STATE_CHANGED', payload: { para: 'CONCLUIDO' } })!, /Concluiu/)
+    assert.match(frasesDoEvento({ tipo: 'RUN_STATE_CHANGED', payload: { para: 'CONCLUIDO' } })!, /Concluí/)
     assert.equal(frasesDoEvento({ tipo: 'QUALQUER', payload: {} }), null)
   })
 
@@ -189,14 +189,47 @@ describe('Fase 1 contra o banco de teste', { skip: !TEM_BANCO ? 'exige banco de 
     assert.equal((await PV.listarPrecisaDeVoce(w)).filter((i) => /Instagram/.test(i.titulo)).length, 0)
   })
 
-  test('TikTok Shop: passo estratégico aparece UMA vez; "Ignorar" o tira para sempre', async () => {
+  test('P2.15.3 TikTok Shop: nenhum clique tira o item; só a evidência real, registrada no ledger', async () => {
     const w = ws.AUTO
-    const tk = (await PV.listarPrecisaDeVoce(w)).filter((i) => /TikTok Shop/.test(i.titulo))
-    assert.equal(tk.length, 1)
-    assert.equal(tk[0].risco, 'BAIXO')
-    await PV.decidirPrecisaDeVoce({ workspaceId: w, userId: usr[w], id: tk[0].id, decisao: 'REJEITAR' })
+    const ctx = { workspaceId: w, userId: usr[w] }
+    const lista = async () => (await PV.listarPrecisaDeVoce(w)).filter((i) => /TikTok Shop/.test(i.titulo))
+    const [tk] = await lista()
+    assert.ok(tk)
+    assert.equal(tk.risco, 'BAIXO')
+    assert.deepEqual(tk.acoes, { aprovar: 'Ver como fazer', rejeitar: 'Agora não' })
+    assert.equal(tk.podeMarcarResolvido, false)
+    assert.ok((tk.comoFazer ?? []).length >= 4)
+    // botão/API: aprovar é recusado; "Agora não" não muda nada
+    await assert.rejects(PV.decidirPrecisaDeVoce({ workspaceId: w, userId: usr[w], id: tk.id, decisao: 'APROVAR' }), /só sai sozinho/)
+    const agoraNao = await PV.decidirPrecisaDeVoce({ workspaceId: w, userId: usr[w], id: tk.id, decisao: 'REJEITAR' })
+    assert.equal(agoraNao.status, 'PENDENTE')
+    // Copilot: "aprovar N" e "rejeitar N" também não tiram
+    const n = (await PV.listarPrecisaDeVoce(w)).findIndex((i) => i.id === tk.id) + 1
+    assert.match((await CO.perguntarAoCopilot(`aprovar ${n}`, ctx)).texto[0], /Nada foi alterado/)
+    assert.equal((await CO.perguntarAoCopilot(`rejeitar ${n}`, ctx)).alterou, false)
     await C.executarCiclo({ workspaceId: w, userId: usr[w], env: {} })
-    assert.equal((await PV.listarPrecisaDeVoce(w)).filter((i) => /TikTok Shop/.test(i.titulo)).length, 0)
+    assert.equal((await lista()).length, 1)
+    assert.equal((await prisma.approvalRequest.findUniqueOrThrow({ where: { id: tk.id } })).status, 'PENDENTE')
+    // conexão VENCIDA não é evidência
+    await prisma.integracao.create({ data: { workspaceId: w, userId: usr[w], plataforma: 'tiktok-shop', status: 'conectado', accessToken: 'fixture-de-teste', tokenExpiry: new Date(Date.now() - DIA) } })
+    assert.equal((await lista()).length, 1)
+    // conexão válida (fixture do workspace descartável de teste) = evidência → sai sozinho, com ledger
+    await prisma.integracao.updateMany({ where: { workspaceId: w, plataforma: 'tiktok-shop' }, data: { tokenExpiry: new Date(Date.now() + 30 * DIA) } })
+    assert.equal((await lista()).length, 0)
+    await PV.listarPrecisaDeVoce(w) // idempotente
+    const pedido = await prisma.approvalRequest.findUniqueOrThrow({ where: { id: tk.id } })
+    assert.equal(pedido.status, 'APROVADA')
+    assert.equal(pedido.decididoPorUserId, null)
+    assert.match(pedido.motivoDaDecisao ?? '', /Resolvido por evidência/)
+    const decs = await prisma.decisionRecord.findMany({ where: { workspaceId: w, tipo: 'RESOLUCAO_POR_EVIDENCIA' } })
+    assert.equal(decs.length, 1)
+    assert.equal(decs[0].ator, 'SISTEMA')
+    const evs = await prisma.domainEvent.findMany({ where: { workspaceId: w, chaveIdempotencia: 'evidencia:estrategia:tiktok-shop-descoberta' } })
+    assert.equal(evs.length, 1)
+    assert.equal((evs[0].payload as { resolvidoPor?: string }).resolvidoPor, 'EVIDENCIA')
+    // o Supervisor não recria o item
+    await C.executarCiclo({ workspaceId: w, userId: usr[w], env: {} })
+    assert.equal((await lista()).length, 0)
   })
 
   test('a fila se limpa sozinha: escolha feita em Oportunidades cancela o pedido pendente', async () => {
@@ -218,6 +251,30 @@ describe('Fase 1 contra o banco de teste', { skip: !TEM_BANCO ? 'exige banco de 
     assert.equal(await prisma.supervisorRun.count({ where: { workspaceId: w } }), antes)
   })
 
+  test('P2.15.2: aprovar pela fila = escolha da TITULAR, mesmo correlationId, sem regra e sem duplicata', async () => {
+    const w = ws.COP
+    const r = await C.executarCiclo({ workspaceId: w, userId: usr[w], env: {} })
+    assert.ok(r.pedidoDeAprovacao, JSON.stringify(r.resumo))
+    const regrasAntes = await prisma.approvalRule.count({ where: { workspaceId: w } })
+    const pedido = await prisma.approvalRequest.findUniqueOrThrow({ where: { id: r.pedidoDeAprovacao.id } })
+    const candidatoId = (pedido.acaoProposta as { candidatoId: string }).candidatoId
+    const res = await PV.decidirPrecisaDeVoce({ workspaceId: w, userId: usr[w], id: pedido.id, decisao: 'APROVAR' })
+    assert.equal(res.status, 'APROVADA')
+    assert.equal(res.regraCriada, false)
+    assert.equal((await prisma.approvalRequest.findUniqueOrThrow({ where: { id: pedido.id } })).status, 'APROVADA')
+    assert.equal((await prisma.candidatoDeProduto.findUniqueOrThrow({ where: { id: candidatoId } })).status, 'ESCOLHIDO')
+    const aprov = await prisma.decisionRecord.findFirstOrThrow({ where: { workspaceId: w, tipo: 'APROVACAO', entidadeId: pedido.id } })
+    const escolha = await prisma.decisionRecord.findFirstOrThrow({ where: { workspaceId: w, tipo: 'ESCOLHA_DE_PRODUTO', entidadeId: candidatoId } })
+    assert.deepEqual([aprov.ator, escolha.ator], ['TITULAR', 'TITULAR'])
+    assert.ok(aprov.correlationId?.startsWith('decisao_'))
+    assert.equal(escolha.correlationId, aprov.correlationId)
+    const eventos = await prisma.domainEvent.findMany({ where: { workspaceId: w, correlationId: aprov.correlationId } })
+    assert.deepEqual(eventos.map((e) => e.tipo).sort(), ['APPROVAL_GRANTED', 'PRODUCT_SELECTED'])
+    assert.equal(await prisma.approvalRule.count({ where: { workspaceId: w } }), regrasAntes)
+    await assert.rejects(PV.decidirPrecisaDeVoce({ workspaceId: w, userId: usr[w], id: pedido.id, decisao: 'APROVAR' }), /já está APROVADA/)
+    assert.equal(await prisma.decisionRecord.count({ where: { workspaceId: w, tipo: 'ESCOLHA_DE_PRODUTO', entidadeId: candidatoId } }), 1)
+  })
+
   test('Copilot executa pelos mesmos motores: status, pendências, rodar, aprovar, pausar/retomar, porquê', async () => {
     const w = ws.COP
     const ctx = { workspaceId: w, userId: usr[w] }
@@ -231,12 +288,12 @@ describe('Fase 1 contra o banco de teste', { skip: !TEM_BANCO ? 'exige banco de 
     assert.ok(n > 0, linhas.join(' | '))
     const aprovar = await CO.perguntarAoCopilot(`aprovar ${n}`, ctx)
     assert.match(aprovar.texto[0], /aprovado/)
-    assert.match((await CO.perguntarAoCopilot('aprovar 9', ctx)).texto[0], /Não há o pedido 9/)
+    assert.match((await CO.perguntarAoCopilot('aprovar 9', ctx)).texto[0], /Não há o item 9/)
     assert.match((await CO.perguntarAoCopilot('por que este produto?', ctx)).texto[0], /º /)
     const pausar = await CO.perguntarAoCopilot('pausar tudo', ctx)
     assert.equal(pausar.alterou, true)
     assert.equal((await prisma.workspace.findUniqueOrThrow({ where: { id: w } })).safeModeAtivo, true)
-    assert.match((await CO.perguntarAoCopilot('como está?', ctx)).texto[0], /travado com segurança/)
+    assert.match((await CO.perguntarAoCopilot('como está?', ctx)).texto[0], /modo de segurança/)
     await CO.perguntarAoCopilot('retomar', ctx)
     assert.equal((await prisma.workspace.findUniqueOrThrow({ where: { id: w } })).safeModeAtivo, false)
     const desconhecido = await CO.perguntarAoCopilot('qual a capital da frança', ctx)
@@ -252,5 +309,11 @@ describe('Fase 1 contra o banco de teste', { skip: !TEM_BANCO ? 'exige banco de 
     assert.ok(p.decisoesRecentes.length > 0)
     assert.ok(['MANUAL', 'ASSISTED', 'AUTOMATIC'].includes(p.patrono.modo))
     assert.ok(p.proximaAcao.texto.length > 0)
+    // P2.15.1: o topo, o card de integrações e a fila vêm prontos para a tela.
+    assert.ok(p.patrono.estado.titulo.startsWith('Patrono'))
+    assert.equal(p.resumoIntegracoes.total >= 7, true)
+    assert.equal(p.precisaDeVoce.total, p.pendencias)
+    assert.ok(p.decisoesRecentes.length <= 4)
+    assert.ok(p.decisoesRecentes.every((d) => !/candidato\(s\)/.test(d.texto)), JSON.stringify(p.decisoesRecentes))
   })
 })

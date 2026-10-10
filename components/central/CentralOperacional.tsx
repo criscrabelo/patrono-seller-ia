@@ -2,49 +2,64 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Bot, BellRing, CheckCircle2, AlertTriangle, XCircle, Loader2, Play, ShieldAlert, Clock, Plug, Wallet, ArrowRight } from 'lucide-react'
+import { Bot, BellRing, CheckCircle2, AlertTriangle, XCircle, Loader2, Play, ShieldAlert, Plug, Wallet, ArrowRight, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { CopilotPainel } from './CopilotPainel'
 
+type Risco = 'ALTO' | 'MEDIO' | 'BAIXO'
+type EstadoIntegracao = 'OK' | 'ATENCAO' | 'PROBLEMA' | 'DESCONECTADA'
+
 interface Painel {
   patrono: {
-    modo: string
-    politicaVersao: number
     bloqueado: boolean
     safeMode: boolean
-    motivoDoBloqueio: string | null
     ultimoCiclo: { estado: string; quando: string; resumo: string[] } | null
+    estado: { titulo: string; frase: string; nota: string; tom: 'ok' | 'pronto' | 'atencao' | 'parado' }
   }
-  pendencias: number
-  atividadeHoje: { quando: string; texto: string }[]
-  decisoesRecentes: { id: string; tipo: string; ator: string; decisao: string; explicacao: string[]; criadoEm: string }[]
-  integracoes: { plataforma: string; estado: 'OK' | 'ATENCAO' | 'PROBLEMA' | 'DESCONECTADA'; detalhe: string }[]
+  precisaDeVoce: { total: number; porRisco: Record<Risco, number>; principal: { titulo: string; resumo: string; risco: string } | null }
+  decisoesRecentes: { id: string; quando: string; texto: string; detalhes: string[]; vezes: number }[]
+  resumoIntegracoes: {
+    conectadas: number
+    total: number
+    comProblema: number
+    mensagem: string
+    destaque: { plataforma: string; nome: string; estado: EstadoIntegracao; detalhe: string }[]
+  }
   financeiro: { comissoes: { prevista: number; confirmada: number; recebida: number } }
-  proximaAcao: { texto: string; link: string | null; comando: string | null }
+  proximaAcao: { texto: string; link: string | null; comando: 'rodar' | null; botao: string | null }
 }
 
-const MODO: Record<string, string> = {
-  MANUAL: 'Sugere e pede sua decisão',
-  ASSISTED: 'Faz o rotineiro, pede o importante',
-  AUTOMATIC: 'Age sozinho dentro das suas regras',
-}
-
-const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
 const quandoRelativo = (iso: string) => {
   const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
-  if (min < 1) return 'agora'
+  if (min < 1) return 'agora há pouco'
   if (min < 60) return `há ${min} min`
   const h = Math.round(min / 60)
-  return h < 24 ? `há ${h} h` : new Date(iso).toLocaleDateString('pt-BR')
+  return h < 24 ? `há ${h} h` : `em ${new Date(iso).toLocaleDateString('pt-BR')}`
 }
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-const ATOR: Record<string, string> = { PATRONO: 'Patrono', TITULAR: 'Você', SISTEMA: 'Sistema' }
+
+const TOM = {
+  ok: { icone: Bot, caixa: 'bg-accent/15', cor: 'text-accent', borda: 'border-accent/30' },
+  pronto: { icone: Bot, caixa: 'bg-accent/15', cor: 'text-accent', borda: 'border-border' },
+  atencao: { icone: BellRing, caixa: 'bg-warning/15', cor: 'text-warning', borda: 'border-warning/40' },
+  parado: { icone: ShieldAlert, caixa: 'bg-warning/15', cor: 'text-warning', borda: 'border-warning/40' },
+} as const
+
+const RISCO: Record<Risco, { rotulo: string; cls: string }> = {
+  ALTO: { rotulo: 'urgente', cls: 'border-danger/40 bg-danger/10 text-danger' },
+  MEDIO: { rotulo: 'risco médio', cls: 'border-warning/40 bg-warning/10 text-warning' },
+  BAIXO: { rotulo: 'risco baixo', cls: 'border-accent/30 bg-accent/10 text-accent' },
+}
 
 /**
  * P2.15 — Command Center no topo da home. Some sozinho se a flag
  * CENTRAL_OPERACIONAL estiver desligada (a API responde 404).
+ *
+ * P2.15.1 — hierarquia para ler em 5 segundos: (1) o que o Patrono está
+ * fazendo + UMA próxima ação; (2) três números: precisa de você, ganhos,
+ * integrações; (3) o que ele fez, em frases simples, e a conversa.
  */
 export function CentralOperacional() {
   const [painel, setPainel] = useState<Painel | null>(null)
@@ -66,8 +81,8 @@ export function CentralOperacional() {
     try {
       const res = await fetch('/api/supervisor/ciclo', { method: 'POST' })
       const dados = await res.json().catch(() => ({}))
-      if (res.ok) toast({ title: 'O Patrono terminou o ciclo', description: (dados.resumo ?? []).join(' '), variant: 'success' })
-      else toast({ title: 'O ciclo não rodou', description: dados.error, variant: 'destructive' })
+      if (res.ok) toast({ title: 'Análise concluída', description: (dados.resumo ?? []).join(' '), variant: 'success' })
+      else toast({ title: 'Não consegui analisar agora', description: dados.error, variant: 'destructive' })
       await carregar()
     } finally {
       setRodando(false)
@@ -77,120 +92,139 @@ export function CentralOperacional() {
   if (desligado) return null
   if (!painel) return <div className="card-stat animate-pulse h-40" />
 
-  const { patrono } = painel
+  const { patrono, proximaAcao: acao, precisaDeVoce: pv, resumoIntegracoes: ri } = painel
+  const tom = TOM[patrono.estado.tom]
+  const IconeTom = tom.icone
   const c = painel.financeiro.comissoes
+  const riscoPrincipal = pv.principal ? RISCO[pv.principal.risco as Risco] ?? RISCO.BAIXO : null
+
+  const botaoRodar = (principal: boolean) => (
+    <Button size={principal ? 'lg' : 'sm'} variant={principal ? 'default' : 'ghost'} onClick={rodar} disabled={rodando} className={cn(principal && 'w-full sm:w-auto font-semibold')}>
+      {rodando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+      {rodando ? 'Analisando…' : 'Rodar agora'}
+    </Button>
+  )
 
   return (
     <div className="space-y-4">
-      {/* 1. O que o Patrono está fazendo + próxima melhor ação */}
-      <div className={cn('card-stat flex flex-col md:flex-row md:items-center gap-4', patrono.bloqueado && 'border-warning/40')}>
-        <div className="flex items-start gap-3 flex-1">
-          <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center shrink-0', patrono.bloqueado ? 'bg-warning/15' : 'bg-accent/15')}>
-            {patrono.bloqueado ? <ShieldAlert className="w-5 h-5 text-warning" /> : <Bot className="w-5 h-5 text-accent" />}
+      {/* 1. O que o Patrono está fazendo + a UMA próxima ação */}
+      <div className={cn('card-stat grid gap-4 md:grid-cols-[1fr_minmax(260px,340px)] md:items-center', tom.borda)}>
+        <div className="flex items-start gap-3 min-w-0">
+          <div className={cn('w-11 h-11 rounded-xl flex items-center justify-center shrink-0', tom.caixa)}>
+            <IconeTom className={cn('w-5 h-5', tom.cor)} />
           </div>
-          <div className="space-y-1">
-            <p className="text-sm font-semibold text-white">
-              {patrono.safeMode ? 'O Patrono está em modo de segurança' : 'O Patrono está trabalhando para você'}
-            </p>
+          <div className="space-y-1 min-w-0">
+            <p className="text-base font-semibold text-white leading-tight">{patrono.estado.titulo}</p>
+            <p className="text-sm text-white/80">{patrono.estado.frase}</p>
+            {patrono.estado.nota && <p className="text-xs text-muted-foreground">{patrono.estado.nota}</p>}
             <p className="text-xs text-muted-foreground">
-              {MODO[patrono.modo] ?? patrono.modo}
-              {patrono.bloqueado && patrono.motivoDoBloqueio ? ` · ${patrono.motivoDoBloqueio}` : ''}
-            </p>
-            {patrono.ultimoCiclo && (
-              <p className="text-xs text-muted-foreground">
-                Último ciclo {quandoRelativo(patrono.ultimoCiclo.quando)}: {patrono.ultimoCiclo.resumo.join(' ') || patrono.ultimoCiclo.estado.toLowerCase()}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-2 md:items-center">
-          <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-white max-w-xs">
-            <span className="text-muted-foreground">Próximo passo: </span>
-            {painel.proximaAcao.link ? (
-              <Link href={painel.proximaAcao.link} className="underline underline-offset-2">{painel.proximaAcao.texto}</Link>
-            ) : (
-              painel.proximaAcao.texto
-            )}
-          </div>
-          <Button size="sm" onClick={rodar} disabled={rodando}>
-            {rodando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            {rodando ? 'Analisando…' : 'Rodar agora'}
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* 2. Precisa de você */}
-        <Link href="/precisa-de-voce" className={cn('card-stat flex items-center gap-3 hover:border-accent/40 transition-colors', painel.pendencias > 0 && 'border-warning/40')}>
-          <BellRing className={cn('w-5 h-5', painel.pendencias > 0 ? 'text-warning' : 'text-muted-foreground')} />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-white">Precisa de você</p>
-            <p className="text-xs text-muted-foreground">
-              {painel.pendencias > 0 ? `${painel.pendencias} decisão(ões) só sua(s)` : 'Nada agora — o resto o Patrono resolve'}
-            </p>
-          </div>
-          <ArrowRight className="w-4 h-4 text-muted-foreground" />
-        </Link>
-
-        {/* 6. Resultado */}
-        <div className="card-stat flex items-center gap-3">
-          <Wallet className="w-5 h-5 text-accent" />
-          <div>
-            <p className="text-sm font-semibold text-white">Comissões</p>
-            <p className="text-xs text-muted-foreground">
-              Recebida {brl(c.recebida)} · confirmada {brl(c.confirmada)} · prevista {brl(c.prevista)}
+              {patrono.ultimoCiclo ? `Última análise ${quandoRelativo(patrono.ultimoCiclo.quando)}.` : 'Ainda não fiz nenhuma análise.'}
             </p>
           </div>
         </div>
 
-        {/* 5. Saúde das integrações */}
-        <Link href="/integracoes" className="card-stat flex items-start gap-3 hover:border-accent/40 transition-colors">
-          <Plug className="w-5 h-5 text-muted-foreground mt-0.5" />
-          <div className="space-y-0.5 min-w-0">
-            <p className="text-sm font-semibold text-white">Integrações</p>
-            {painel.integracoes.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma conectada.</p>}
-            {painel.integracoes.map((i) => (
-              <p key={i.plataforma} className="text-xs flex items-center gap-1">
-                {i.estado === 'OK' ? <CheckCircle2 className="w-3 h-3 text-accent" /> : i.estado === 'ATENCAO' ? <AlertTriangle className="w-3 h-3 text-warning" /> : <XCircle className="w-3 h-3 text-danger" />}
-                <span className="capitalize text-white">{i.plataforma}</span>
-                <span className="text-muted-foreground truncate">— {i.detalhe}</span>
-              </p>
-            ))}
-          </div>
-        </Link>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* 3. O que aconteceu hoje */}
-        <div className="card-stat space-y-2">
-          <p className="text-sm font-semibold text-white flex items-center gap-2"><Clock className="w-4 h-4 text-muted-foreground" />Hoje</p>
-          {painel.atividadeHoje.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Nada ainda hoje. Use “Rodar agora”.</p>
+        <div className={cn('rounded-xl border p-3 space-y-2', acao.link === '/precisa-de-voce' ? 'border-warning/40 bg-warning/5' : 'border-accent/30 bg-accent/5')}>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Próximo passo</p>
+          <p className="text-sm text-white font-medium">{acao.texto}</p>
+          {acao.comando === 'rodar' ? (
+            botaoRodar(true)
+          ) : acao.link && acao.botao ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="lg" asChild className="w-full sm:w-auto font-semibold">
+                <Link href={acao.link}>{acao.botao}<ArrowRight className="w-4 h-4" /></Link>
+              </Button>
+              {botaoRodar(false)}
+            </div>
           ) : (
-            painel.atividadeHoje.map((a, i) => (
-              <p key={i} className="text-xs text-muted-foreground"><span className="text-white tabular-nums">{hora(a.quando)}</span> — {a.texto}</p>
-            ))
+            botaoRodar(false)
           )}
         </div>
+      </div>
 
-        {/* 4. Decisões recentes, com o porquê */}
-        <div className="card-stat space-y-2">
-          <p className="text-sm font-semibold text-white">Decisões recentes</p>
+      {/* 2. Três números: precisa de você · ganhos · integrações */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Link
+          href="/precisa-de-voce"
+          className={cn('card-stat flex flex-col gap-2 hover:border-accent/40 transition-colors', pv.total > 0 && 'border-warning/40')}
+        >
+          <div className="flex items-center gap-2">
+            <BellRing className={cn('w-4 h-4', pv.total > 0 ? 'text-warning' : 'text-muted-foreground')} />
+            <p className="text-sm font-semibold text-white flex-1">Precisa de você</p>
+            <ArrowRight className="w-4 h-4 text-muted-foreground" />
+          </div>
+          {pv.total === 0 ? (
+            <>
+              <p className="text-2xl font-bold text-white tabular-nums">0</p>
+              <p className="text-xs text-muted-foreground">Nada agora — o Patrono segue sozinho.</p>
+            </>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-2">
+                <p className="text-2xl font-bold text-warning tabular-nums">{pv.total}</p>
+                <p className="text-xs text-muted-foreground">{pv.total === 1 ? 'item precisa de você' : 'itens precisam de você'}</p>
+                {riscoPrincipal && <span className={cn('ml-auto rounded-full border px-2 py-0.5 text-[10px] font-medium', riscoPrincipal.cls)}>{riscoPrincipal.rotulo}</span>}
+              </div>
+              {pv.principal && <p className="text-xs text-white/80 line-clamp-2">Primeiro: {pv.principal.titulo}</p>}
+            </>
+          )}
+        </Link>
+
+        <Link href="/vendas-comissoes" className="card-stat flex flex-col gap-2 hover:border-accent/40 transition-colors">
+          <div className="flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-accent" />
+            <p className="text-sm font-semibold text-white flex-1">Ganhos</p>
+            <ArrowRight className="w-4 h-4 text-muted-foreground" />
+          </div>
+          <p className="text-2xl font-bold text-white tabular-nums">{brl(c.recebida)}</p>
+          <p className="text-xs text-muted-foreground">
+            {c.recebida + c.confirmada + c.prevista === 0
+              ? 'Nenhuma comissão ainda. Aparece aqui quando a primeira venda entrar.'
+              : `Recebido. A receber: ${brl(c.confirmada)} · previsto: ${brl(c.prevista)}`}
+          </p>
+        </Link>
+
+        <Link href="/integracoes" className={cn('card-stat flex flex-col gap-2 hover:border-accent/40 transition-colors', ri.comProblema > 0 && 'border-danger/40')}>
+          <div className="flex items-center gap-2">
+            <Plug className={cn('w-4 h-4', ri.comProblema > 0 ? 'text-danger' : 'text-muted-foreground')} />
+            <p className="text-sm font-semibold text-white flex-1">Integrações</p>
+            <ArrowRight className="w-4 h-4 text-muted-foreground" />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <p className="text-2xl font-bold text-white tabular-nums">{ri.conectadas}</p>
+            <p className="text-xs text-muted-foreground">de {ri.total} canais conectados</p>
+          </div>
+          <p className={cn('text-xs', ri.comProblema > 0 ? 'text-danger' : 'text-muted-foreground')}>{ri.mensagem}</p>
+          {ri.destaque.slice(0, 3).map((i) => (
+            <p key={i.plataforma} className="text-xs flex items-center gap-1 min-w-0">
+              {i.estado === 'OK' ? <CheckCircle2 className="w-3 h-3 text-accent shrink-0" /> : i.estado === 'ATENCAO' ? <AlertTriangle className="w-3 h-3 text-warning shrink-0" /> : <XCircle className="w-3 h-3 text-danger shrink-0" />}
+              <span className="text-white">{i.nome}</span>
+              <span className="text-muted-foreground truncate">— {i.detalhe}</span>
+            </p>
+          ))}
+        </Link>
+      </div>
+
+      {/* 3. O que o Patrono fez + conversa */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card-stat space-y-3">
+          <p className="text-sm font-semibold text-white flex items-center gap-2"><History className="w-4 h-4 text-muted-foreground" />O que eu fiz por último</p>
           {painel.decisoesRecentes.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Nenhuma decisão registrada ainda.</p>
+            <p className="text-xs text-muted-foreground">Ainda não fiz nenhuma análise. Use “Rodar agora”.</p>
           ) : (
-            painel.decisoesRecentes.map((d) => (
-              <details key={d.id} className="text-xs">
-                <summary className="cursor-pointer text-white">
-                  <span className="text-muted-foreground">{ATOR[d.ator] ?? d.ator}:</span> {d.decisao}
-                </summary>
-                {d.explicacao.length > 0 && <ul className="mt-1 ml-3 list-disc text-muted-foreground space-y-0.5">{d.explicacao.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul>}
-              </details>
-            ))
+            <ul className="space-y-3">
+              {painel.decisoesRecentes.map((d) => (
+                <li key={d.id} className="text-xs space-y-0.5">
+                  <p className="text-white">
+                    {d.texto}
+                    <span className="text-muted-foreground"> · {quandoRelativo(d.quando)}{d.vezes > 1 ? ` · ${d.vezes} vezes` : ''}</span>
+                  </p>
+                  {d.detalhes.map((x, i) => <p key={i} className="text-muted-foreground">{x}</p>)}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
 
-        {/* Copilot */}
         <CopilotPainel aoAlterar={carregar} />
       </div>
     </div>

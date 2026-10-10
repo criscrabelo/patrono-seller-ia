@@ -8,9 +8,9 @@
  * permissões. O Copilot nunca tem atalho que a tela não tenha: toda ação
  * passa pelos mesmos motores (política, travas, aprovação, ledger).
  */
-import { painelCentral } from './central'
+import { painelCentral, nomeDoCanal } from './central'
 import { decidirPrecisaDeVoce, listarPrecisaDeVoce } from './precisa-de-voce'
-import { executarCiclo } from './supervisor/ciclo'
+import { executarCiclo, TIPO_EXCECAO } from './supervisor/ciclo'
 import { entrarEmSafeMode, sairDoSafeMode } from './kill-switch'
 import { listarApresentados } from './curadoria'
 
@@ -82,6 +82,51 @@ const AJUDA = [
   '• "pausar" / "retomar" — modo de segurança.',
 ]
 
+const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
+function quando(iso: string, agora: Date): string {
+  const min = Math.round((agora.getTime() - new Date(iso).getTime()) / 60000)
+  if (min < 1) return 'agora há pouco'
+  if (min < 60) return `há ${min} min`
+  const h = Math.round(min / 60)
+  return h < 24 ? `há ${h} h` : `em ${new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+}
+
+const CONFIANCA_EM_FRASE: Record<string, string> = {
+  SEM_HISTORICO_REAL: 'Ainda não há vendas nem cliques medidos deste produto, então a posição vem só do que dá para saber antes de publicar.',
+  BAIXA: 'Tenho pouca evidência real sobre ele ainda.',
+  MEDIA: 'Já há alguma evidência real a favor dele.',
+  ALTA: 'Há boa evidência real a favor dele.',
+}
+
+/** Linhas técnicas do ranking (nota, pesos, percentuais) ficam de fora da conversa. */
+const LINHA_TECNICA = /score|\/100|\d+%|cobertura|peso|elegíve|ML |base de evidência|empate técnico|sinais de mercado|capacidade de automatizar|sem histórico real|sem base real/i
+/** Reescritas de linhas do ranking que importam, mas vêm em jargão. */
+const REESCRITAS: Array<[RegExp, string]> = [
+  [/^Afinidade da titular/i, 'Você já comprou este produto: isso conta a favor, mas ainda não prova que ele vende.'],
+]
+
+/** FUNÇÃO PURA: por que este produto, em linguagem de gente. */
+export function explicarCandidato(
+  c: { posicao: number | null; nome: string; confianca: string | null; porqueDestaPosicao: string[] | null; riscos: string[] | null },
+  total: number
+): string[] {
+  const motivos = (c.porqueDestaPosicao ?? [])
+    .map((l) => REESCRITAS.find(([re]) => re.test(l))?.[1] ?? l)
+    .filter((l) => !LINHA_TECNICA.test(l))
+    .slice(0, 3)
+  // Riscos vêm às vezes com várias frases numa linha e repetem um motivo: uma frase por ponto, sem repetir.
+  const semPonto = (t: string) => t.trim().replace(/\.+$/, '')
+  const jaDito = new Set(motivos.map(semPonto))
+  const atencao = [...new Set((c.riscos ?? []).flatMap((r) => r.split(/(?<=\.)\s+/)).map(semPonto).filter((t) => t && !jaDito.has(t)))]
+  return [
+    `“${c.nome}” está em ${c.posicao ?? 1}º lugar entre as ${total} oportunidades que separei.`,
+    ...(c.confianca && CONFIANCA_EM_FRASE[c.confianca] ? [CONFIANCA_EM_FRASE[c.confianca]] : []),
+    ...((c.porqueDestaPosicao ?? []).some((l) => /empate técnico/i.test(l)) ? ['Está empatado com outras opções: a ordem entre eles ainda não quer dizer que este seja melhor.'] : []),
+    ...motivos,
+    ...(atencao.length ? [`Pontos de atenção: ${atencao.join('; ')}.`] : []),
+  ]
+}
+
 export async function executarComando(comando: Comando, ctx: { workspaceId: string; userId: string; agora?: Date }): Promise<RespostaDoCopilot> {
   const agora = ctx.agora ?? new Date()
   const r = (texto: string[], alterou = false, sugestoes = SUGESTOES_PADRAO): RespostaDoCopilot => ({ comando: comando.tipo, texto, sugestoes, alterou })
@@ -91,41 +136,65 @@ export async function executarComando(comando: Comando, ctx: { workspaceId: stri
       return r(AJUDA)
     case 'STATUS': {
       const p = await painelCentral(ctx.workspaceId, agora)
+      const e = p.patrono.estado
+      const ciclo = p.patrono.ultimoCiclo
       const linhas = [
-        p.patrono.bloqueado ? `Estou travado com segurança: ${p.patrono.motivoDoBloqueio}` : `Estou operando no modo ${p.patrono.modo}.`,
-        p.patrono.ultimoCiclo ? `Último ciclo: ${p.patrono.ultimoCiclo.estado.toLowerCase()} — ${p.patrono.ultimoCiclo.resumo.join(' ') || 'sem resumo'}` : 'Ainda não rodei nenhum ciclo.',
-        p.pendencias ? `${p.pendencias} decisão(ões) esperando você.` : 'Nada esperando você.',
+        `${e.titulo}. ${e.frase}`,
+        ...(e.nota ? [e.nota] : []),
+        ciclo
+          ? `Minha última análise foi ${quando(ciclo.quando, agora)}${ciclo.resumo.length ? `: ${ciclo.resumo.join(' ')}` : '.'}`
+          : 'Ainda não fiz nenhuma análise. Diga "rodar agora" e eu começo.',
+        p.pendencias === 0 ? 'Nada está esperando você.' : p.pendencias === 1 ? '1 item precisa de você.' : `${p.pendencias} itens precisam de você.`,
         `Próximo passo: ${p.proximaAcao.texto}`,
       ]
       return r(linhas)
     }
     case 'PENDENCIAS': {
       const itens = await listarPrecisaDeVoce(ctx.workspaceId, agora)
-      if (!itens.length) return r(['Nada precisa de você agora. O resto o Patrono está cuidando.'])
+      if (!itens.length) return r(['Nada agora — sigo sozinho e aviso quando algo depender de você.'])
+      // Só pedido de aprovação ganha atalho "aprovar N". Item que é tarefa da
+      // titular (ex.: configurar o TikTok Shop) não pode ser dado como feito por atalho.
+      const aprovaveis = itens.map((i, n) => ({ i, n: n + 1 })).filter(({ i }) => i.tipo !== TIPO_EXCECAO)
+      const tarefas = itens.filter((i) => i.tipo === TIPO_EXCECAO && i.podeMarcarResolvido)
+      const comEvidencia = itens.filter((i) => !i.podeMarcarResolvido)
       return r(
-        [`${itens.length} decisão(ões) sua(s):`, ...itens.map((i, n) => `${n + 1}. ${i.titulo} — ${i.resumo}`), 'Responda "aprovar 1" ou "rejeitar 1".'],
+        [
+          itens.length === 1 ? 'Só 1 item precisa de você:' : `${itens.length} itens precisam de você (o mais urgente primeiro):`,
+          ...itens.map((i, n) => `${n + 1}. ${i.titulo} — ${i.resumo}${i.risco === 'ALTO' ? ' (urgente)' : ''}`),
+          ...(aprovaveis.length ? [`Para decidir, responda "aprovar ${aprovaveis[0].n}" ou "rejeitar ${aprovaveis[0].n}".`] : []),
+          ...(tarefas.length ? [`${tarefas.length === 1 ? 'Há 1 item' : `Há ${tarefas.length} itens`} para você fazer. Quando terminar, toque em "Já resolvi" em Precisa de você.`] : []),
+          ...(comEvidencia.length ? [`${comEvidencia.length === 1 ? `"${comEvidencia[0].titulo}" sai` : 'Os itens de configuração saem'} da lista sozinho quando a conexão existir de verdade. Para ver os passos, abra Precisa de você e toque em "Ver como fazer".`] : []),
+        ],
         false,
-        itens.slice(0, 2).flatMap((_, n) => [`aprovar ${n + 1}`, `rejeitar ${n + 1}`])
+        aprovaveis.length ? aprovaveis.slice(0, 2).flatMap(({ n }) => [`aprovar ${n}`, `rejeitar ${n}`]) : SUGESTOES_PADRAO
       )
     }
     case 'DECIDIR': {
       const itens = await listarPrecisaDeVoce(ctx.workspaceId, agora)
       const alvo = itens[comando.numero - 1]
-      if (!alvo) return r([`Não há o pedido ${comando.numero}. Diga "o que precisa de mim?" para ver a lista atual.`])
+      if (!alvo) return r([`Não há o item ${comando.numero}. Diga "o que precisa de mim?" para ver a lista atual.`])
+      if (!alvo.podeMarcarResolvido && comando.decisao === 'APROVAR')
+        return r([`"${alvo.titulo}" não sai por aprovação: sai sozinho quando a conexão existir de verdade. Nada foi alterado. Os passos estão em Precisa de você, em "Ver como fazer".`])
+      if (alvo.tipo === TIPO_EXCECAO && comando.decisao === 'APROVAR')
+        return r([`"${alvo.titulo}" não é uma aprovação: é algo para você fazer. Nada foi alterado. Quando terminar, toque em "Já resolvi" em Precisa de você.`])
       const res = await decidirPrecisaDeVoce({ workspaceId: ctx.workspaceId, userId: ctx.userId, id: alvo.id, decisao: comando.decisao, agora })
+      if (res.status === 'PENDENTE') return r([`"${alvo.titulo}": ${res.mensagem}`])
       return r([`"${alvo.titulo}": ${res.status === 'APROVADA' ? 'aprovado' : 'recusado'}. ${res.mensagem}`], true)
     }
     case 'HOJE': {
       const p = await painelCentral(ctx.workspaceId, agora)
       if (!p.atividadeHoje.length) return r(['Hoje ainda não fiz nada. Diga "rodar agora" para eu analisar os produtos.'])
-      return r(p.atividadeHoje.map((a) => `${new Date(a.quando).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })} — ${a.texto}`))
+      return r([
+        'Hoje eu:',
+        ...p.atividadeHoje.map((a) => `${hora(a.quando)} — ${a.texto}${a.vezes > 1 ? ` (${a.vezes} vezes)` : ''}`),
+      ])
     }
     case 'PORQUE': {
       const apresentados = await listarApresentados(ctx.workspaceId)
       if (!apresentados.length) return r(['Ainda não há recomendação. Diga "rodar agora".'])
       const alvoNorm = comando.alvo ? normalizar(comando.alvo) : null
       const c = (alvoNorm && apresentados.find((a) => normalizar(a.nome).includes(alvoNorm))) || apresentados[0]
-      return r([`${c.posicao}º ${c.nome} (nota ${c.score}, confiança ${String(c.confianca).toLowerCase().replace(/_/g, ' ')}):`, ...(c.porqueDestaPosicao ?? []).slice(0, 4), ...(c.riscos?.length ? [`Riscos: ${c.riscos.join('; ')}`] : [])])
+      return r(explicarCandidato(c, apresentados.length))
     }
     case 'RODAR': {
       const res = await executarCiclo({ workspaceId: ctx.workspaceId, userId: ctx.userId, gatilho: 'COPILOT', agora })
@@ -141,18 +210,20 @@ export async function executarComando(comando: Comando, ctx: { workspaceId: stri
     }
     case 'INTEGRACOES': {
       const p = await painelCentral(ctx.workspaceId, agora)
-      if (!p.integracoes.length) return r(['Nenhuma integração conectada ainda. Veja em Integrações.'])
-      return r(p.integracoes.map((i) => `${i.plataforma}: ${i.detalhe}`))
+      const ri = p.resumoIntegracoes
+      if (!ri.destaque.length) return r([`Nenhum canal conectado ainda (0 de ${ri.total}). Consigo analisar e recomendar, mas só publico depois de conectar um canal em Integrações.`])
+      return r([`${ri.conectadas} de ${ri.total} canais conectados. ${ri.mensagem}`, ...ri.destaque.map((i) => `${nomeDoCanal(i.plataforma)}: ${i.detalhe}`)])
     }
     case 'RESULTADO': {
       const p = await painelCentral(ctx.workspaceId, agora)
       const c = p.financeiro.comissoes as { prevista: number; confirmada: number; recebida: number }
       const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-      return r([`Comissões — prevista: ${brl(c.prevista)} · confirmada: ${brl(c.confirmada)} · recebida: ${brl(c.recebida)}.`])
+      if (!c.prevista && !c.confirmada && !c.recebida) return r(['Ainda não há comissões registradas. Quando a primeira venda entrar, eu mostro aqui.'])
+      return r([`Até agora você recebeu ${brl(c.recebida)}. Já confirmadas e a receber: ${brl(c.confirmada)}. Previstas (vendas ainda não confirmadas): ${brl(c.prevista)}.`])
     }
     case 'DESCONHECIDO':
     default:
-      return r(['Não entendi esse pedido. Tente uma destas:'], false)
+      return r(['Ainda não sei responder isso. Posso ajudar com uma destas:'], false)
   }
 }
 
