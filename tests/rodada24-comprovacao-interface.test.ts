@@ -91,11 +91,14 @@ describe('Segurança — sessão manda, payload não', () => {
   const comprovar = lerCodigo(ROTA_COMPROVAR)
   const dossie = lerCodigo(ROTA_DOSSIE)
 
+  const lerFonteDaSessao = () => readFileSync(join(process.cwd(), 'lib/sessao.ts'), 'utf8')
   test('as duas rotas exigem sessão ANTES de qualquer outra coisa', () => {
     for (const [nome, codigo] of [['comprovar', comprovar], ['dossiê', dossie]] as const) {
-      const pos401 = codigo.indexOf("status: 401")
+      // P2.15.4: o 401 (e o 403 de módulo) mora na porta única lib/sessao.ts.
+      const pos401 = codigo.indexOf('if (session instanceof NextResponse) return session')
       assert.ok(pos401 > 0, `${nome} precisa devolver 401 sem sessão`)
-      assert.match(codigo, /if \(!session\) return NextResponse\.json\([^)]*401/)
+      assert.match(codigo, /const session = await exigirSessao\(\)/)
+      assert.match(lerFonteDaSessao(), /if \(!session\) return NextResponse\.json\(\{ error: 'Não autorizado' \}, \{ status: 401 \}\)/)
       // Nada é lido do corpo nem dos params antes da checagem.
       const posBody = codigo.indexOf('req.json()')
       if (posBody > 0) assert.ok(pos401 < posBody, `${nome} lê o corpo antes de exigir sessão`)
