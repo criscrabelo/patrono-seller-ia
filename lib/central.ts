@@ -39,6 +39,7 @@ export function frasesDoEvento(e: Pick<DomainEvent, 'tipo' | 'payload'>): string
       // `chaves` sai redigido do ledger; `apresentados` é a contagem (P2.15.1).
       const n = typeof p.apresentados === 'number' ? p.apresentados : Array.isArray(p.chaves) ? p.chaves.length : null
       const avaliados = typeof p.avaliados === 'number' ? plural(p.avaliados, 'produto', 'produtos') : 'os produtos'
+      if (p.avaliados === 0) return 'Não havia produtos para analisar.'
       if (n === 0) return `Analisei ${avaliados}; nenhum estava apto agora.`
       return `Analisei ${avaliados} e selecionei ${n === null ? 'as melhores oportunidades' : plural(n, 'oportunidade', 'oportunidades')}.`
     }

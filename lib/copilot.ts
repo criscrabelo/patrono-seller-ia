@@ -191,7 +191,7 @@ export async function executarComando(comando: Comando, ctx: { workspaceId: stri
     }
     case 'PORQUE': {
       const apresentados = await listarApresentados(ctx.workspaceId)
-      if (!apresentados.length) return r(['Ainda não há recomendação. Diga "rodar agora".'])
+      if (!apresentados.length) return r(['Ainda não tenho produto recomendado. Se o catálogo estiver vazio, cadastre produtos ou informe um em Oportunidades; depois diga "rodar agora".'])
       const alvoNorm = comando.alvo ? normalizar(comando.alvo) : null
       const c = (alvoNorm && apresentados.find((a) => normalizar(a.nome).includes(alvoNorm))) || apresentados[0]
       return r(explicarCandidato(c, apresentados.length))

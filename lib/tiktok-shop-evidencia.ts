@@ -24,7 +24,7 @@ export const PASSOS_TIKTOK_SHOP = [
   'Cadastre a empresa como parceira (Service Partner / App Developer) e crie um app do tipo Affiliate, região Brasil.',
   'Peça a liberação da Affiliate API e o escopo "Read Creator Affiliate Collaborations" (1021508). Ela vem desligada e depende de aprovação do TikTok.',
   'Com o app aprovado, guarde App Key e App Secret direto nas variáveis do site — nunca cole em conversa.',
-  'Depois, autorize a sua conta de criadora pelo botão de conexão em Integrações. Quando a conexão estiver ativa, este item sai sozinho.',
+  'Depois disso, o Patrono libera a conexão do TikTok Shop em Integrações (ainda não está disponível) e você autoriza a sua conta de criadora. Quando a conexão estiver ativa, este item sai sozinho.',
 ]
 
 /** FUNÇÃO PURA: há evidência válida? Devolve a frase da evidência ou null. */

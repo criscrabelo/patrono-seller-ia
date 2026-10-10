@@ -169,7 +169,11 @@ export async function executarCiclo(p: {
       const coleta = await coletarCandidatos({ workspaceId: p.workspaceId, userId: p.userId, agora })
       await ir('VALIDANDO', { avaliados: coleta.avaliados, bloqueados: coleta.bloqueados })
       await ir('RANQUEANDO')
-      resumo.push(`Analisei ${coleta.avaliados} ${coleta.avaliados === 1 ? 'produto' : 'produtos'} e selecionei ${coleta.apresentados} ${coleta.apresentados === 1 ? 'oportunidade' : 'oportunidades'}.`)
+      resumo.push(
+        coleta.avaliados === 0
+          ? 'Não havia produtos para analisar.'
+          : `Analisei ${coleta.avaliados} ${coleta.avaliados === 1 ? 'produto' : 'produtos'} e selecionei ${coleta.apresentados} ${coleta.apresentados === 1 ? 'oportunidade' : 'oportunidades'}.`
+      )
       await ir('DECIDINDO')
 
       const apresentados = await listarApresentados(p.workspaceId)
