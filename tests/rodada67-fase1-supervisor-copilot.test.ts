@@ -289,7 +289,7 @@ describe('Fase 1 contra o banco de teste', { skip: !TEM_BANCO ? 'exige banco de 
     const aprovar = await CO.perguntarAoCopilot(`aprovar ${n}`, ctx)
     assert.match(aprovar.texto[0], /aprovado/)
     assert.match((await CO.perguntarAoCopilot('aprovar 9', ctx)).texto[0], /Não há o item 9/)
-    assert.match((await CO.perguntarAoCopilot('por que este produto?', ctx)).texto[0], /º /)
+    assert.match((await CO.perguntarAoCopilot('por que este produto?', ctx)).texto[0], /º lugar|única oportunidade/)
     const pausar = await CO.perguntarAoCopilot('pausar tudo', ctx)
     assert.equal(pausar.alterou, true)
     assert.equal((await prisma.workspace.findUniqueOrThrow({ where: { id: w } })).safeModeAtivo, true)
