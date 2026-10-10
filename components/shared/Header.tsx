@@ -18,6 +18,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/links': 'Links Dinâmicos',
   '/monetizacao': 'Monetização',
   '/integracoes': 'Integrações',
+  '/precisa-de-voce': 'Precisa de você',
   '/video-seller': 'Patrono Video Seller',
   '/admin/usuarios': 'Usuários',
   '/whatsapp': 'WhatsApp em Massa',

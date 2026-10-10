@@ -27,6 +27,7 @@ import {
   Handshake,
   Receipt,
   Sparkles,
+  BellRing,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { usePendingApprovals } from '@/hooks/usePendingApprovals'
@@ -37,6 +38,7 @@ import type { ModuloKey } from '@/lib/modulos'
 
 const navItems: Array<{ href: string; label: string; icon: typeof LayoutDashboard; modulo: ModuloKey; badge?: boolean }> = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, modulo: 'dashboard' },
+  { href: '/precisa-de-voce', label: 'Precisa de você', icon: BellRing, modulo: 'precisa-de-voce' },
   { href: '/produtos', label: 'Produtos', icon: Package, modulo: 'produtos' },
   { href: '/produtos/imagens', label: 'Importar Imagens', icon: ImagePlus, modulo: 'produtos-imagens' },
   { href: '/oportunidades', label: 'Oportunidades', icon: Sparkles, modulo: 'oportunidades' },

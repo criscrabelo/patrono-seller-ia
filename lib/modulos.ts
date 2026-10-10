@@ -2,6 +2,7 @@
 // A tela "Usuários" fica de fora de propósito — é sempre admin-only.
 export const MODULOS = [
   { key: 'dashboard', label: 'Dashboard' },
+  { key: 'precisa-de-voce', label: 'Precisa de você' },
   { key: 'produtos', label: 'Produtos' },
   { key: 'produtos-imagens', label: 'Importar Imagens' },
   { key: 'oportunidades', label: 'Oportunidades' },

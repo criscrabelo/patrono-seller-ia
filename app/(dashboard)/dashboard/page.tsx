@@ -12,6 +12,7 @@ import { PrimeiraComissaoCard, type PrimeiraComissaoData } from '@/components/da
 import { formatDateShort } from '@/lib/utils'
 import type { StatusConteudo } from '@/types'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
+import { CentralOperacional } from '@/components/central/CentralOperacional'
 
 interface Metricas {
   totalProdutos: number
@@ -90,6 +91,9 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 w-full max-w-6xl">
+      {/* P2.15: Command Center (só aparece com a flag CENTRAL_OPERACIONAL) */}
+      <CentralOperacional />
+
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {cards.map(({ label, value, icon: Icon, color, bg, alert }) => (

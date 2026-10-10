@@ -16,6 +16,7 @@ export const FLAGS = {
   SUPERVISOR_AUTOMATICO: 'Supervisor pode agir sozinho dentro da política.',
   COPILOT_DETERMINISTICO: 'Copilot com comandos determinísticos (custo zero).',
   CENTRAL_DE_APROVACOES: 'Tela "Precisa de você" lê o Approval Engine.',
+  CENTRAL_OPERACIONAL: 'Command Center na home + ciclo manual do Supervisor (sem publicar).',
   LEDGER_NA_CURADORIA: 'Curadoria registra decisões e eventos.',
   TIKTOK_SHOP_CATALOGO: 'Catálogo oficial TikTok Shop (exige app aprovado).',
 } as const
