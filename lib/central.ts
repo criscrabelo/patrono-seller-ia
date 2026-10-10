@@ -211,7 +211,7 @@ export function proximaMelhorAcao(p: {
   if (p.pendencias > 0) {
     // Nem todo item é decisão (ex.: configurar o TikTok Shop): a contagem fala em "itens".
     const texto = p.pendencias === 1 && p.principal ? p.principal : `${plural(p.pendencias, 'item precisa', 'itens precisam')} de você.`
-    return { texto, link: '/precisa-de-voce', comando: null, botao: p.pendencias === 1 ? 'Resolver agora' : 'Ver itens' }
+    return { texto, link: '/precisa-de-voce', comando: null, botao: p.pendencias === 1 ? 'Ver agora' : 'Ver itens' }
   }
   if (p.integracoesComProblema > 0) return { texto: 'Renovar o acesso de uma integração.', link: '/integracoes', comando: null, botao: 'Abrir Integrações' }
   if (p.ultimoCicloHa === null || p.ultimoCicloHa > DIA) return { texto: 'Analisar as oportunidades agora.', link: null, comando: 'rodar', botao: 'Rodar agora' }

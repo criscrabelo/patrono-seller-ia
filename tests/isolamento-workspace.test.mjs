@@ -156,7 +156,8 @@ describe('Isolamento entre workspaces — escrita', () => {
 
   test('usuária B NÃO consegue apagar (descartar) o produto de A', async () => {
     const r = await B.fetch(`/api/produtos/${produtoA.id}`, { method: 'DELETE' })
-    assert.equal(r.status, 200) // a rota sempre responde 200 (updateMany sem match)
+    // P2.15.3: produto de outro workspace = 404 (antes a rota respondia 200 sem fazer nada).
+    assert.equal(r.status, 404)
 
     // Confirma que o produto de A continua "ativo", não "descartado".
     const confereA = await A.fetch(`/api/produtos/${produtoA.id}`)

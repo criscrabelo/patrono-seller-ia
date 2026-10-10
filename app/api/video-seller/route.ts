@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
 
   // O workspace da sessão é o que o gate usa para apurar o orçamento do mês.
   try {
-    const output = await gerarVideoSeller({ ...entrada, publicoAlvo: entrada.publicoAlvo.trim() || 'Público geral' }, session.user.workspaceId)
+    entrada.publicoAlvo = entrada.publicoAlvo.trim() || 'Público geral'
+    const output = await gerarVideoSeller(entrada, session.user.workspaceId)
     return NextResponse.json(output, { status: 201 })
   } catch (e) {
     // P2.15.3: com a IA paga desligada (padrão), o bloqueio do custo virava 500 e a tela dizia "a IA demorou".

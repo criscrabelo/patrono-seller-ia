@@ -52,7 +52,7 @@ describe('P2.15.1 — topo do Command Center', () => {
 describe('P2.15.1 — próxima ação: uma só, pendência primeiro', () => {
   test('pendência vence tudo e vira botão direto', () => {
     const a = proximaMelhorAcao({ pendencias: 1, bloqueado: false, ultimoCicloHa: null, integracoesComProblema: 2, principal: 'Escolher "Boneca"?' })
-    assert.deepEqual([a.link, a.botao, a.texto], ['/precisa-de-voce', 'Resolver agora', 'Escolher "Boneca"?'])
+    assert.deepEqual([a.link, a.botao, a.texto], ['/precisa-de-voce', 'Ver agora', 'Escolher "Boneca"?'])
     assert.equal(proximaMelhorAcao({ pendencias: 3, bloqueado: false, ultimoCicloHa: 1, integracoesComProblema: 0 }).botao, 'Ver itens')
     assert.equal(proximaMelhorAcao({ pendencias: 2, bloqueado: false, ultimoCicloHa: 1, integracoesComProblema: 0 }).texto, '2 itens precisam de você.')
   })
