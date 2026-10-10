@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { validarCredenciaisInstagram, inspecionarTokenMeta } from '@/lib/instagram'
 import { registrarAuditoria } from '@/lib/audit-log'
@@ -50,8 +49,8 @@ async function resumoDoWorkspace(workspaceId: string) {
 }
 
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   return NextResponse.json(await resumoDoWorkspace(session.user.workspaceId))
 }
@@ -66,8 +65,8 @@ const CorpoDaConexao = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const lido = CorpoDaConexao.safeParse(await req.json().catch(() => null))
   if (!lido.success) return NextResponse.json({ error: 'Dados inválidos.' }, { status: 400 })
@@ -155,8 +154,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const { searchParams } = new URL(req.url)
   const plataforma = searchParams.get('plataforma')

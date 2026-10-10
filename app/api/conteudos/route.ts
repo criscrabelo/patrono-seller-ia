@@ -1,37 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { avaliarRastreamentoDosConteudos } from '@/lib/rastreamento-da-publicacao'
+import { estaAtrasado } from '@/lib/publicacao-atrasada'
 
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
-  // Publicação automática: ao abrir o app, conteúdos agendados SEM vídeo
-  // cuja data já passou são marcados como publicados (complementa o cron).
-  // Conteúdos com vídeo são publicados no Instagram pelo cron ou pelo botão
-  // "Publicar agora" — não aqui, para não travar a listagem com chamadas à API.
-  // NENHUMA amostra de ML nasce aqui, e isso é deliberado.
-  //
-  // Este caminho marca como "publicado" um conteúdo agendado SEM vídeo, ao
-  // abrir a listagem. É publicação INTERNA: nada saiu do Patrono, nenhum
-  // canal devolveu identificador, ninguém viu o conteúdo. Capturar amostra
-  // daqui faria com que, trinta dias depois, o cron da janela a rotulasse
-  // como "não converteu" — ensinando ao modelo uma falha de um criativo que
-  // nunca chegou a existir para o público.
-  //
-  // A amostra nasce quando um canal confirma a distribuição — ver
-  // `avaliarDistribuicaoReal()` em lib/ml-captura-publicacao.ts.
-  await prisma.conteudo.updateMany({
-    where: {
-      workspaceId: session.user.workspaceId,
-      status: 'agendado',
-      dataAgendamento: { lte: new Date() },
-      videoUrl: null,
-    },
-    data: { status: 'publicado', dataPublicacao: new Date() },
-  })
+  // P2.15.4: a listagem NÃO altera nada. Antes, ao abrir, conteúdo agendado
+  // sem vídeo e com a data passada virava "publicado" sem ter saído — agora
+  // ele aparece como "Publicação atrasada" (campo `atrasado`), e "publicado"
+  // só existe com confirmação do canal (lib/publicacao-atrasada.ts).
+  const agora = new Date()
 
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status')
@@ -67,6 +48,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     conteudos.map((c) => ({
       ...c,
+      atrasado: estaAtrasado(c, agora),
       rastreamento: rastreamento.get(c.id) ?? null,
     }))
   )

@@ -145,6 +145,7 @@ export async function executarComando(comando: Comando, ctx: { workspaceId: stri
           ? `Minha última análise foi ${quando(ciclo.quando, agora)}${ciclo.resumo.length ? `: ${ciclo.resumo.join(' ')}` : '.'}`
           : 'Ainda não fiz nenhuma análise. Diga "rodar agora" e eu começo.',
         p.pendencias === 0 ? 'Nada está esperando você.' : p.pendencias === 1 ? '1 item precisa de você.' : `${p.pendencias} itens precisam de você.`,
+        ...(p.publicacoesAtrasadas ? [p.publicacoesAtrasadas === 1 ? 'Atenção: 1 publicação está atrasada — a data passou e nada saiu.' : `Atenção: ${p.publicacoesAtrasadas} publicações estão atrasadas — a data passou e nada saiu.`] : []),
         `Próximo passo: ${p.proximaAcao.texto}`,
       ]
       return r(linhas)

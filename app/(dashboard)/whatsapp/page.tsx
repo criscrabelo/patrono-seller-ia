@@ -10,12 +10,15 @@ import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
 import { respostaFinal } from '@/lib/aguardar-trabalho'
+import { motivoParaNaoEnviar } from '@/lib/whatsapp-elegibilidade'
 
 interface ConteudoOpcao {
   id: string
-  produto: { nome: string }
+  status: string
+  produto: { nome: string; imagens?: string[] }
   legendaWhatsapp: string | null
   redeSocial: string | null
+  alertasCompliance?: unknown
   createdAt: string
 }
 
@@ -41,7 +44,6 @@ export default function WhatsAppPage() {
   const [conteudos, setConteudos] = useState<ConteudoOpcao[]>([])
   const [conteudoSelecionado, setConteudoSelecionado] = useState<ConteudoOpcao | null>(null)
   const [mensagem, setMensagem] = useState('')
-  const [imagemUrl, setImagemUrl] = useState('')
   const [usarImagem, setUsarImagem] = useState(false)
 
   // Envio
@@ -55,7 +57,7 @@ export default function WhatsAppPage() {
     verificarStatus()
     carregarConteudos()
     const salvos = localStorage.getItem('wpp_contatos')
-    if (salvos) setContatosSalvos(JSON.parse(salvos))
+    try { if (salvos) setContatosSalvos(JSON.parse(salvos)) } catch { localStorage.removeItem('wpp_contatos') }
   }, [])
 
   async function verificarStatus() {
@@ -72,9 +74,10 @@ export default function WhatsAppPage() {
 
   async function carregarConteudos() {
     try {
-      const res = await fetch('/api/conteudos?status=roteiro_gerado&limit=50')
+      // P2.15.4: só conteúdo aprovado, feito para WhatsApp e sem alerta vermelho (o servidor confere de novo).
+      const res = await fetch('/api/conteudos?redeSocial=WhatsApp')
       const data = await res.json()
-      if (Array.isArray(data)) setConteudos(data)
+      if (Array.isArray(data)) setConteudos(data.filter((c: ConteudoOpcao) => motivoParaNaoEnviar(c) === null))
     } catch { /* silencioso */ }
   }
 
@@ -125,8 +128,8 @@ export default function WhatsAppPage() {
       toast({ title: 'Adicione ao menos um número', variant: 'destructive' })
       return
     }
-    if (!mensagem.trim()) {
-      toast({ title: 'Escreva a mensagem antes de enviar', variant: 'destructive' })
+    if (!conteudoSelecionado) {
+      toast({ title: 'Escolha um conteúdo aprovado para WhatsApp', variant: 'destructive' })
       return
     }
     if (!confirm(`Enviar para ${numeros.length} contato(s)? Isso pode levar alguns minutos.`)) return
@@ -135,13 +138,12 @@ export default function WhatsAppPage() {
     setResultados([])
 
     try {
-      const res = await fetch('/api/whatsapp/enviar', {
+      const res = await fetch(`/api/whatsapp/enviar?conteudoId=${encodeURIComponent(conteudoSelecionado.id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           numeros,
-          mensagem: mensagem.trim(),
-          imagemUrl: usarImagem && imagemUrl ? imagemUrl : undefined,
+          comFotoDoProduto: usarImagem,
           delayMs: delay * 1000,
         }),
       })
@@ -269,9 +271,14 @@ export default function WhatsAppPage() {
               </h3>
 
               {/* Selecionar conteúdo gerado */}
+              {conteudos.length === 0 && (
+                <p className="rounded-lg border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+                  Nenhum conteúdo pronto para WhatsApp. Só vai para envio em massa o conteúdo <span className="text-white">gerado para WhatsApp e aprovado</span>, sem alerta vermelho. Gere em Gerar Conteúdo (rede “WhatsApp”) e aprove em Aprovações.
+                </p>
+              )}
               {conteudos.length > 0 && (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1.5 block">Usar legenda de conteúdo gerado</label>
+                  <label className="text-xs text-muted-foreground mb-1.5 block">Conteúdo aprovado para WhatsApp</label>
                   <select
                     className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-accent"
                     value={conteudoSelecionado?.id ?? ''}
@@ -281,7 +288,7 @@ export default function WhatsAppPage() {
                       else { setConteudoSelecionado(null) }
                     }}
                   >
-                    <option value="">— Escrever manualmente —</option>
+                    <option value="">— Escolha um conteúdo aprovado —</option>
                     {conteudos.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.produto.nome} {c.redeSocial ? `(${c.redeSocial})` : ''}
@@ -299,10 +306,11 @@ export default function WhatsAppPage() {
                 <textarea
                   rows={6}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-white placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent resize-none"
-                  placeholder="Digite a mensagem ou selecione um conteúdo acima..."
+                  placeholder="A mensagem é a legenda aprovada do conteúdo escolhido acima."
                   value={mensagem}
-                  onChange={(e) => setMensagem(e.target.value)}
+                  readOnly
                 />
+                <p className="mt-1 text-[11px] text-muted-foreground">Para mudar o texto, edite a legenda do conteúdo e aprove de novo.</p>
               </div>
 
               {/* Imagem opcional */}
@@ -315,16 +323,10 @@ export default function WhatsAppPage() {
                     className="rounded border-border accent-accent"
                   />
                   <ImageIcon className="w-3.5 h-3.5" />
-                  Enviar com imagem
+                  Enviar com a foto do produto
                 </label>
-                {usarImagem && (
-                  <input
-                    type="url"
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-white placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
-                    placeholder="https://... URL da imagem"
-                    value={imagemUrl}
-                    onChange={(e) => setImagemUrl(e.target.value)}
-                  />
+                {usarImagem && conteudoSelecionado && !(conteudoSelecionado.produto.imagens ?? []).length && (
+                  <p className="text-[11px] text-warning">Este produto não tem foto cadastrada: a mensagem vai só com texto.</p>
                 )}
               </div>
 
@@ -415,7 +417,7 @@ export default function WhatsAppPage() {
             <Button
               size="lg"
               onClick={enviarMassa}
-              disabled={enviando || !status?.conectado || status?.envioPermitido === false || numerosAtivos === 0 || !mensagem.trim()}
+              disabled={enviando || !status?.conectado || status?.envioPermitido === false || numerosAtivos === 0 || !conteudoSelecionado}
               style={{ background: enviando ? undefined : '#25D366' }}
               className="text-white font-semibold"
             >

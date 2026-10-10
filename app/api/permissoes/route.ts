@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { MODULO_KEYS } from '@/lib/modulos'
 
@@ -8,8 +7,8 @@ import { MODULO_KEYS } from '@/lib/modulos'
 // Admin sempre vê tudo, sem consultar o banco. Módulo sem registro
 // explícito é considerado liberado (default-allow).
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   if (session.user.role === 'admin') {
     return NextResponse.json({ modulos: MODULO_KEYS })

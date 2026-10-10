@@ -4,8 +4,7 @@
  * próprio. Nenhuma rota recebe workspaceId do cliente: vem da sessão.
  */
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from './auth'
+import { exigirSessao } from './sessao'
 import { flagLigada, type ChaveDeFlag } from './feature-flags'
 import { ErroDeAprovacao } from './aprovacoes'
 import { ErroDeCuradoria } from './curadoria'
@@ -16,8 +15,9 @@ import { log } from './observabilidade'
 export type Sessao = { workspaceId: string; userId: string }
 
 export async function exigirSessaoEFlag(flag: ChaveDeFlag): Promise<Sessao | NextResponse> {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  // P2.15.4: sessão + permissão de módulo pela porta única.
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
   if (!(await flagLigada(flag, session.user.workspaceId))) return NextResponse.json({ error: 'Recurso ainda não liberado.' }, { status: 404 })
   return { workspaceId: session.user.workspaceId, userId: session.user.id }
 }

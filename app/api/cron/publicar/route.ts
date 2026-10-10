@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { STATUS_ATRASADA, MOTIVO_SEM_VIDEO, MOTIVO_SEM_CANAL } from '@/lib/publicacao-atrasada'
 import { prisma } from '@/lib/prisma'
 import { renovarTokenInstagram } from '@/lib/instagram'
 import { autorizarPublicacaoReal } from '@/lib/porta-de-publicacao-real'
@@ -78,7 +79,8 @@ export async function GET(req: NextRequest) {
     where: { status: 'agendado', dataAgendamento: { lte: agora } },
   })
 
-  let publicadosApp = 0
+  // P2.15.4: sem vídeo ou sem canal o conteúdo NÃO saiu — fica "Publicação atrasada", nunca "publicado".
+  let atrasados = 0
   // GATILHO A (P0.2 Bloco 4.1): a amostra de ML nasce quando um CANAL
   // confirma a distribuição — nunca quando o conteúdo é marcado como
   // publicado só dentro do app. Os dois caminhos internos abaixo (sem
@@ -92,13 +94,12 @@ export async function GET(req: NextRequest) {
   for (const c of devidos) {
     // Sem vídeo: publicação apenas dentro do app.
     if (!c.videoUrl) {
-      // PUBLICAÇÃO INTERNA: sem vídeo não há nada a distribuir. Nenhuma
-      // amostra de ML nasce daqui.
+      // Sem vídeo não há nada a distribuir: não saiu. Nenhuma amostra de ML nasce daqui.
       await prisma.conteudo.update({
         where: { id: c.id },
-        data: { status: 'publicado', dataPublicacao: agora },
+        data: { status: STATUS_ATRASADA, erroPublicacao: MOTIVO_SEM_VIDEO },
       })
-      publicadosApp++
+      atrasados++
       continue
     }
 
@@ -112,13 +113,12 @@ export async function GET(req: NextRequest) {
       !integracao.accessToken ||
       !integracao.accountId
     ) {
-      // PUBLICAÇÃO INTERNA: sem canal conectado o conteúdo não circulou.
-      // Nenhuma amostra de ML nasce daqui.
+      // Sem canal conectado o conteúdo não circulou. Nenhuma amostra de ML nasce daqui.
       await prisma.conteudo.update({
         where: { id: c.id },
-        data: { status: 'publicado', dataPublicacao: agora },
+        data: { status: STATUS_ATRASADA, erroPublicacao: MOTIVO_SEM_CANAL },
       })
-      publicadosApp++
+      atrasados++
       continue
     }
 
@@ -182,7 +182,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     modo: modoDeExecucao(),
-    publicadosApp,
+    atrasados,
     trabalhosDePublicacao: trabalhos.length,
     publicadosInstagram: contagem.SUCCEEDED ?? 0,
     emAndamento: (contagem.PENDING ?? 0) + (contagem.RUNNING ?? 0),

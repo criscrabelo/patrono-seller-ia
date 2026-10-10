@@ -28,6 +28,7 @@ interface Painel {
     destaque: { plataforma: string; nome: string; estado: EstadoIntegracao; detalhe: string }[]
   }
   financeiro: { comissoes: { prevista: number; confirmada: number; recebida: number } }
+  publicacoesAtrasadas: number
   proximaAcao: { texto: string; link: string | null; comando: 'rodar' | null; botao: string | null }
 }
 
@@ -138,6 +139,12 @@ export function CentralOperacional() {
             <p className="text-xs text-muted-foreground">
               {patrono.ultimoCiclo ? `Última análise ${quandoRelativo(patrono.ultimoCiclo.quando)}.` : 'Ainda não fiz nenhuma análise.'}
             </p>
+            {painel.publicacoesAtrasadas > 0 && (
+              <Link href="/conteudos" className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-xs text-warning hover:bg-warning/20">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                {painel.publicacoesAtrasadas === 1 ? '1 publicação atrasada: a data passou e nada saiu.' : `${painel.publicacoesAtrasadas} publicações atrasadas: a data passou e nada saiu.`}
+              </Link>
+            )}
           </div>
         </div>
 

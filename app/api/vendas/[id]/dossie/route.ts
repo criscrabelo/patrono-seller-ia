@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { obterDossieDaOperacao } from '@/lib/dossie-operacao'
 
 export const dynamic = 'force-dynamic'
@@ -13,8 +12,8 @@ export const dynamic = 'force-dynamic'
  * "existe, mas você não pode ver" já confirmaria que ela existe.
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const { id } = await params
   const dossie = await obterDossieDaOperacao(session.user.workspaceId, id)

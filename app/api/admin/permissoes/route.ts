@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { MODULOS } from '@/lib/modulos'
+import { MODULOS, MODULO_KEYS } from '@/lib/modulos'
 
 const ROLE_CONFIGURAVEL = 'usuario'
 
@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
   const { modulo, liberado } = await req.json().catch(() => ({}))
   if (!modulo || typeof liberado !== 'boolean') {
     return NextResponse.json({ error: 'Informe modulo e liberado' }, { status: 400 })
+  }
+  if (!(MODULO_KEYS as string[]).includes(modulo)) {
+    return NextResponse.json({ error: 'Módulo desconhecido' }, { status: 400 })
   }
 
   const atualizado = await prisma.moduloPermissao.upsert({

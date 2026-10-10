@@ -21,6 +21,7 @@ import { listarPrecisaDeVoce } from './precisa-de-voce'
 import { estadoDeExecucao } from './kill-switch'
 import { politicaAtiva } from './politica'
 import { resumoComissoes, resumoVendas } from './vendas-comissoes'
+import { contarPublicacoesAtrasadas } from './publicacao-atrasada'
 
 const DIA = 24 * 60 * 60 * 1000
 /** Início do dia em Brasília (UTC−3, sem horário de verão desde 2019). */
@@ -207,12 +208,16 @@ export function proximaMelhorAcao(p: {
   integracoesComProblema: number
   /** Título do pedido mais urgente (quando houver). */
   principal?: string | null
+  /** P2.15.4: conteúdos agendados cuja data passou sem publicação real. */
+  publicacoesAtrasadas?: number
 }): ProximaAcao {
   if (p.pendencias > 0) {
     // Nem todo item é decisão (ex.: configurar o TikTok Shop): a contagem fala em "itens".
     const texto = p.pendencias === 1 && p.principal ? p.principal : `${plural(p.pendencias, 'item precisa', 'itens precisam')} de você.`
     return { texto, link: '/precisa-de-voce', comando: null, botao: p.pendencias === 1 ? 'Ver agora' : 'Ver itens' }
   }
+  if ((p.publicacoesAtrasadas ?? 0) > 0)
+    return { texto: `${plural(p.publicacoesAtrasadas!, 'publicação está atrasada', 'publicações estão atrasadas')}: a data passou e nada saiu.`, link: '/conteudos', comando: null, botao: 'Ver conteúdos' }
   if (p.integracoesComProblema > 0) return { texto: 'Renovar o acesso de uma integração.', link: '/integracoes', comando: null, botao: 'Abrir Integrações' }
   if (p.ultimoCicloHa === null || p.ultimoCicloHa > DIA) return { texto: 'Analisar as oportunidades agora.', link: null, comando: 'rodar', botao: 'Rodar agora' }
   return { texto: 'Nada pendente. Estou em dia.', link: null, comando: null, botao: null }
@@ -295,7 +300,7 @@ export function decisoesLegiveis(lista: DecisaoBruta[], limite = 4): DecisaoLegi
 
 export async function painelCentral(workspaceId: string, agora = new Date()) {
   const hoje = inicioDoDiaEmBrasilia(agora)
-  const [ultimoRun, fila, eventosHoje, decisoes, integracoes, seguranca, politica, vendas, comissoes] = await Promise.all([
+  const [ultimoRun, fila, eventosHoje, decisoes, integracoes, seguranca, politica, vendas, comissoes, publicacoesAtrasadas] = await Promise.all([
     prisma.supervisorRun.findFirst({ where: { workspaceId }, orderBy: { iniciadoEm: 'desc' } }),
     listarPrecisaDeVoce(workspaceId, agora),
     prisma.domainEvent.findMany({ where: { workspaceId, ocorridoEm: { gte: hoje } }, orderBy: { ocorridoEm: 'desc' }, take: 40, select: { tipo: true, payload: true, ocorridoEm: true } }),
@@ -305,6 +310,7 @@ export async function painelCentral(workspaceId: string, agora = new Date()) {
     politicaAtiva(workspaceId),
     resumoVendas(workspaceId),
     resumoComissoes(workspaceId),
+    contarPublicacoesAtrasadas(workspaceId, agora),
   ])
   const saude = saudeDasIntegracoes(integracoes, agora)
   const resumoIntegracoes = resumoDasIntegracoes(saude)
@@ -349,6 +355,7 @@ export async function painelCentral(workspaceId: string, agora = new Date()) {
     decisoesRecentes: decisoesLegiveis(decisoes),
     integracoes: saude,
     resumoIntegracoes,
+    publicacoesAtrasadas,
     financeiro: { vendas, comissoes },
     proximaAcao: proximaMelhorAcao({
       pendencias,
@@ -357,6 +364,7 @@ export async function painelCentral(workspaceId: string, agora = new Date()) {
       ultimoCicloHa,
       integracoesComProblema: resumoIntegracoes.comProblema,
       principal: principal?.titulo ?? null,
+      publicacoesAtrasadas,
     }),
   }
 }

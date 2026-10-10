@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { registrarAuditoria } from '@/lib/audit-log'
 import { revogarIdentityConsent, revogarVoiceConsent } from '@/lib/digital-twin-revoke'
 
 /** Registra consentimento (identidade ou voz) — sempre GRANTED explicitamente pela própria titular. */
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const body = await req.json().catch(() => ({}))
   const { tipo, purpose } = body as { tipo?: 'identity' | 'voice'; purpose?: string }
@@ -60,8 +59,8 @@ export async function POST(req: NextRequest) {
 
 /** Revogação — impede novas gerações imediatamente (lib/digital-twin-revoke.ts). */
 export async function DELETE(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const { searchParams } = new URL(req.url)
   const tipo = searchParams.get('tipo')

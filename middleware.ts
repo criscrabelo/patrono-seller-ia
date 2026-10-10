@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { urlCanonica } from './lib/dominio'
+import { CABECALHO_CAMINHO, CABECALHO_METODO } from './lib/modulos-rotas'
 
 /**
  * Proteção de rotas — política "negar por padrão".
@@ -66,7 +67,14 @@ export default async function middleware(req: NextRequest) {
   if (ehPublica(pathname)) return NextResponse.next()
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (token) return NextResponse.next()
+  if (token) {
+    // P2.15.4: carimbo do caminho/método REAIS para a checagem de módulo no
+    // servidor (lib/sessao.ts). `set` sobrescreve o que o cliente mandar.
+    const cabecalhos = new Headers(req.headers)
+    cabecalhos.set(CABECALHO_CAMINHO, pathname)
+    cabecalhos.set(CABECALHO_METODO, req.method)
+    return NextResponse.next({ request: { headers: cabecalhos } })
+  }
 
   // Sem sessão. A resposta muda conforme quem está pedindo:
   //

@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { verificarConexao } from '@/lib/whatsapp'
 import { envioDeWhatsappPermitido } from '@/lib/transferencia-internacional'
@@ -8,8 +7,8 @@ import { envioDeWhatsappPermitido } from '@/lib/transferencia-internacional'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   // P2.11: a tela avisa e desabilita o envio onde ele é recusado.
   const hospedagem = envioDeWhatsappPermitido()

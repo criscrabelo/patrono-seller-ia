@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { validarCredenciaisInstagram, inspecionarTokenMeta } from '@/lib/instagram'
 import { registrarAuditoria } from '@/lib/audit-log'
@@ -28,8 +27,8 @@ import { preflightDePublicacao } from '@/lib/preflight-de-publicacao'
  * postagem, nenhum dado inventado.
  */
 export async function POST() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const workspaceId = session.user.workspaceId
   const integracao = await prisma.integracao.findUnique({

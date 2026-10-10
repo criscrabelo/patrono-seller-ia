@@ -22,6 +22,7 @@ import { respostaFinal } from '@/lib/aguardar-trabalho'
 interface Conteudo {
   id: string
   status: string
+  atrasado?: boolean
   redeSocial: string
   estilo: string
   visualizacoes: number
@@ -187,7 +188,7 @@ export default function ConteudosPage() {
       toast({ title: 'Erro ao agendar', description: 'Tente novamente.', variant: 'destructive' })
       return
     }
-    toast({ title: 'Conteúdo agendado!', description: 'Será publicado automaticamente na data marcada.', variant: 'success' })
+    toast({ title: 'Conteúdo agendado!', description: 'Na data marcada eu publico, se houver vídeo e o Instagram estiver conectado.', variant: 'success' })
     setAgendarId(null)
     setAgendarData('')
     fetchConteudos()
@@ -410,7 +411,12 @@ export default function ConteudosPage() {
                     <td className="px-4 py-3 text-muted-foreground">{c.redeSocial}</td>
                     <td className="px-4 py-3 text-muted-foreground">{c.estilo}</td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={c.status as StatusConteudo} />
+                      <StatusBadge status={(c.atrasado ? 'publicacao_atrasada' : c.status) as StatusConteudo} />
+                      {c.atrasado && (
+                        <span className="mt-1 block max-w-[220px] text-[10px] text-amber-400">
+                          {c.erroPublicacao ?? 'A data passou e nada foi publicado. Reagende quando estiver pronto.'}
+                        </span>
+                      )}
                       {c.rastreamento?.aviso && (
                         <span
                           title={`${c.rastreamento.aviso.titulo}. ${c.rastreamento.aviso.detalhe}`}
@@ -425,7 +431,7 @@ export default function ConteudosPage() {
                     <td className="px-4 py-3 text-right text-muted-foreground">{formatDateShort(c.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {(c.status === 'aprovado' || c.status === 'agendado') && (
+                        {(c.status === 'aprovado' || c.status === 'agendado' || c.status === 'publicacao_atrasada') && (
                           <>
                             <Button size="sm" variant="outline" onClick={() => abrirAgendamento(c)}>
                               <CalendarClock className="w-3.5 h-3.5" />
@@ -484,8 +490,9 @@ export default function ConteudosPage() {
               />
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Na data marcada o conteúdo é publicado automaticamente. Se houver vídeo e o
-              Instagram estiver conectado, o Reels é publicado de verdade.
+              Na data marcada, se houver vídeo e o Instagram estiver conectado, o Reels é
+              publicado de verdade. Sem isso nada sai: o conteúdo fica como “Publicação atrasada”
+              e a Central avisa você.
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setAgendarId(null)} disabled={salvandoAgenda}>

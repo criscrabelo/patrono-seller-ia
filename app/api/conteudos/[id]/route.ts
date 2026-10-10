@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 import { registrarAuditoria } from '@/lib/audit-log'
@@ -11,7 +10,8 @@ import { registrarAuditoria } from '@/lib/audit-log'
  * workspaceId/userId/produtoId (inclusive para produto de outro workspace) e
  * aprovar conteúdo com alerta vermelho — a trava só existia na tela.
  */
-const STATUS = ['ideia', 'produto_cadastrado', 'roteiro_gerado', 'aguardando_aprovacao', 'aprovado', 'agendado', 'publicado', 'analisar_resultado', 'reaproveitar', 'descartado'] as const
+// P2.15.4: 'publicado' NÃO está aqui — só o executor da publicação grava, com o id do canal.
+const STATUS = ['ideia', 'produto_cadastrado', 'roteiro_gerado', 'aguardando_aprovacao', 'aprovado', 'agendado', 'analisar_resultado', 'reaproveitar', 'descartado'] as const
 const legenda = z.string().max(5000).nullable()
 const Alteracao = z
   .object({
@@ -40,8 +40,8 @@ const Alteracao = z
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const conteudo = await prisma.conteudo.findFirst({
     where: { id, workspaceId: session.user.workspaceId },
@@ -54,10 +54,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
-  const lido = Alteracao.safeParse(await req.json().catch(() => null))
+  const bruto = await req.json().catch(() => null)
+  if (bruto && typeof bruto === 'object' && (bruto as { status?: unknown }).status === 'publicado')
+    return NextResponse.json({ error: 'Um conteúdo só fica "Publicado" quando o canal confirma a publicação. Use "Publicar agora" ou agende.' }, { status: 409 })
+  const lido = Alteracao.safeParse(bruto)
   if (!lido.success) {
     const primeiro = lido.error.issues[0]
     return NextResponse.json({ error: primeiro?.code === 'unrecognized_keys' ? 'Campo não pode ser alterado por aqui.' : 'Dados inválidos.' }, { status: 400 })
@@ -73,7 +76,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const conteudo = await prisma.conteudo.updateMany({
     where: { id, workspaceId: session.user.workspaceId },
-    data: { ...body, dataAgendamento: body.dataAgendamento === undefined ? undefined : body.dataAgendamento ? new Date(body.dataAgendamento) : null },
+    data: {
+      ...body,
+      dataAgendamento: body.dataAgendamento === undefined ? undefined : body.dataAgendamento ? new Date(body.dataAgendamento) : null,
+      // Reagendar limpa o motivo do atraso anterior.
+      ...(body.status === 'agendado' && { erroPublicacao: null }),
+    },
   })
 
   if (!conteudo.count) return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
@@ -87,14 +95,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       entityId: id,
       ...(alertaVermelho && { metadata: { riscoConfirmadoPelaTitular: true } }),
     })
-  } else if (body.status === 'publicado') {
-    await registrarAuditoria({
-      workspaceId: session.user.workspaceId,
-      userId: session.user.id,
-      action: 'publicacao.marcada',
-      entityType: 'Conteudo',
-      entityId: id,
-    })
   }
 
   return NextResponse.json({ success: true })
@@ -102,8 +102,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const r = await prisma.conteudo.deleteMany({
     where: { id, workspaceId: session.user.workspaceId },

@@ -14,6 +14,7 @@ import { useGuardModulo } from '@/hooks/useGuardModulo'
 import { STATUS_LABELS, type StatusConteudo } from '@/types'
 
 interface Conteudo {
+  atrasado?: boolean
   id: string
   redeSocial: string
   status: string
@@ -156,7 +157,7 @@ export default function CalendarioPage() {
                           'text-[10px] px-2 py-0.5 rounded-full text-white',
                           REDE_CORES[c.redeSocial] ?? 'bg-gray-500'
                         )}>
-                          {STATUS_LABELS[c.status as StatusConteudo] ?? c.status}
+                          {STATUS_LABELS[(c.atrasado ? 'publicacao_atrasada' : c.status) as StatusConteudo] ?? c.status}
                         </span>
                         <Link href={`/conteudos/${c.id}`}
                           className="text-xs text-accent hover:underline">Ver</Link>

@@ -6,6 +6,7 @@ export type StatusConteudo =
   | 'aprovado'
   | 'agendado'
   | 'publicado'
+  | 'publicacao_atrasada'
   | 'analisar_resultado'
   | 'reaproveitar'
   | 'descartado'
@@ -126,6 +127,7 @@ export const STATUS_LABELS: Record<StatusConteudo, string> = {
   aprovado: 'Aprovado',
   agendado: 'Agendado',
   publicado: 'Publicado',
+  publicacao_atrasada: 'Publicação atrasada',
   analisar_resultado: 'Analisar Resultado',
   reaproveitar: 'Reaproveitar',
   descartado: 'Descartado',
@@ -139,6 +141,7 @@ export const STATUS_COLORS: Record<StatusConteudo, string> = {
   aprovado: 'bg-green-400',
   agendado: 'bg-green-500',
   publicado: 'bg-green-700',
+  publicacao_atrasada: 'bg-amber-600',
   analisar_resultado: 'bg-purple-500',
   reaproveitar: 'bg-orange-500',
   descartado: 'bg-red-500',

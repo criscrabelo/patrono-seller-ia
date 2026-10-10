@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
 import { z } from 'zod'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { CATEGORIAS } from '@/types'
 import { coletarCandidatos, informarProduto, listarApresentados, ultimaColeta } from '@/lib/curadoria'
 import { candidatoParaTela, respostaDeErro, ultimaColetaParaTela } from '@/lib/curadoria-http'
@@ -25,8 +24,8 @@ const informadoSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   let body: unknown
   try {

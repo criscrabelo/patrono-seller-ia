@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { criarUrlAssinada } from '@/lib/supabase'
 import { BUCKET_DIGITAL_TWIN_PRIVADO as BUCKET_PRIVADO } from '@/lib/digital-twin-store'
 
 /** Lista assets do PRÓPRIO workspace, com URL assinada temporária (nunca pública/permanente). */
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const profile = await prisma.digitalTwinProfile.findUnique({ where: { workspaceId: session.user.workspaceId } })
   if (!profile) return NextResponse.json([])

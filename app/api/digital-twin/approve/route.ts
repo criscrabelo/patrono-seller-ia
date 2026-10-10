@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { registrarAuditoria } from '@/lib/audit-log'
 import { carregarContextoDigitalTwin } from '@/lib/digital-twin-store'
@@ -12,8 +11,8 @@ import { podeGerarComDigitalTwin } from '@/lib/digital-twin'
  * estiverem GRANTED (nunca aprova um perfil sem consentimento válido).
  */
 export async function POST() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const contexto = await carregarContextoDigitalTwin(session.user.workspaceId)
   if (!contexto.profile) return NextResponse.json({ error: 'Crie o perfil do Digital Twin primeiro.' }, { status: 400 })
@@ -46,8 +45,8 @@ export async function POST() {
 
 /** "Refazer" — desfaz a aprovação, sem apagar consentimentos/assets (a usuária reenvia só o que precisa). */
 export async function DELETE() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const profile = await prisma.digitalTwinProfile.findUnique({ where: { workspaceId: session.user.workspaceId } })
   if (!profile) return NextResponse.json({ error: 'Perfil não encontrado.' }, { status: 404 })

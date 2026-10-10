@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import crypto from 'crypto'
 
@@ -14,8 +13,8 @@ function sign(partnerId: number, partnerKey: string, path: string, timestamp: nu
 
 // GET – retorna credenciais salvas da Shopee (sem expor tokens)
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const integracao = await prisma.integracao.findUnique({
     where: { workspaceId_plataforma: { workspaceId: session.user.workspaceId, plataforma: 'shopee' } },
@@ -34,8 +33,8 @@ export async function GET() {
 
 // POST – salva credenciais e testa conexão (modo vendedor) ou só salva (modo afiliado)
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const body = await req.json().catch(() => ({}))
   const { modo, shopId, partnerId, partnerKey, accessToken, nomeLoja, subId } = body
@@ -100,8 +99,8 @@ export async function POST(req: NextRequest) {
 
 // DELETE – desconecta
 export async function DELETE() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   await prisma.integracao.updateMany({
     where: { workspaceId: session.user.workspaceId, plataforma: 'shopee' },

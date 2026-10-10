@@ -1,21 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { registrarAuditoria } from '@/lib/audit-log'
 import { gerarTokenWorker, listarTokensWorker, revogarTokenWorker } from '@/lib/digital-twin-worker-token'
 
 /** Lista tokens do próprio workspace — nunca o valor bruto/hash, só metadados. */
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
   const tokens = await listarTokensWorker(session.user.workspaceId)
   return NextResponse.json(tokens)
 }
 
 /** Gera um novo token de pareamento — devolvido em texto puro só nesta resposta, nunca de novo. */
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const body = await req.json().catch(() => ({}))
   const label = typeof body.label === 'string' ? body.label.slice(0, 100) : undefined
@@ -36,8 +35,8 @@ export async function POST(req: NextRequest) {
 
 /** Revoga um token — o worker que o usava para de conseguir reivindicar jobs imediatamente. */
 export async function DELETE(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const { searchParams } = new URL(req.url)
   const tokenId = searchParams.get('id')

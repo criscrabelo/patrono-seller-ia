@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { gerarConteudo, BloqueadoPorPoliticaDeCusto } from '@/lib/claude'
 import { gerarConteudoGratuito } from '@/lib/conteudo-gratuito'
@@ -19,8 +18,8 @@ export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const body = await req.json().catch(() => ({}))
   const parsed = gerarSchema.safeParse(body)

@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { registrarAuditoria } from '@/lib/audit-log'
 
@@ -10,8 +9,8 @@ import { registrarAuditoria } from '@/lib/audit-log'
  * disso, o Autopilot reutiliza o VoiceProfile sem pedir aprovação de novo.
  */
 export async function POST() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const profile = await prisma.digitalTwinProfile.findUnique({ where: { workspaceId: session.user.workspaceId } })
   if (!profile || !profile.voiceProfileId) {
@@ -37,8 +36,8 @@ export async function POST() {
 
 /** "Refazer referência" — desfaz a aprovação da voz (nunca apaga o consentimento). */
 export async function DELETE() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+  const session = await exigirSessao()
+  if (session instanceof NextResponse) return session
 
   const profile = await prisma.digitalTwinProfile.findUnique({ where: { workspaceId: session.user.workspaceId } })
   if (!profile) return NextResponse.json({ error: 'Perfil não encontrado.' }, { status: 404 })
