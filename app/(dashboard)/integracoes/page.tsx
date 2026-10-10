@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CheckCircle, XCircle, ExternalLink, Loader2, AlertCircle, RefreshCw, Clock } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, Loader2, Info, RefreshCw, Clock, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
@@ -180,7 +180,7 @@ export default function IntegracoesPage() {
     const data = campos[plataforma.id] ?? {}
     const accessToken = data.accessToken?.trim()
     if (!accessToken) {
-      toast({ title: 'Preencha o Access Token', variant: 'destructive' })
+      toast({ title: 'Preencha o token de acesso', variant: 'destructive' })
       return
     }
 
@@ -243,13 +243,13 @@ export default function IntegracoesPage() {
     if (res.ok) {
       const quantos = data.autorizacao?.scopes?.length ?? 0
       toast({
-        title: quantos > 0 ? 'Permissoes comprovadas' : 'Nao foi possivel comprovar as permissoes',
-        description: quantos > 0 ? `${quantos} permissao(oes) confirmada(s) pela Meta.` : data.motivo,
+        title: quantos > 0 ? 'Permissões comprovadas' : 'Não foi possível comprovar as permissões',
+        description: quantos > 0 ? `${quantos} permissão(ões) confirmada(s) pela Meta.` : data.motivo,
         variant: quantos > 0 ? 'success' : 'destructive',
       })
       fetchIntegracoes()
     } else {
-      toast({ title: 'Erro ao revalidar', description: data.error, variant: 'destructive' })
+      toast({ title: 'Erro ao comprovar as permissões', description: data.error, variant: 'destructive' })
     }
     setRevalidando(false)
   }
@@ -262,9 +262,9 @@ export default function IntegracoesPage() {
       return { label: 'Token expirado', cls: 'border-danger/40 bg-danger/10 text-danger' }
     }
     if (diasRestantes <= 15) {
-      return { label: `Expira em ${diasRestantes}d`, cls: 'border-warning/40 bg-warning/10 text-warning' }
+      return { label: `Expira em ${diasRestantes} ${diasRestantes === 1 ? 'dia' : 'dias'}`, cls: 'border-warning/40 bg-warning/10 text-warning' }
     }
-    return { label: `Válido por ${diasRestantes}d`, cls: 'border-accent/30 bg-accent/10 text-accent' }
+    return { label: `Válido por mais ${diasRestantes} dias`, cls: 'border-accent/30 bg-accent/10 text-accent' }
   }
 
   async function desconectar(id: string, nome: string) {
@@ -286,21 +286,19 @@ export default function IntegracoesPage() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div>
-        <h2 className="text-lg font-semibold text-white">Integrações</h2>
-        <p className="text-sm text-muted-foreground">
-          {conectados} de {PLATAFORMAS.length} plataformas conectadas · Instagram, TikTok, Mercado Livre, Shopee, Hotmart, Amazon
-        </p>
-      </div>
+      {/* O título "Integrações" já está no cabeçalho da página: aqui só o resumo. */}
+      <p className="text-sm text-muted-foreground">
+        <span className="font-medium text-white">{conectados} de {PLATAFORMAS.length}</span> plataformas conectadas
+      </p>
 
-      {/* Aviso */}
-      <div className="flex gap-3 rounded-xl border border-warning/30 bg-warning/5 p-4">
-        <AlertCircle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+      {/* Orientação (informativa, não é alerta) */}
+      <div className="flex gap-3 rounded-xl border border-border bg-card/50 p-4">
+        <Info className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
         <div className="text-sm">
-          <p className="text-warning font-medium mb-1">Como obter as credenciais</p>
+          <p className="text-white font-medium mb-1">Como conectar</p>
           <p className="text-muted-foreground">
-            Cada plataforma exige cadastro como desenvolvedor. Clique em "Ver documentação" em cada card para
-            obter seu token de acesso. Os tokens são armazenados com segurança no banco de dados.
+            Cada plataforma pede um cadastro próprio. Use o botão "Documentação" de cada card para obter o
+            acesso. Os tokens ficam guardados criptografados.
           </p>
         </div>
       </div>
@@ -373,37 +371,40 @@ export default function IntegracoesPage() {
                       )}
                     >
                       {status.preflight.executavelAgora
-                        ? 'Publicacao liberada'
+                        ? 'Publicação liberada'
                         : status.preflight.pronto
                           ? 'Conta pronta, canal desligado'
-                          : 'Publicacao bloqueada'}
+                          : 'Publicação bloqueada'}
                     </span>
                   </div>
-
-                  <p className="text-[10px] text-muted-foreground">
-                    Autorizacao: {status.autorizacao?.estado ?? 'desconhecida'}
-                  </p>
-
-                  {status.autorizacao?.scopes && status.autorizacao.scopes.length > 0 && (
-                    <p className="text-[10px] text-muted-foreground break-words">
-                      Permissoes: {status.autorizacao.scopes.join(', ')}
-                    </p>
-                  )}
-                  {status.autorizacao?.scopesFaltando?.length ? (
-                    <p className="text-[10px] text-warning break-words">
-                      Falta conceder: {status.autorizacao.scopesFaltando.join(', ')}
-                    </p>
-                  ) : null}
-                  {status.autorizacao?.scopesComprovadosEm && (
-                    <p className="text-[10px] text-muted-foreground">
-                      Comprovado em{' '}
-                      {new Date(status.autorizacao.scopesComprovadosEm).toLocaleDateString('pt-BR')}
-                    </p>
-                  )}
 
                   {!status.preflight.executavelAgora && status.preflight.oQueFalta && (
                     <p className="text-[10px] text-warning break-words">{status.preflight.oQueFalta}</p>
                   )}
+
+                  {status.autorizacao?.scopesFaltando?.length ? (
+                    <p className="text-[10px] text-warning break-words">Falta conceder permissões na Meta.</p>
+                  ) : null}
+
+                  {/* Nomes técnicos (estado e escopos da Meta) ficam recolhidos. */}
+                  <details className="text-[10px] text-muted-foreground">
+                    <summary className="cursor-pointer select-none hover:text-white">Detalhes técnicos</summary>
+                    <div className="mt-1 space-y-0.5 break-words">
+                      <p>Autorização: {status.autorizacao?.estado ?? 'desconhecida'}</p>
+                      {status.autorizacao?.scopes && status.autorizacao.scopes.length > 0 && (
+                        <p>Permissões: {status.autorizacao.scopes.join(', ')}</p>
+                      )}
+                      {status.autorizacao?.scopesFaltando?.length ? (
+                        <p>Faltando: {status.autorizacao.scopesFaltando.join(', ')}</p>
+                      ) : null}
+                      {status.autorizacao?.scopesComprovadosEm && (
+                        <p>
+                          Comprovado em{' '}
+                          {new Date(status.autorizacao.scopesComprovadosEm).toLocaleDateString('pt-BR')}
+                        </p>
+                      )}
+                    </div>
+                  </details>
 
                   {plat.id === 'instagram' && (
                     <button
@@ -416,7 +417,7 @@ export default function IntegracoesPage() {
                       ) : (
                         <RefreshCw className="w-3 h-3" />
                       )}
-                      Recomprovar permissoes
+                      Comprovar permissões de novo
                     </button>
                   )}
                 </div>
@@ -474,14 +475,14 @@ export default function IntegracoesPage() {
                 >
                   <a href={plat.urlDocs} target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="w-3.5 h-3.5" />
-                    Docs
+                    Documentação
                   </a>
                 </Button>
 
                 {conectado ? (
                   plat.urlDedicada ? (
                     <Button size="sm" className="flex-1" asChild>
-                      <Link href={plat.urlDedicada}><CheckCircle className="w-3.5 h-3.5" />Gerenciar</Link>
+                      <Link href={plat.urlDedicada}><Settings className="w-3.5 h-3.5" />Gerenciar</Link>
                     </Button>
                   ) : (
                     <Button
@@ -497,7 +498,7 @@ export default function IntegracoesPage() {
                   )
                 ) : plat.urlDedicada ? (
                   <Button size="sm" className="flex-1" asChild>
-                    <Link href={plat.urlDedicada}><CheckCircle className="w-3.5 h-3.5" />Configurar</Link>
+                    <Link href={plat.urlDedicada}><Settings className="w-3.5 h-3.5" />Configurar</Link>
                   </Button>
                 ) : isExpanded ? (
                   <Button
@@ -515,7 +516,7 @@ export default function IntegracoesPage() {
                     className="flex-1"
                     onClick={() => setExpanded(plat.id)}
                   >
-                    <CheckCircle className="w-3.5 h-3.5" />
+                    <Settings className="w-3.5 h-3.5" />
                     Configurar
                   </Button>
                 )}
