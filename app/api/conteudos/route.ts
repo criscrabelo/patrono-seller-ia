@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { exigirSessao } from '@/lib/sessao'
 import { prisma } from '@/lib/prisma'
 import { avaliarRastreamentoDosConteudos } from '@/lib/rastreamento-da-publicacao'
-import { estaAtrasado } from '@/lib/publicacao-atrasada'
+import { estaAtrasado, ondeAtrasado, STATUS_ATRASADA } from '@/lib/publicacao-atrasada'
 
 export async function GET(req: NextRequest) {
   const session = await exigirSessao()
@@ -20,9 +20,10 @@ export async function GET(req: NextRequest) {
   const redeSocial = searchParams.get('redeSocial')
   const countOnly = searchParams.get('count') === 'true'
 
+  // "Publicação atrasada" inclui o agendado vencido (derivado), não só o gravado pelo cron.
   const where = {
     workspaceId: session.user.workspaceId,
-    ...(status && { status }),
+    ...(status === STATUS_ATRASADA ? { OR: ondeAtrasado(session.user.workspaceId, agora).OR } : status ? { status } : {}),
     ...(produtoId && { produtoId }),
     ...(redeSocial && { redeSocial }),
   }
