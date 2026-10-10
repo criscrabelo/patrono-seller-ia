@@ -190,6 +190,7 @@ describe('P2.15.1 — Copilot sem jargão', () => {
     assert.ok(linhas.some((l) => /empatado/.test(l)))
     assert.ok(linhas.some((l) => /Você já comprou este produto/.test(l)))
     assert.equal(linhas.at(-1), 'Pontos de atenção: Mídia sem direito de uso verificado; Preço sem verificação recente.')
+    assert.match(explicarCandidato({ posicao: 1, nome: 'X', confianca: null, porqueDestaPosicao: [], riscos: [] }, 1)[0], /é a única oportunidade/)
     for (const l of linhas) assert.doesNotMatch(l, /score|\/100|\d+%|SEM_HISTORICO_REAL|elegível/, l)
   })
 })

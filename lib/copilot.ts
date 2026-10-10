@@ -119,7 +119,7 @@ export function explicarCandidato(
   const jaDito = new Set(motivos.map(semPonto))
   const atencao = [...new Set((c.riscos ?? []).flatMap((r) => r.split(/(?<=\.)\s+/)).map(semPonto).filter((t) => t && !jaDito.has(t)))]
   return [
-    `“${c.nome}” está em ${c.posicao ?? 1}º lugar entre as ${total} oportunidades que separei.`,
+    total === 1 ? `“${c.nome}” é a única oportunidade que separei.` : `“${c.nome}” está em ${c.posicao ?? 1}º lugar entre as ${total} oportunidades que separei.`,
     ...(c.confianca && CONFIANCA_EM_FRASE[c.confianca] ? [CONFIANCA_EM_FRASE[c.confianca]] : []),
     ...((c.porqueDestaPosicao ?? []).some((l) => /empate técnico/i.test(l)) ? ['Está empatado com outras opções: a ordem entre eles ainda não quer dizer que este seja melhor.'] : []),
     ...motivos,
