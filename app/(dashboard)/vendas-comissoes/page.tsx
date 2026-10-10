@@ -33,12 +33,27 @@ const VENDA_STATUS: Record<string, { label: string; cor: string }> = {
   CANCELLED: { label: 'Cancelada', cor: 'text-danger bg-danger/10' },
 }
 
+interface ComissaoLinha {
+  id: string
+  status: 'EXPECTED' | 'CONFIRMED' | 'RECEIVED'
+  expectedAmount: number | null
+  confirmedAmount: number | null
+  receivedAmount: number | null
+  product: { nome: string } | null
+  sale: { status: string } | null
+}
+
+const COMISSAO_STATUS: Record<string, string> = { EXPECTED: 'Prevista', CONFIRMED: 'Confirmada', RECEIVED: 'Recebida' }
+
 export default function VendasComissoesPage() {
   useGuardModulo('vendas-comissoes')
   const [produtos, setProdutos] = useState<Produto[]>([])
   const [programas, setProgramas] = useState<Programa[]>([])
   const [vendas, setVendas] = useState<Venda[]>([])
   const [resumoComissoes, setResumoComissoes] = useState({ prevista: 0, confirmada: 0, recebida: 0 })
+  // P2.15.4: a API já registrava "confirmada/recebida"; faltava a tela para a titular marcar.
+  const [comissoes, setComissoes] = useState<ComissaoLinha[]>([])
+  const [atualizandoComissao, setAtualizandoComissao] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [salvando, setSalvando] = useState(false)
@@ -69,12 +84,39 @@ export default function VendasComissoesPage() {
       if (comRes.ok) {
         const data = await comRes.json()
         setResumoComissoes(data.resumo)
+        setComissoes(Array.isArray(data.comissoes) ? data.comissoes : [])
       }
       if (![prodRes, progRes, vendasRes, comRes].every((r) => r.ok)) toast({ title: 'Parte dos dados não carregou', description: 'Atualize a página.', variant: 'destructive' })
     } catch {
       toast({ title: 'Sem conexão', description: 'Atualize a página para tentar de novo.', variant: 'destructive' })
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function avancarComissao(c: ComissaoLinha, status: 'CONFIRMED' | 'RECEIVED') {
+    const sugerido = status === 'RECEIVED' ? c.confirmedAmount ?? c.expectedAmount : c.expectedAmount
+    const texto = window.prompt(
+      status === 'RECEIVED' ? 'Quanto você recebeu de comissão? (R$)' : 'Qual o valor confirmado pela plataforma? (R$)',
+      sugerido != null ? String(sugerido).replace('.', ',') : ''
+    )
+    if (texto === null) return
+    const valor = Number(texto.replace(/\./g, '').replace(',', '.'))
+    if (!Number.isFinite(valor) || valor < 0) { toast({ title: 'Valor inválido', variant: 'destructive' }); return }
+    setAtualizandoComissao(c.id)
+    try {
+      const res = await fetch('/api/comissoes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: c.id, status, ...(status === 'RECEIVED' ? { receivedAmount: valor } : { confirmedAmount: valor }) }),
+      })
+      const dados = await res.json().catch(() => ({}))
+      if (!res.ok) toast({ title: 'Não consegui atualizar a comissão', description: dados.error, variant: 'destructive' })
+      else { toast({ title: status === 'RECEIVED' ? 'Comissão marcada como recebida' : 'Comissão confirmada', variant: 'success' }); fetchAll() }
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Nada foi alterado.', variant: 'destructive' })
+    } finally {
+      setAtualizandoComissao(null)
     }
   }
 
@@ -200,6 +242,44 @@ export default function VendasComissoesPage() {
           ))}
         </div>
       </div>
+
+      {comissoes.length > 0 && (
+        <div className="rounded-xl border border-border bg-card overflow-x-auto">
+          <table className="w-full text-sm min-w-[520px]">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Comissão de</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Situação</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Valor</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comissoes.map((c) => {
+                const cancelada = c.sale?.status === 'CANCELLED'
+                const valor = c.receivedAmount ?? c.confirmedAmount ?? c.expectedAmount
+                return (
+                  <tr key={c.id} className="border-b border-border last:border-0">
+                    <td className="px-4 py-3 text-white">{c.product?.nome ?? '—'}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{cancelada ? 'Venda cancelada' : COMISSAO_STATUS[c.status] ?? c.status}</td>
+                    <td className="px-4 py-3 text-right text-muted-foreground">{valor != null ? formatCurrency(valor) : '—'}</td>
+                    <td className="px-4 py-3 text-right">
+                      {!cancelada && c.status !== 'RECEIVED' && (
+                        <div className="inline-flex flex-wrap justify-end gap-2">
+                          {c.status === 'EXPECTED' && (
+                            <Button size="sm" variant="outline" disabled={atualizandoComissao === c.id} onClick={() => avancarComissao(c, 'CONFIRMED')}>Confirmar</Button>
+                          )}
+                          <Button size="sm" disabled={atualizandoComissao === c.id} onClick={() => avancarComissao(c, 'RECEIVED')}>Marcar como recebida</Button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Vendas */}
       <div>

@@ -1,7 +1,13 @@
 import { NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
+import { createHash } from 'crypto'
 import { prisma } from './prisma'
+
+/** Impressão curta do hash da senha: muda quando a senha muda; não revela nada. */
+export function versaoDaSenha(hash: string): string {
+  return createHash('sha256').update(hash).digest('hex').slice(0, 16)
+}
 
 /** Releitura de status/papel da sessão no banco (no máximo 1 vez por minuto por sessão). */
 const REVALIDAR_A_CADA_MS = 60_000
@@ -38,6 +44,7 @@ export const authOptions: NextAuthOptions = {
           name: user.name,
           role: user.role,
           workspaceId: user.workspaceId,
+          senhaVersao: versaoDaSenha(user.password),
         }
       },
     }),
@@ -48,6 +55,7 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id
         token.role = (user as { role?: string }).role ?? 'usuario'
         token.workspaceId = (user as { workspaceId?: string }).workspaceId
+        token.senhaVersao = (user as { senhaVersao?: string }).senhaVersao
         token.verificadoEm = Date.now()
       } else if (token.id && Date.now() - Number(token.verificadoEm ?? 0) > REVALIDAR_A_CADA_MS) {
         // P2.15.3: o JWT vale 30 dias; sem reler o banco, usuária bloqueada ou
@@ -56,9 +64,12 @@ export const authOptions: NextAuthOptions = {
         // (Também completa tokens antigos sem workspaceId.)
         const atual = await prisma.user.findUnique({
           where: { id: token.id as string },
-          select: { workspaceId: true, role: true, status: true },
+          select: { workspaceId: true, role: true, status: true, password: true },
         })
         if (!atual || atual.status === 'bloqueado' || atual.status === 'pendente') throw new Error('SESSAO_REVOGADA')
+        // P2.15.4: senha trocada (na conta ou por redefinição) derruba as sessões abertas com a senha antiga.
+        if (token.senhaVersao && token.senhaVersao !== versaoDaSenha(atual.password)) throw new Error('SESSAO_REVOGADA')
+        token.senhaVersao = versaoDaSenha(atual.password)
         token.workspaceId = atual.workspaceId
         token.role = atual.role
         token.verificadoEm = Date.now()

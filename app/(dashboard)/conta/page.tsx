@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
-import { useSession } from 'next-auth/react'
+import { useSession, signOut } from 'next-auth/react'
 import { KeyRound, Loader2, Eye, EyeOff, User as UserIcon } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 
@@ -37,8 +37,9 @@ export default function ContaPage() {
       return
     }
     if (res.ok) {
-      toast({ title: 'Senha alterada com sucesso!', variant: 'success' })
+      toast({ title: 'Senha alterada!', description: 'Por segurança, todas as sessões abertas vão pedir login de novo. Entre com a nova senha.', variant: 'success' })
       setSenhaAtual(''); setNovaSenha(''); setConfirmar('')
+      setTimeout(() => signOut({ callbackUrl: '/login' }), 2500)
     } else {
       const d = await res.json().catch(() => ({}))
       toast({ title: d.error || 'Erro ao alterar senha', variant: 'destructive' })

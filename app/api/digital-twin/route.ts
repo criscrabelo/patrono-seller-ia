@@ -18,7 +18,10 @@ export async function GET() {
 
   // Saúde do worker de geração — só aparece em Configurações/Digital Twin, nunca na Home.
   const cincoMinutosAtras = new Date(Date.now() - 5 * 60 * 1000)
-  const workers = await prisma.generationWorkerHealth.findMany({
+  // P2.15.4: a saúde do processador não é separada por workspace (o modelo
+  // não tem workspaceId). Sem migration, só a admin — quem opera a máquina —
+  // vê; outras contas não veem o processador de outro workspace.
+  const workers = session.user.role !== 'admin' ? [] : await prisma.generationWorkerHealth.findMany({
     where: { lastSeenAt: { gte: cincoMinutosAtras } },
     select: { workerId: true, gpuDetected: true, gpuName: true, vramGB: true, version: true, lastSeenAt: true },
   })

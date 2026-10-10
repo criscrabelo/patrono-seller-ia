@@ -93,39 +93,12 @@ export async function POST(req: NextRequest) {
   }
 
   if (acao === 'sincronizar_produtos') {
-    // Sincroniza catálogo via Shopee Open Platform (modo vendedor)
-    const { partnerId, subId: _s, modo } = extra ?? {}
-    if (modo !== 'vendedor' || !partnerId || !integracao.accessToken || !integracao.accountId) {
-      return NextResponse.json({ error: 'Credenciais de vendedor não configuradas' }, { status: 400 })
-    }
-
-    try {
-      const timestamp = Math.floor(Date.now() / 1000)
-      const path = '/product/get_item_list'
-      const sig = sign(
-        Number(partnerId),
-        String(integracao.accessToken), // partnerKey está no accessToken por simplificação
-        path,
-        timestamp,
-        integracao.accessToken,
-        Number(integracao.accountId)
-      )
-
-      const url = `${SHOPEE_API}${path}?partner_id=${partnerId}&timestamp=${timestamp}&access_token=${integracao.accessToken}&shop_id=${integracao.accountId}&sign=${sig}&page_size=100&item_status=NORMAL`
-      const res = await fetch(url)
-      const data = await res.json()
-
-      if (data.error) {
-        return NextResponse.json({ error: data.message }, { status: 400 })
-      }
-
-      const items: { item_id: number; item_name: string; item_sku: string }[] = data.response?.item ?? []
-
-      return NextResponse.json({ sincronizados: items.length, items: items.slice(0, 10) })
-    } catch (e) {
-      return NextResponse.json({ error: 'Falha ao buscar produtos Shopee' }, { status: 500 })
-    }
+    // P2.15.4: a assinatura oficial exige a Partner Key, que nunca foi guardada
+    // (o código assinava com o access token). Nenhuma tela chama esta ação.
+    // Em vez de chamar a Shopee com assinatura errada, responde indisponível.
+    return NextResponse.json({ error: 'A sincronização do catálogo da Shopee ainda não está disponível. Use "Gerar links" ou cadastre os produtos.' }, { status: 501 })
   }
+
 
   return NextResponse.json({ error: 'Ação inválida' }, { status: 400 })
 }

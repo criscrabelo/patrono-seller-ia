@@ -108,6 +108,24 @@ describe('P2.15.4 — 3. Permissão de módulo: tabela central', () => {
   })
 })
 
+describe('P2.15.4 — pendências que sobravam da P2.15.3', () => {
+  test('Digital Twin: saúde do processador só para admin (a tabela não separa workspace)', () => {
+    const rota = fs.readFileSync('app/api/digital-twin/route.ts', 'utf8')
+    assert.match(rota, /const workers = session\.user\.role !== 'admin' \? \[\] : await prisma\.generationWorkerHealth\.findMany/)
+  })
+  test('Shopee: sincronizar catálogo responde indisponível, sem chamar a Shopee com assinatura errada', () => {
+    const rota = fs.readFileSync('app/api/integracoes/shopee/sincronizar/route.ts', 'utf8')
+    const bloco = rota.slice(rota.indexOf("acao === 'sincronizar_produtos'"))
+    assert.match(bloco.slice(0, 600), /status: 501/)
+    assert.doesNotMatch(rota, /sincronizar_produtos_legado|partnerKey está no accessToken/)
+  })
+  test('Vendas e Comissões: a tela marca comissão como confirmada/recebida pela API existente', () => {
+    const tela = fs.readFileSync('app/(dashboard)/vendas-comissoes/page.tsx', 'utf8')
+    assert.match(tela, /fetch\('\/api\/comissoes', \{\s*method: 'PATCH'/)
+    assert.match(tela, /Marcar como recebida/)
+  })
+})
+
 const TEM_BANCO = !!process.env.DATABASE_URL && (process.env.DATABASE_URL ?? '').includes('xntkypjmmdovrfbblbqb')
 
 describe('P2.15.4 — banco de teste', { skip: !TEM_BANCO ? 'exige banco de TESTE' : false }, () => {
@@ -166,6 +184,19 @@ describe('P2.15.4 — banco de teste', { skip: !TEM_BANCO ? 'exige banco de TEST
     await conteudo({ status: 'agendado', dataAgendamento: new Date(Date.now() + 60 * 60 * 1000) })
     await conteudo({ status: 'publicado', publicacaoExternaId: `${marca}-media` })
     assert.equal(await A.contarPublicacoesAtrasadas(ws), 2)
+  })
+
+  test('trocar a senha derruba as sessões abertas com a senha antiga', async () => {
+    const { authOptions, versaoDaSenha } = await import('../lib/auth')
+    const jwt = async (token: Record<string, unknown>) => authOptions.callbacks!.jwt!({ token, user: undefined as never, account: null } as never)
+    const atual = await prisma.user.findUniqueOrThrow({ where: { id: usuario }, select: { password: true } })
+    const t = { id: usuario, role: 'usuario', workspaceId: ws, verificadoEm: 0, senhaVersao: versaoDaSenha(atual.password) }
+    assert.equal(((await jwt({ ...t })) as { senhaVersao: string }).senhaVersao, versaoDaSenha(atual.password))
+    await prisma.user.update({ where: { id: usuario }, data: { password: 'hash-novo-da-senha' } })
+    await assert.rejects(jwt({ ...t }), /SESSAO_REVOGADA/)
+    // sessão antiga sem a versão (emitida antes desta mudança) passa a ter a versão atual
+    const semVersao = (await jwt({ id: usuario, role: 'usuario', workspaceId: ws, verificadoEm: 0 })) as { senhaVersao: string }
+    assert.equal(semVersao.senhaVersao, versaoDaSenha('hash-novo-da-senha'))
   })
 
   test('módulos: usuária autorizada passa; bloqueada leva não; admin sempre passa; sem carimbo fecha', async () => {
