@@ -997,7 +997,7 @@ export function pontuarProduto(
  * que não seja sintética. Nada é criado, publicado ou alterado aqui — o
  * motor é somente leitura.
  */
-export async function montarFilaDeOportunidades(params: {
+export interface ParametrosDaFila {
   workspaceId: string
   agora?: Date
   /** Canais que conseguem publicar. Sem isso, nada fica PRONTA. */
@@ -1005,9 +1005,20 @@ export async function montarFilaDeOportunidades(params: {
   limite?: number
   /** P2.14.5.13: perfil da loja do workspace (ausente = padrão). */
   perfil?: PerfilDaLoja
-}): Promise<OportunidadePontuada[]> {
+}
+
+export async function montarFilaDeOportunidades(params: ParametrosDaFila): Promise<OportunidadePontuada[]> {
+  return (await montarFilaComProdutos(params)).fila
+}
+
+/**
+ * P2.15: a fila E os produtos já carregados — quem precisa dos dados do
+ * produto (a curadoria) não consulta o banco de novo. Métricas e saturação
+ * rodam em paralelo: cada ida ao banco custa caro fora da região do banco.
+ */
+export async function montarFilaComProdutos(params: ParametrosDaFila) {
   const workspaceId = (params?.workspaceId ?? '').trim()
-  if (!workspaceId) return []
+  if (!workspaceId) return { fila: [] as OportunidadePontuada[], produtos: [] as ProdutoDaFila[] }
   const agora = params?.agora ?? new Date()
 
   const produtos = await prisma.produto.findMany({
@@ -1029,6 +1040,7 @@ export async function montarFilaDeOportunidades(params: {
       origemConteudo: true,
       origemDados: true,
       providerId: true,
+      externalId: true,
       status: true,
       removidoDaOrigemEm: true,
       createdAt: true,
@@ -1039,28 +1051,35 @@ export async function montarFilaDeOportunidades(params: {
       linksDinamicos: { select: { comissao: true }, take: 5 },
     },
   })
-  if (produtos.length === 0) return []
+  if (produtos.length === 0) return { fila: [] as OportunidadePontuada[], produtos }
 
-  // Métricas reais por produto, na granularidade que fecha numerador com
-  // denominador (ver lib/metricas-clique.ts).
-  const metricas = await calcularMetricasPorProduto(
-    workspaceId,
-    produtos.map((p) => p.id),
-    agora
-  )
-  const porProduto = new Map(metricas.map((m) => [m.produtoId, m]))
-
-  // Saturação: publicações distribuídas de cada produto na janela.
+  // Métricas reais por produto (ver lib/metricas-clique.ts) e saturação
+  // (publicações distribuídas na janela), em paralelo.
   const desde = new Date(agora.getTime() - JANELA_DE_SATURACAO_DIAS * 24 * 60 * 60 * 1000)
-  const recentes = await prisma.publicacao.groupBy({
-    by: ['contentId'],
-    where: { workspaceId, estado: 'DISTRIBUIDA', distribuidaEm: { gte: desde, lt: agora } },
-    _count: { _all: true },
-  })
-  const conteudos = await prisma.conteudo.findMany({
-    where: { workspaceId, id: { in: recentes.map((r) => r.contentId) } },
-    select: { id: true, produtoId: true },
-  })
+  const [metricas, conteudosRecentes] = await Promise.all([
+    calcularMetricasPorProduto(
+      workspaceId,
+      produtos.map((p) => p.id),
+      agora
+    ),
+    (async () => {
+      const recentes = await prisma.publicacao.groupBy({
+        by: ['contentId'],
+        where: { workspaceId, estado: 'DISTRIBUIDA', distribuidaEm: { gte: desde, lt: agora } },
+        _count: { _all: true },
+      })
+      // Sem publicação recente (o caso comum hoje): nenhuma consulta a mais.
+      const conteudos = recentes.length
+        ? await prisma.conteudo.findMany({
+            where: { workspaceId, id: { in: recentes.map((r) => r.contentId) } },
+            select: { id: true, produtoId: true },
+          })
+        : []
+      return { recentes, conteudos }
+    })(),
+  ])
+  const porProduto = new Map(metricas.map((m) => [m.produtoId, m]))
+  const { recentes, conteudos } = conteudosRecentes
   const produtoDoConteudo = new Map(conteudos.map((c) => [c.id, c.produtoId]))
   const publicacoesPorProduto = new Map<string, number>()
   for (const r of recentes) {
@@ -1097,7 +1116,21 @@ export async function montarFilaDeOportunidades(params: {
   })
 
   ordenarFila(fila)
-  return typeof params?.limite === 'number' ? fila.slice(0, params.limite) : fila
+  return { fila: typeof params?.limite === 'number' ? fila.slice(0, params.limite) : fila, produtos }
+}
+
+/** Produto como carregado pela fila (o que a curadoria reaproveita). */
+export type ProdutoDaFila = {
+  id: string
+  nome: string
+  categoria: string | null
+  preco: number | null
+  linkProduto: string | null
+  imagens: string[]
+  providerId: string | null
+  externalId: string | null
+  origemDados: string
+  linksDinamicos: { comissao: number | null }[]
 }
 
 /** Taxa da oferta: a primeira registrada nos links do produto, ou null. */

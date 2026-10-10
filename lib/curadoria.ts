@@ -19,12 +19,15 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { CandidatoDeProduto, Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
+import type { CandidatoDeProduto } from '@prisma/client'
+
+const Prisma_sql = Prisma.sql
 import { prisma } from './prisma'
 import {
   calcularDesempenhoHistorico,
   comissaoDaOferta,
-  montarFilaDeOportunidades,
+  montarFilaComProdutos,
   ordenarFila,
   pontuarProduto,
   selecionarParaModo,
@@ -34,6 +37,7 @@ import {
 import { obterPerfilDaLoja } from './perfil-da-loja'
 import { registrarAuditoria } from './audit-log'
 import { registrarDecisao, registrarEvento } from './ledger'
+import { redigir } from './cofre'
 import { comContexto, contextoAtual, novoCorrelationId } from './observabilidade'
 
 // ── Vocabulário ─────────────────────────────────────────────────────────
@@ -422,37 +426,32 @@ export async function coletarCandidatos(params: { workspaceId: string; userId?: 
 async function coletarCandidatosNoContexto(params: { workspaceId: string; userId?: string; agora?: Date }): Promise<ResultadoDaColeta> {
   const agora = params.agora ?? new Date()
   const { workspaceId } = params
-  const { perfil, origem: origemDoPerfil } = await obterPerfilDaLoja(workspaceId, { criarSeAusente: true })
-  const canais = await canaisConectados(workspaceId)
-
   // Fora da coleta: escolhidos/cadastrados (para sempre) e descartados nos
   // últimos 30 dias. Descartado há mais tempo volta a concorrer.
   const foraDaQuarentena = { OR: [{ status: { notIn: ['DESCARTADO' as const] } }, { updatedAt: { lte: inicioDaQuarentena(agora) } }] }
   const emQuarentena = { status: 'DESCARTADO' as const, updatedAt: { gt: inicioDaQuarentena(agora) } }
-  const encerrados = await prisma.candidatoDeProduto.findMany({
-    where: { workspaceId, produtoId: { not: null }, OR: [{ status: { in: [...STATUS_DEFINITIVOS] } }, emQuarentena] },
-    select: { produtoId: true },
-  })
+
+  // P2.15: tudo o que não depende de outra leitura sai junto — fora da
+  // região do banco, cada ida custa caro (ver scripts/perf/perfil-da-coleta.ts).
+  const [{ perfil, origem: origemDoPerfil }, canais, encerrados, informados] = await Promise.all([
+    obterPerfilDaLoja(workspaceId, { criarSeAusente: true }),
+    canaisConectados(workspaceId),
+    prisma.candidatoDeProduto.findMany({
+      where: { workspaceId, produtoId: { not: null }, OR: [{ status: { in: [...STATUS_DEFINITIVOS] } }, emQuarentena] },
+      select: { produtoId: true },
+    }),
+    // 2) Informados pela titular, ainda em aberto: repontuados agora.
+    prisma.candidatoDeProduto.findMany({
+      where: { workspaceId, fonte: FONTE_TITULAR, produtoId: null, status: { notIn: [...STATUS_DEFINITIVOS] }, ...foraDaQuarentena },
+    }),
+  ])
   const produtosEncerrados = new Set(encerrados.map((c) => c.produtoId as string))
 
-  // 1) Catálogo real (o motor já exclui sintéticos e descartados).
-  const filaDoCatalogo = (await montarFilaDeOportunidades({ workspaceId, agora, canaisCapazes: canais, perfil })).filter(
-    (o) => !produtosEncerrados.has(o.produtoId)
-  )
-  const brutos = await prisma.produto.findMany({
-    where: { workspaceId, id: { in: filaDoCatalogo.map((o) => o.produtoId) } },
-    select: {
-      id: true, nome: true, categoria: true, preco: true, linkProduto: true, imagens: true,
-      providerId: true, externalId: true, origemDados: true,
-      linksDinamicos: { select: { comissao: true }, take: 5 },
-    },
-  })
+  // 1) Catálogo real (o motor já exclui sintéticos e descartados). Os
+  // produtos vêm junto com a fila: nenhuma segunda consulta ao catálogo.
+  const { fila: filaCompleta, produtos: brutos } = await montarFilaComProdutos({ workspaceId, agora, canaisCapazes: canais, perfil })
+  const filaDoCatalogo = filaCompleta.filter((o) => !produtosEncerrados.has(o.produtoId))
   const brutoPorId = new Map(brutos.map((b) => [b.id, b]))
-
-  // 2) Informados pela titular, ainda em aberto: repontuados agora.
-  const informados = await prisma.candidatoDeProduto.findMany({
-    where: { workspaceId, fonte: FONTE_TITULAR, produtoId: null, status: { notIn: [...STATUS_DEFINITIVOS] }, ...foraDaQuarentena },
-  })
   const filaDosInformados = informados.map((c) => ({
     ...pontuarProduto(informadoComoProduto(c), SEM_HISTORICO(), { canaisCapazes: canais, agora, perfil }),
     workspaceId,
@@ -549,14 +548,17 @@ export type LinhaDaColeta = RetratoDoCandidato & {
 const MENSAGEM_COLETA_EM_ANDAMENTO = 'Já existe uma coleta em andamento para este workspace. Tente de novo em instantes.'
 
 /**
- * Grava a rodada inteira numa ÚNICA transação:
+ * Grava a rodada inteira num ÚNICO comando SQL (P2.15) — atômico por
+ * natureza e com UMA ida ao banco (antes: ~8 idas numa transação):
  *   1. trava lógica do workspace (`pg_try_advisory_xact_lock`): uma segunda
- *      coleta simultânea recebe 409 em vez de intercalar escritas;
- *   2. os APRESENTADO anteriores voltam a NOVO;
- *   3. UM `INSERT … ON CONFLICT (workspaceId, chaveDeOrigem) DO UPDATE` com
+ *      coleta simultânea recebe 409; com a trava ocupada nada é escrito;
+ *   2. os APRESENTADO anteriores que NÃO estão nesta rodada voltam a NOVO
+ *      (os que estão são atualizados pelo próprio upsert — mesmo resultado);
+ *   3. `INSERT … ON CONFLICT (workspaceId, chaveDeOrigem) DO UPDATE` com
  *      todas as linhas — nunca reabre escolhido/cadastrado nem descartado em
  *      quarentena, mesmo que mudem entre a leitura e a escrita;
- *   4. a auditoria, só dentro da mesma transação (só existe se tudo deu certo).
+ *   4. auditoria, decisão (ledger) e evento (CANDIDATES_PRESENTED) no mesmo
+ *      comando: existem só se tudo deu certo.
  * Qualquer falha desfaz tudo: não há rodada pela metade.
  */
 export async function persistirColeta(p: {
@@ -576,20 +578,47 @@ export async function persistirColeta(p: {
     }))
   )
   const trava = `curadoria:${p.workspaceId}`
+  const chavesDaRodada = p.linhas.map((l) => l.chaveDeOrigem)
 
-  return prisma.$transaction(
-    async (tx) => {
-      const [lock] = await tx.$queryRaw<{ ok: boolean }[]>`SELECT pg_try_advisory_xact_lock(hashtextextended(${trava}, 0)) AS ok`
-      if (!lock?.ok) throw new ErroDeCuradoria(409, MENSAGEM_COLETA_EM_ANDAMENTO)
+  // Decisão e evento da rodada (P2.14.7), montados aqui e gravados no mesmo comando.
+  const escolhidos = p.linhas
+    .filter((l) => l.status === 'APRESENTADO')
+    .sort((x, y) => (x.posicao ?? 99) - (y.posicao ?? 99))
+    .map((l) => ({ posicao: l.posicao, chaveDeOrigem: l.chaveDeOrigem, nome: l.nome, score: l.score, confianca: l.confianca, porque: Array.isArray(l.porqueDestaPosicao) ? l.porqueDestaPosicao : [] }))
+  const chaveDaColeta = `coleta:${agoraIso}`
+  const ctx = contextoAtual()
+  const decisao = {
+    id: randomUUID(),
+    texto: escolhidos.length ? `Apresentar ${escolhidos.length} candidato(s).` : 'Nenhum candidato apto para apresentar.',
+    entradas: JSON.stringify(redigir({ avaliados: p.linhas.length, apresentados: escolhidos })),
+    explicacao: escolhidos.map((e) => `${e.posicao}º ${e.nome}: ${e.porque.join(' ')}`.trim()),
+  }
+  const evento = { id: randomUUID(), payload: JSON.stringify(redigir({ avaliados: p.linhas.length, chaves: escolhidos.map((e) => e.chaveDeOrigem) })) }
+  const auditoria = p.auditoria
+    ? Prisma_sql`
+      , auditoria AS (
+        INSERT INTO "AuditLog" ("id", "workspaceId", "userId", "action", "entityType", "entityId", "metadata", "createdAt")
+        SELECT ${randomUUID()}, ${p.workspaceId}, ${p.auditoria.userId}, 'curadoria.candidatos_coletados', 'CandidatoDeProduto', ${p.workspaceId},
+               ${JSON.stringify(redigir(p.auditoria.metadata))}::jsonb, ${agoraIso}::timestamp(3)
+        WHERE (SELECT ok FROM trava)
+        RETURNING 1
+      )`
+    : Prisma_sql``
 
-      await tx.$executeRaw`
-        UPDATE "CandidatoDeProduto" SET "status" = 'NOVO', "posicao" = NULL, "updatedAt" = ${agoraIso}::timestamp(3)
-        WHERE "workspaceId" = ${p.workspaceId} AND "status" = 'APRESENTADO'`
-
-      const gravados =
-        p.linhas.length === 0
-          ? []
-          : await tx.$queryRaw<{ status: string }[]>`
+  const [r] = await prisma.$queryRaw<{ ok: boolean; gravados: number; apresentados: number }[]>`
+    WITH trava AS (
+      SELECT pg_try_advisory_xact_lock(hashtextextended(${trava}, 0)) AS ok
+    ),
+    dados AS (
+      SELECT j FROM jsonb_array_elements(${json}::jsonb) AS e(j) WHERE (SELECT ok FROM trava)
+    ),
+    reinicio AS (
+      UPDATE "CandidatoDeProduto" SET "status" = 'NOVO', "posicao" = NULL, "updatedAt" = ${agoraIso}::timestamp(3)
+      WHERE (SELECT ok FROM trava) AND "workspaceId" = ${p.workspaceId} AND "status" = 'APRESENTADO'
+        AND NOT ("chaveDeOrigem" = ANY(${chavesDaRodada}::text[]))
+      RETURNING 1
+    ),
+    gravados AS (
         INSERT INTO "CandidatoDeProduto" (
           "id", "workspaceId", "chaveDeOrigem", "fonte", "providerId", "externalId", "produtoId",
           "nome", "linkProduto", "imagem", "imagemAutorizada", "categoria", "preco",
@@ -613,7 +642,7 @@ export async function persistirColeta(p: {
           ARRAY(SELECT jsonb_array_elements_text(j->'porqueDestaPosicao')),
           (j->>'status')::"StatusDoCandidato", (j->>'posicao')::integer,
           (j->>'coletadoEm')::timestamp(3), (j->>'validoAte')::timestamp(3), ${agoraIso}::timestamp(3), ${agoraIso}::timestamp(3)
-        FROM jsonb_array_elements(${json}::jsonb) AS e(j)
+        FROM dados
         ON CONFLICT ("workspaceId", "chaveDeOrigem") DO UPDATE SET
           "providerId" = EXCLUDED."providerId", "externalId" = EXCLUDED."externalId",
           "nome" = EXCLUDED."nome", "linkProduto" = EXCLUDED."linkProduto", "imagem" = EXCLUDED."imagem",
@@ -631,47 +660,28 @@ export async function persistirColeta(p: {
           "coletadoEm" = EXCLUDED."coletadoEm", "validoAte" = EXCLUDED."validoAte", "updatedAt" = EXCLUDED."updatedAt"
         WHERE "CandidatoDeProduto"."status" NOT IN ('ESCOLHIDO', 'CADASTRADO')
           AND NOT ("CandidatoDeProduto"."status" = 'DESCARTADO' AND "CandidatoDeProduto"."updatedAt" > ${quarentenaIso}::timestamp(3))
-        RETURNING "status"::text AS status`
-
-      if (p.auditoria) {
-        await tx.auditLog.create({
-          data: {
-            workspaceId: p.workspaceId,
-            userId: p.auditoria.userId,
-            action: 'curadoria.candidatos_coletados',
-            entityType: 'CandidatoDeProduto',
-            entityId: p.workspaceId,
-            metadata: p.auditoria.metadata as Prisma.InputJsonValue,
-          },
-        })
-      }
-      // P2.14.7: decisão e evento no MESMO commit da apresentação — ou tudo, ou nada.
-      const escolhidos = p.linhas
-        .filter((l) => l.status === 'APRESENTADO')
-        .sort((x, y) => (x.posicao ?? 99) - (y.posicao ?? 99))
-        .map((l) => ({ posicao: l.posicao, chaveDeOrigem: l.chaveDeOrigem, nome: l.nome, score: l.score, confianca: l.confianca, porque: Array.isArray(l.porqueDestaPosicao) ? l.porqueDestaPosicao : [] }))
-      const chaveDaColeta = `coleta:${agoraIso}`
-      await registrarDecisao(
-        {
-          workspaceId: p.workspaceId,
-          tipo: 'CURADORIA_APRESENTACAO',
-          ator: 'PATRONO',
-          decisao: escolhidos.length ? `Apresentar ${escolhidos.length} candidato(s).` : 'Nenhum candidato apto para apresentar.',
-          entradas: { avaliados: p.linhas.length, apresentados: escolhidos },
-          explicacao: escolhidos.map((e) => `${e.posicao}º ${e.nome}: ${e.porque.join(' ')}`.trim()),
-          regra: 'curadoria:ranking-v1',
-          chaveIdempotencia: chaveDaColeta,
-        },
-        tx
-      )
-      await registrarEvento(
-        { workspaceId: p.workspaceId, tipo: 'CANDIDATES_PRESENTED', chaveIdempotencia: chaveDaColeta, payload: { avaliados: p.linhas.length, chaves: escolhidos.map((e) => e.chaveDeOrigem) } },
-        tx
-      )
-      return { gravados: gravados.length, apresentados: gravados.filter((g) => g.status === 'APRESENTADO').length }
-    },
-    { maxWait: 5_000, timeout: 20_000 }
-  )
+        RETURNING "status"::text AS status
+    ),
+    decisao AS (
+      INSERT INTO "DecisionRecord" ("id", "workspaceId", "tipo", "ator", "decisao", "entradas", "ausentes", "explicacao", "regra", "chaveIdempotencia", "runId", "correlationId")
+      SELECT ${decisao.id}, ${p.workspaceId}, 'CURADORIA_APRESENTACAO', 'PATRONO', ${decisao.texto}, ${decisao.entradas}::jsonb, ARRAY[]::text[],
+             ${decisao.explicacao}::text[], 'curadoria:ranking-v1', ${chaveDaColeta}, ${ctx?.runId ?? null}, ${ctx?.correlationId ?? null}
+      WHERE (SELECT ok FROM trava)
+      ON CONFLICT ("workspaceId", "chaveIdempotencia") DO NOTHING
+      RETURNING 1
+    ),
+    evento AS (
+      INSERT INTO "DomainEvent" ("id", "workspaceId", "tipo", "versao", "payload", "chaveIdempotencia", "runId", "correlationId")
+      SELECT ${evento.id}, ${p.workspaceId}, 'CANDIDATES_PRESENTED', 1, ${evento.payload}::jsonb, ${chaveDaColeta}, ${ctx?.runId ?? null}, ${ctx?.correlationId ?? null}
+      WHERE (SELECT ok FROM trava)
+      ON CONFLICT ("workspaceId", "chaveIdempotencia") DO NOTHING
+      RETURNING 1
+    )${auditoria}
+    SELECT (SELECT ok FROM trava) AS ok,
+           (SELECT count(*) FROM gravados)::int AS gravados,
+           (SELECT count(*) FROM gravados WHERE status = 'APRESENTADO')::int AS apresentados`
+  if (!r?.ok) throw new ErroDeCuradoria(409, MENSAGEM_COLETA_EM_ANDAMENTO)
+  return { gravados: r.gravados, apresentados: r.apresentados }
 }
 
 export interface ResumoDaUltimaColeta {
@@ -730,9 +740,13 @@ export async function escolherCandidato(params: {
   userId: string
   candidatoId: string
   agora?: Date
+  /** P2.15: quem decidiu. PATRONO = escolha automática permitida pela política/regra da titular. */
+  ator?: 'TITULAR' | 'PATRONO'
+  /** Regra/política que autorizou a escolha automática (vai para o ledger). */
+  regra?: string | null
 }): Promise<ResultadoDaEscolha> {
   return comContexto(
-    { correlationId: contextoAtual()?.correlationId ?? novoCorrelationId('escolha'), workspaceId: params.workspaceId, ator: 'TITULAR' },
+    { correlationId: contextoAtual()?.correlationId ?? novoCorrelationId('escolha'), workspaceId: params.workspaceId, ator: params.ator ?? 'TITULAR' },
     () => escolherCandidatoNoContexto(params)
   )
 }
@@ -742,6 +756,8 @@ async function escolherCandidatoNoContexto(params: {
   userId: string
   candidatoId: string
   agora?: Date
+  ator?: 'TITULAR' | 'PATRONO'
+  regra?: string | null
 }): Promise<ResultadoDaEscolha> {
   const agora = params.agora ?? new Date()
   const { workspaceId, userId, candidatoId } = params
@@ -755,7 +771,18 @@ async function escolherCandidatoNoContexto(params: {
     const r = await reivindicarECadastrar(tx, c)
     // P2.14.7: a escolha é da titular — decisão e evento no MESMO commit.
     await registrarDecisao(
-      { workspaceId, tipo: 'ESCOLHA_DE_PRODUTO', ator: 'TITULAR', atorUserId: userId, decisao: `Escolheu "${c.nome}".`, entidadeTipo: 'CandidatoDeProduto', entidadeId: c.id, entradas: { score: c.score, posicao: c.posicao, produtoId: r.produtoId }, chaveIdempotencia: `escolha:${c.id}` },
+      {
+        workspaceId,
+        tipo: 'ESCOLHA_DE_PRODUTO',
+        ator: params.ator ?? 'TITULAR',
+        atorUserId: (params.ator ?? 'TITULAR') === 'TITULAR' ? userId : null,
+        decisao: (params.ator ?? 'TITULAR') === 'TITULAR' ? `Escolheu "${c.nome}".` : `O Patrono escolheu "${c.nome}" (permitido pela política).`,
+        entidadeTipo: 'CandidatoDeProduto',
+        entidadeId: c.id,
+        entradas: { score: c.score, posicao: c.posicao, produtoId: r.produtoId },
+        regra: params.regra ?? null,
+        chaveIdempotencia: `escolha:${c.id}`,
+      },
       tx
     )
     await registrarEvento(

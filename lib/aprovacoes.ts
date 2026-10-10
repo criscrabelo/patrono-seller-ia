@@ -132,7 +132,7 @@ export async function decidirAprovacao(p: { workspaceId: string; id: string; dec
   if (pedido.status !== 'PENDENTE') throw new ErroDeAprovacao(409, `Pedido já está ${pedido.status}.`)
   if (pedido.expiraEm && pedido.expiraEm.getTime() <= agora.getTime()) throw new ErroDeAprovacao(409, 'Pedido vencido: o Patrono vai preparar um novo.')
 
-  const status = p.decisao === 'APROVAR' ? 'APROVADA' : 'REJEITADA'
+  const status: 'APROVADA' | 'REJEITADA' = p.decisao === 'APROVAR' ? 'APROVADA' : 'REJEITADA'
   return prisma.$transaction(async (tx) => {
     const r = await tx.approvalRequest.updateMany({
       where: { id: p.id, workspaceId: p.workspaceId, status: 'PENDENTE', OR: [{ expiraEm: null }, { expiraEm: { gt: agora } }] },
