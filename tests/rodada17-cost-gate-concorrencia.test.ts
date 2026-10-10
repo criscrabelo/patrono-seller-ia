@@ -22,7 +22,7 @@
  * Use o banco de teste, por exemplo:
  *   node -r dotenv/config node_modules/tsx/dist/cli.mjs --test \
  *     tests/rodada17-cost-gate-concorrencia.test.ts \
- *     dotenv_config_path=.env.digital-twin-test
+ *     dotenv_config_path="$LOCALAPPDATA/PatronoSeller/teste/.env.digital-twin-test"
  */
 
 import { test, describe, before, after } from 'node:test'

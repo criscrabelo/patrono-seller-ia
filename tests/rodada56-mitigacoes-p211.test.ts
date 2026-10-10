@@ -12,7 +12,7 @@
  * para provar que não está nele. Sem a referência, é PULADA com aviso —
  * nunca roda às cegas:
  *
- *   PATRONO_REF_DO_BANCO_DE_PRODUCAO=<ref> node --env-file=.env.digital-twin-test \
+ *   PATRONO_REF_DO_BANCO_DE_PRODUCAO=<ref> node --env-file="$LOCALAPPDATA/PatronoSeller/teste/.env.digital-twin-test" \
  *     node_modules/tsx/dist/cli.mjs --test tests/rodada56-mitigacoes-p211.test.ts
  */
 import { test, describe, before, after } from 'node:test'

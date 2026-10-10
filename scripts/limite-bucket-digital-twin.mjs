@@ -7,8 +7,8 @@
  *
  * Sem `--aplicar`: só mostra a configuração atual e o que mudaria.
  *
- *   node --env-file=.env.digital-twin-test scripts/limite-bucket-digital-twin.mjs
- *   node --env-file=.env.digital-twin-test scripts/limite-bucket-digital-twin.mjs --aplicar
+ *   node --env-file="$LOCALAPPDATA/PatronoSeller/teste/.env.digital-twin-test" scripts/limite-bucket-digital-twin.mjs
+ *   node --env-file="$LOCALAPPDATA/PatronoSeller/teste/.env.digital-twin-test" scripts/limite-bucket-digital-twin.mjs --aplicar
  *
  * PRODUÇÃO (só no go-live, por decisão explícita): exige
  * PATRONO_REF_DO_BANCO_DE_PRODUCAO no ambiente E `--confirmo-producao`.

@@ -2,7 +2,8 @@
 //
 //   node scripts/seguranca/com-banco-de-producao.mjs --confirmo=aftqchhuknsqijsengoo [--cofre] -- <comando> [args...]
 //
-// - Lê a senha de `.env.local` (DATABASE_URL de produção) e monta a URL do
+// - Lê a senha de %LOCALAPPDATA%\PatronoSeller\producao\.env.producao (FORA do
+//   OneDrive; antes era `.env.local` na pasta do projeto) e monta a URL do
 //   pooler de SESSÃO (aws-1-sa-east-1:5432, IPv4) — o host direto `db.<ref>`
 //   só responde por IPv6 e não é alcançável desta rede.
 // - DATABASE_URL e DIRECT_URL apontam para o mesmo pooler de sessão.
@@ -21,9 +22,11 @@ if (i < 0 || i === process.argv.length - 1) throw new Error('Uso: ... -- <comand
 if (!process.argv.slice(2, i).includes(`--confirmo=${REF}`)) throw new Error('Confirmação de produção ausente (--confirmo=<ref>). Abortado.')
 
 const lerEnv = (arq) => Object.fromEntries(readFileSync(arq, 'utf8').split(/\r?\n/).map((l) => l.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/)).filter(Boolean).map((m) => [m[1], m[2].replace(/^(['"])(.*)\1$/, '$2')]))
-const local = lerEnv('.env.local')
+const arquivoProducao = process.env.PATRONO_ARQUIVO_ENV_PRODUCAO || join(process.env.LOCALAPPDATA ?? '', 'PatronoSeller', 'producao', '.env.producao')
+if (/onedrive/i.test(arquivoProducao)) throw new Error('O .env de produção não pode ficar em pasta sincronizada (OneDrive). Abortado.')
+const local = lerEnv(arquivoProducao)
 const origem = new URL(local.DATABASE_URL)
-if (!origem.hostname.includes(REF) && !decodeURIComponent(origem.username).includes(REF)) throw new Error('.env.local não aponta para produção. Abortado.')
+if (!origem.hostname.includes(REF) && !decodeURIComponent(origem.username).includes(REF)) throw new Error('O .env de produção não aponta para produção. Abortado.')
 const url = new URL('postgresql://x@aws-1-sa-east-1.pooler.supabase.com:5432/postgres')
 url.username = `postgres.${REF}`
 url.password = origem.password

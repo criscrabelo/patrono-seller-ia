@@ -3,7 +3,7 @@
  * gravados em `Integracao`: accessToken, refreshToken e chaves secretas de
  * extraData.
  *
- *   node --env-file=.env.digital-twin-test ./node_modules/tsx/dist/cli.mjs scripts/seguranca/cifrar-tokens-existentes.ts [--aplicar] [--workspace=<id>]
+ *   node --env-file="$LOCALAPPDATA/PatronoSeller/teste/.env.digital-twin-test" ./node_modules/tsx/dist/cli.mjs scripts/seguranca/cifrar-tokens-existentes.ts [--aplicar] [--workspace=<id>]
  *
  * - Sem `--aplicar`: SIMULAÇÃO — só conta, não grava nada.
  * - Por padrão recusa qualquer banco que não seja o de TESTE. PRODUÇÃO só

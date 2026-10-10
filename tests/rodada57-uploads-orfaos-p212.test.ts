@@ -10,7 +10,7 @@
  * A parte de INTEGRAÇÃO roda contra o banco e o storage de TESTE e só roda
  * se souber qual é o projeto de produção, para provar que não está nele:
  *
- *   PATRONO_REF_DO_BANCO_DE_PRODUCAO=<ref> node --env-file=.env.digital-twin-test \
+ *   PATRONO_REF_DO_BANCO_DE_PRODUCAO=<ref> node --env-file="$LOCALAPPDATA/PatronoSeller/teste/.env.digital-twin-test" \
  *     node_modules/tsx/dist/cli.mjs --test tests/rodada57-uploads-orfaos-p212.test.ts
  */
 import { test, describe, before, after } from 'node:test'
