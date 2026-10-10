@@ -6,12 +6,12 @@ import { z } from 'zod'
 
 const schema = z.object({
   name: z.string().min(2),
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(6),
 })
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
+  const body = await req.json().catch(() => null)
   const parsed = schema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: 'Dados inválidos' }, { status: 400 })
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
   const { name, email, password } = parsed.data
 
-  const exists = await prisma.user.findUnique({ where: { email } })
+  const exists = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } })
   if (exists) {
     return NextResponse.json({ error: 'Este email já está cadastrado.' }, { status: 409 })
   }

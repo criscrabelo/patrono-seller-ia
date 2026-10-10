@@ -1,5 +1,6 @@
 'use client'
 
+import { toast } from '@/hooks/use-toast'
 import { useEffect, useState } from 'react'
 import { BarChart2, Eye, Package, Zap, TrendingUp } from 'lucide-react'
 import { StatusBadge } from '@/components/shared/StatusBadge'
@@ -35,10 +36,14 @@ export default function RelatoriosPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/metricas').then((r) => r.json()).then((d) => {
-      setMetricas(d)
-      setLoading(false)
-    })
+    fetch('/api/metricas')
+      .then(async (r) => {
+        const d = await r.json().catch(() => null)
+        if (r.ok && d) setMetricas(d)
+        else toast({ title: 'Não consegui carregar os relatórios', description: 'Tente atualizar a página.', variant: 'destructive' })
+      })
+      .catch(() => toast({ title: 'Sem conexão', description: 'Não consegui carregar os relatórios.', variant: 'destructive' }))
+      .finally(() => setLoading(false))
   }, [])
 
   if (loading) {

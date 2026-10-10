@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'WhatsApp não configurado. Configure em Integrações.' }, { status: 400 })
   }
 
-  const body = await req.json() as {
+  const body = await req.json().catch(() => ({})) as {
     numeros: string[]
     mensagem: string
     imagemUrl?: string

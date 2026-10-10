@@ -56,7 +56,11 @@ export default function ProdutosPage() {
 
   async function deletar(id: string) {
     if (!confirm('Deseja realmente arquivar este produto?')) return
-    await fetch(`/api/produtos/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/produtos/${id}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) {
+      toast({ title: 'Não consegui arquivar', description: 'Nada foi alterado. Tente de novo.', variant: 'destructive' })
+      return
+    }
     toast({ title: 'Produto arquivado', variant: 'success' })
     fetchProdutos()
   }

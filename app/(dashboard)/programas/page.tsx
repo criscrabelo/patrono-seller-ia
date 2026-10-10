@@ -75,10 +75,16 @@ export default function ProgramasPage() {
 
   async function fetchAll() {
     setLoading(true)
-    const [pRes, gRes] = await Promise.all([fetch('/api/programas/providers'), fetch('/api/programas')])
-    if (pRes.ok) setProviders(await pRes.json())
-    if (gRes.ok) setProgramas(await gRes.json())
-    setLoading(false)
+    try {
+      const [pRes, gRes] = await Promise.all([fetch('/api/programas/providers'), fetch('/api/programas')])
+      if (pRes.ok) setProviders(await pRes.json())
+      if (gRes.ok) setProgramas(await gRes.json())
+      if (!pRes.ok || !gRes.ok) toast({ title: 'Parte dos dados não carregou', description: 'Atualize a página.', variant: 'destructive' })
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Atualize a página para tentar de novo.', variant: 'destructive' })
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function salvar() {

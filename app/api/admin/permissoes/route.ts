@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 403 })
 
-  const { modulo, liberado } = await req.json()
+  const { modulo, liberado } = await req.json().catch(() => ({}))
   if (!modulo || typeof liberado !== 'boolean') {
     return NextResponse.json({ error: 'Informe modulo e liberado' }, { status: 400 })
   }

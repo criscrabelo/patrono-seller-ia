@@ -66,10 +66,19 @@ export function CentralOperacional() {
   const [desligado, setDesligado] = useState(false)
   const [rodando, setRodando] = useState(false)
 
+  const [erro, setErro] = useState(false)
+
   const carregar = useCallback(async () => {
-    const res = await fetch('/api/central')
-    if (res.status === 404) return setDesligado(true)
-    if (res.ok) setPainel(await res.json())
+    try {
+      const res = await fetch('/api/central')
+      if (res.status === 404) return setDesligado(true)
+      if (res.ok) {
+        setPainel(await res.json())
+        setErro(false)
+      } else setErro(true)
+    } catch {
+      setErro(true)
+    }
   }, [])
 
   useEffect(() => {
@@ -84,12 +93,21 @@ export function CentralOperacional() {
       if (res.ok) toast({ title: 'Análise concluída', description: (dados.resumo ?? []).join(' '), variant: 'success' })
       else toast({ title: 'Não consegui analisar agora', description: dados.error, variant: 'destructive' })
       await carregar()
+    } catch {
+      toast({ title: 'Sem conexão', description: 'A análise não foi feita. Tente de novo.', variant: 'destructive' })
     } finally {
       setRodando(false)
     }
   }
 
   if (desligado) return null
+  if (!painel && erro)
+    return (
+      <div className="card-stat flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-white">Não consegui carregar a Central agora.</p>
+        <Button size="sm" variant="outline" onClick={carregar}>Tentar de novo</Button>
+      </div>
+    )
   if (!painel) return <div className="card-stat animate-pulse h-40" />
 
   const { patrono, proximaAcao: acao, precisaDeVoce: pv, resumoIntegracoes: ri } = painel

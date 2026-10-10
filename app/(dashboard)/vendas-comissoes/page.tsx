@@ -59,17 +59,23 @@ export default function VendasComissoesPage() {
 
   async function fetchAll() {
     setLoading(true)
-    const [prodRes, progRes, vendasRes, comRes] = await Promise.all([
-      fetch('/api/produtos'), fetch('/api/programas'), fetch('/api/vendas'), fetch('/api/comissoes'),
-    ])
-    if (prodRes.ok) setProdutos(await prodRes.json())
-    if (progRes.ok) setProgramas(await progRes.json())
-    if (vendasRes.ok) setVendas(await vendasRes.json())
-    if (comRes.ok) {
-      const data = await comRes.json()
-      setResumoComissoes(data.resumo)
+    try {
+      const [prodRes, progRes, vendasRes, comRes] = await Promise.all([
+        fetch('/api/produtos'), fetch('/api/programas'), fetch('/api/vendas'), fetch('/api/comissoes'),
+      ])
+      if (prodRes.ok) setProdutos(await prodRes.json())
+      if (progRes.ok) setProgramas(await progRes.json())
+      if (vendasRes.ok) setVendas(await vendasRes.json())
+      if (comRes.ok) {
+        const data = await comRes.json()
+        setResumoComissoes(data.resumo)
+      }
+      if (![prodRes, progRes, vendasRes, comRes].every((r) => r.ok)) toast({ title: 'Parte dos dados não carregou', description: 'Atualize a página.', variant: 'destructive' })
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Atualize a página para tentar de novo.', variant: 'destructive' })
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function registrar() {

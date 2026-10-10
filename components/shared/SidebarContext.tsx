@@ -1,6 +1,7 @@
 'use client'
 
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
+import { usePathname } from 'next/navigation'
 
 interface SidebarContextType {
   isOpen: boolean
@@ -16,6 +17,9 @@ const SidebarContext = createContext<SidebarContextType>({
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false)
+  const pathname = usePathname()
+  // P2.15.3: no celular, o menu fecha sozinho depois de trocar de página.
+  useEffect(() => setIsOpen(false), [pathname])
   return (
     <SidebarContext.Provider value={{
       isOpen,

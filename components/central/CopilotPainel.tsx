@@ -46,6 +46,8 @@ export function CopilotPainel({ aoAlterar }: { aoAlterar?: () => void }) {
       }
       setTrocas((t) => [...t, { pergunta: p, resposta: dados as Resposta }].slice(-6))
       if ((dados as Resposta).alterou) aoAlterar?.()
+    } catch {
+      setTrocas((t) => [...t, { pergunta: p, resposta: null, erro: 'Sem conexão. Tente de novo.' }].slice(-6))
     } finally {
       setEnviando(false)
     }

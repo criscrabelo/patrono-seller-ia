@@ -12,6 +12,8 @@ import {
   CAMPO_DA_COMPROVACAO,
 } from '@/lib/autorizacao-da-conta'
 import { preflightDePublicacao } from '@/lib/preflight-de-publicacao'
+import { z } from 'zod'
+import { PLATAFORMAS_TIKTOK_SHOP } from '@/lib/tiktok-shop-evidencia'
 
 /**
  * P1.5.1 — nenhuma destas respostas carrega segredo.
@@ -54,11 +56,26 @@ export async function GET() {
   return NextResponse.json(await resumoDoWorkspace(session.user.workspaceId))
 }
 
+/** P2.15.3: só os canais da tela de Integrações; corpo inválido = 400 (antes, 500). */
+const CorpoDaConexao = z.object({
+  plataforma: z.string().regex(/^[a-z][a-z-]{1,30}$/),
+  accessToken: z.string().max(4000).optional(),
+  accountId: z.string().max(200).optional(),
+  accountName: z.string().max(200).optional(),
+  extraData: z.record(z.unknown()).optional(),
+})
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const body = await req.json()
+  const lido = CorpoDaConexao.safeParse(await req.json().catch(() => null))
+  if (!lido.success) return NextResponse.json({ error: 'Dados inválidos.' }, { status: 400 })
+  const body = lido.data
+  // P2.15.3: TikTok Shop só conecta pelo fluxo oficial (OAuth). Gravar "conectado"
+  // por aqui fabricaria evidência e tiraria da fila um item que exige conexão real.
+  if ((PLATAFORMAS_TIKTOK_SHOP as readonly string[]).includes(body.plataforma))
+    return NextResponse.json({ error: 'O TikTok Shop só pode ser conectado pela autorização oficial do TikTok.' }, { status: 403 })
   const { plataforma, accessToken, accountId } = body
   let { accountName } = body
   const extraData = (body.extraData ?? {}) as Prisma.InputJsonObject & Record<string, unknown>

@@ -33,11 +33,18 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    const result = await signIn('credentials', {
-      email: data.email,
-      password: data.password,
-      redirect: false,
-    })
+    let result: Awaited<ReturnType<typeof signIn>>
+    try {
+      result = await signIn('credentials', {
+        email: data.email.trim(),
+        password: data.password,
+        redirect: false,
+      })
+    } catch {
+      setError('Sem conexão. Tente de novo.')
+      setLoading(false)
+      return
+    }
 
     if (result?.error) {
       if (result.error.includes('PENDENTE')) {
@@ -49,7 +56,14 @@ export default function LoginPage() {
       }
       setLoading(false)
     } else {
-      router.push('/dashboard')
+      // P2.15.3: volta para onde a usuária queria ir (só caminho interno).
+      const destino = new URLSearchParams(window.location.search).get('callbackUrl') ?? ''
+      let caminho = '/dashboard'
+      try {
+        const u = new URL(destino, window.location.origin)
+        if (u.origin === window.location.origin && u.pathname !== '/login') caminho = u.pathname + u.search
+      } catch {}
+      router.push(caminho)
     }
   }
 

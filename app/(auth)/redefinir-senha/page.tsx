@@ -27,8 +27,9 @@ function RedefinirForm() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token, novaSenha }),
-    })
+    }).catch(() => null)
     setLoading(false)
+    if (!res) { setErro('Sem conexão. Tente de novo.'); return }
     if (res.ok) {
       setOk(true)
     } else {

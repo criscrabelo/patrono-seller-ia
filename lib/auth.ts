@@ -3,6 +3,9 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
 
+/** Releitura de status/papel da sessão no banco (no máximo 1 vez por minuto por sessão). */
+const REVALIDAR_A_CADA_MS = 60_000
+
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt', maxAge: 30 * 24 * 60 * 60 },
   pages: { signIn: '/login' },
@@ -16,8 +19,9 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email },
+        // P2.15.3: e-mail sem diferença de maiúsculas (o cadastro antigo guardava como digitado).
+        const user = await prisma.user.findFirst({
+          where: { email: { equals: credentials.email.trim(), mode: 'insensitive' } },
         })
 
         if (!user) return null
@@ -44,15 +48,20 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id
         token.role = (user as { role?: string }).role ?? 'usuario'
         token.workspaceId = (user as { workspaceId?: string }).workspaceId
-      } else if (!token.workspaceId && token.id) {
-        // Sessão emitida antes desta versão (sem workspaceId no token).
-        // Busca uma vez e completa o token, em vez de forçar logout de
-        // quem já estava logado quando este campo foi introduzido.
+        token.verificadoEm = Date.now()
+      } else if (token.id && Date.now() - Number(token.verificadoEm ?? 0) > REVALIDAR_A_CADA_MS) {
+        // P2.15.3: o JWT vale 30 dias; sem reler o banco, usuária bloqueada ou
+        // excluída (e admin rebaixado) continuava com acesso. Lançar aqui faz o
+        // NextAuth limpar o cookie: getServerSession passa a devolver null.
+        // (Também completa tokens antigos sem workspaceId.)
         const atual = await prisma.user.findUnique({
           where: { id: token.id as string },
-          select: { workspaceId: true },
+          select: { workspaceId: true, role: true, status: true },
         })
-        if (atual) token.workspaceId = atual.workspaceId
+        if (!atual || atual.status === 'bloqueado' || atual.status === 'pendente') throw new Error('SESSAO_REVOGADA')
+        token.workspaceId = atual.workspaceId
+        token.role = atual.role
+        token.verificadoEm = Date.now()
       }
       return token
     },

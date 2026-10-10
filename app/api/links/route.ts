@@ -63,12 +63,26 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(linksComDadosReais)
 }
 
+function urlHttp(v: unknown): boolean {
+  if (typeof v !== 'string') return false
+  try {
+    const u = new URL(v.trim())
+    return u.protocol === 'https:' || u.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const body = await req.json()
+  const body = await req.json().catch(() => ({}))
   const { produtoId, urlDestino, tipo, comissao, plataformas: plats } = body
+  // P2.15.3: sem produtoId o Prisma ignorava o filtro (pegava o 1º produto) e a URL não era conferida.
+  if (typeof produtoId !== 'string' || !produtoId) return NextResponse.json({ error: 'Escolha o produto.' }, { status: 400 })
+  if (!urlHttp(urlDestino)) return NextResponse.json({ error: 'O link de destino precisa ser um endereço completo, começando com https://' }, { status: 400 })
+  if (plats !== undefined && (!Array.isArray(plats) || plats.length === 0)) return NextResponse.json({ error: 'Marque ao menos uma plataforma.' }, { status: 400 })
 
   const produto = await prisma.produto.findFirst({
     where: { id: produtoId, workspaceId: session.user.workspaceId },
@@ -112,10 +126,15 @@ export async function PATCH(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const body = await req.json()
+  const body = await req.json().catch(() => ({}))
   const { id, urlDestino, comissao, ativo } = body
+  // P2.15.3: sem id, o updateMany alterava TODOS os links do workspace.
+  if (typeof id !== 'string' || !id) return NextResponse.json({ error: 'Link não informado.' }, { status: 400 })
+  if (urlDestino !== undefined && !urlHttp(urlDestino)) return NextResponse.json({ error: 'O link de destino precisa ser um endereço completo, começando com https://' }, { status: 400 })
+  if (ativo !== undefined && typeof ativo !== 'boolean') return NextResponse.json({ error: 'Dados inválidos.' }, { status: 400 })
+  if (comissao !== undefined && comissao !== null && !Number.isFinite(parseFloat(comissao))) return NextResponse.json({ error: 'Comissão inválida.' }, { status: 400 })
 
-  await prisma.linkDinamico.updateMany({
+  const r = await prisma.linkDinamico.updateMany({
     where: { id, workspaceId: session.user.workspaceId },
     data: {
       ...(urlDestino !== undefined && { urlDestino }),
@@ -124,6 +143,7 @@ export async function PATCH(req: NextRequest) {
       ultimaAtualizacao: new Date(),
     },
   })
+  if (!r.count) return NextResponse.json({ error: 'Link não encontrado.' }, { status: 404 })
 
   return NextResponse.json({ success: true })
 }

@@ -95,7 +95,9 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         {navItems.filter((item) => temAcesso(item.modulo)).map(({ href, label, icon: Icon, badge }) => {
-          const isActive = pathname === href || pathname.startsWith(href + '/')
+          // Só o item mais específico acende (antes, /produtos/imagens acendia "Produtos" e "Importar Imagens").
+          const casa = (h: string) => pathname === h || pathname.startsWith(h + '/')
+          const isActive = casa(href) && !navItems.some((o) => o.href.length > href.length && o.href.startsWith(href + '/') && casa(o.href))
           return (
             <Link
               key={href}

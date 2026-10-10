@@ -159,11 +159,20 @@ export default function IntegracoesPage() {
   const [revalidando, setRevalidando] = useState(false)
   const [campos, setCampos] = useState<Record<string, Record<string, string>>>({})
 
+  const [erroAoCarregar, setErroAoCarregar] = useState(false)
+
   async function fetchIntegracoes() {
-    const res = await fetch('/api/integracoes')
-    const data = await res.json()
-    setIntegracoes(Array.isArray(data) ? data : [])
-    setLoading(false)
+    try {
+      const res = await fetch('/api/integracoes')
+      const data = await res.json().catch(() => null)
+      // P2.15.3: erro não pode aparecer como "tudo desconectado".
+      setErroAoCarregar(!res.ok || !Array.isArray(data))
+      if (Array.isArray(data)) setIntegracoes(data)
+    } catch {
+      setErroAoCarregar(true)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchIntegracoes() }, [])
@@ -195,33 +204,38 @@ export default function IntegracoesPage() {
         ? { clientToken: data.clientToken.trim() }
         : undefined
 
-    const res = await fetch('/api/integracoes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        plataforma: plataforma.id,
-        accessToken,
-        accountId: data.accountId,
-        accountName: data.accountName,
-        extraData,
-      }),
-    })
-
-    if (res.ok) {
-      toast({ title: `${plataforma.nome} conectado!`, variant: 'success' })
-      setExpanded(null)
-      setCampos((prev) => ({ ...prev, [plataforma.id]: {} }))
-      fetchIntegracoes()
-    } else {
-      toast({ title: 'Erro ao conectar', variant: 'destructive' })
+    try {
+      const res = await fetch('/api/integracoes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plataforma: plataforma.id,
+          accessToken,
+          accountId: data.accountId || undefined,
+          accountName: data.accountName || undefined,
+          extraData,
+        }),
+      })
+      const resposta = await res.json().catch(() => ({}))
+      if (res.ok) {
+        toast({ title: `${plataforma.nome} conectado!`, variant: 'success' })
+        setExpanded(null)
+        setCampos((prev) => ({ ...prev, [plataforma.id]: {} }))
+        fetchIntegracoes()
+      } else {
+        toast({ title: `Não consegui conectar o ${plataforma.nome}`, description: resposta.error ?? 'Confira os dados e tente de novo.', variant: 'destructive' })
+      }
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Nada foi salvo. Tente de novo.', variant: 'destructive' })
+    } finally {
+      setSaving(null)
     }
-    setSaving(null)
   }
 
   async function renovarTokenInstagram() {
     setRenovando(true)
     const res = await fetch('/api/integracoes/instagram/renovar', { method: 'POST' })
-    const data = await res.json()
+    const data = await res.json().catch(() => ({}))
     if (res.ok) {
       const expiry = new Date(data.tokenExpiry)
       toast({
@@ -239,7 +253,7 @@ export default function IntegracoesPage() {
   async function revalidarInstagram() {
     setRevalidando(true)
     const res = await fetch('/api/integracoes/instagram/revalidar', { method: 'POST' })
-    const data = await res.json()
+    const data = await res.json().catch(() => ({}))
     if (res.ok) {
       const quantos = data.autorizacao?.scopes?.length ?? 0
       toast({
@@ -270,8 +284,9 @@ export default function IntegracoesPage() {
   async function desconectar(id: string, nome: string) {
     if (!confirm(`Deseja desconectar o ${nome}?`)) return
     setDisconnecting(id)
-    await fetch(`/api/integracoes?plataforma=${id}`, { method: 'DELETE' })
-    toast({ title: `${nome} desconectado` })
+    const res = await fetch(`/api/integracoes?plataforma=${id}`, { method: 'DELETE' }).catch(() => null)
+    if (res?.ok) toast({ title: `${nome} desconectado` })
+    else toast({ title: `Não consegui desconectar o ${nome}`, description: 'Nada foi alterado. Tente de novo.', variant: 'destructive' })
     fetchIntegracoes()
     setDisconnecting(null)
   }
@@ -287,9 +302,16 @@ export default function IntegracoesPage() {
   return (
     <div className="space-y-6 max-w-5xl">
       {/* O título "Integrações" já está no cabeçalho da página: aqui só o resumo. */}
-      <p className="text-sm text-muted-foreground">
-        <span className="font-medium text-white">{conectados} de {PLATAFORMAS.length}</span> plataformas conectadas
-      </p>
+      {erroAoCarregar ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-danger/40 bg-danger/5 p-3 text-sm text-white">
+          Não consegui conferir as conexões agora — o estado abaixo pode estar desatualizado.
+          <button onClick={fetchIntegracoes} className="underline">Tentar de novo</button>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          <span className="font-medium text-white">{conectados} de {PLATAFORMAS.length}</span> plataformas conectadas
+        </p>
+      )}
 
       {/* Orientação (informativa, não é alerta) */}
       <div className="flex gap-3 rounded-xl border border-border bg-card/50 p-4">

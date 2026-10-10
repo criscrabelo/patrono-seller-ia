@@ -27,8 +27,11 @@ export async function PATCH(req: NextRequest) {
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 403 })
 
-  const { id, status, role, email, name, password } = await req.json()
+  const { id, status, role, email, name, password } = await req.json().catch(() => ({}))
   if (!id) return NextResponse.json({ error: 'ID obrigatório' }, { status: 400 })
+  // P2.15.3: só valores conhecidos (antes, qualquer texto virava status/papel).
+  if (status !== undefined && !['pendente', 'ativo', 'bloqueado'].includes(status)) return NextResponse.json({ error: 'Status inválido' }, { status: 400 })
+  if (role !== undefined && !['usuario', 'admin'].includes(role)) return NextResponse.json({ error: 'Papel inválido' }, { status: 400 })
 
   if (email !== undefined) {
     const emailNormalizado = String(email).trim().toLowerCase()
@@ -77,7 +80,8 @@ export async function PATCH(req: NextRequest) {
     if (e?.code === 'P2002') {
       return NextResponse.json({ error: 'Esse email já está em uso por outra conta' }, { status: 409 })
     }
-    throw e
+    if (e?.code === 'P2025') return NextResponse.json({ error: 'Usuária não encontrada' }, { status: 404 })
+    return NextResponse.json({ error: 'Não foi possível alterar agora.' }, { status: 500 })
   }
 }
 
@@ -93,6 +97,14 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Não é possível excluir sua própria conta' }, { status: 400 })
   }
 
-  await prisma.user.delete({ where: { id } })
-  return NextResponse.json({ ok: true })
+  try {
+    await prisma.user.delete({ where: { id } })
+    return NextResponse.json({ ok: true })
+  } catch (e: any) {
+    // P2.15.3: conta com dados (produtos, conteúdos…) não pode ser apagada — antes virava 500 sem mensagem.
+    if (e?.code === 'P2003' || e?.code === 'P2014')
+      return NextResponse.json({ error: 'Esta conta já tem dados no sistema e não pode ser excluída. Use "Bloquear" para tirar o acesso.' }, { status: 409 })
+    if (e?.code === 'P2025') return NextResponse.json({ error: 'Usuária não encontrada' }, { status: 404 })
+    return NextResponse.json({ error: 'Não foi possível excluir agora.' }, { status: 500 })
+  }
 }

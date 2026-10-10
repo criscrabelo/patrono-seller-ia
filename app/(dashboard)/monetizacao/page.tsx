@@ -40,10 +40,11 @@ export default function MonetizacaoPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/links').then(r => r.json()).then(d => {
-      setLinks(Array.isArray(d) ? d : [])
-      setLoading(false)
-    })
+    fetch('/api/links')
+      .then(r => r.json())
+      .then(d => setLinks(Array.isArray(d) ? d : []))
+      .catch(() => setLinks([]))
+      .finally(() => setLoading(false))
   }, [])
 
   const totalCliques = links.reduce((s, l) => s + l.cliques, 0)

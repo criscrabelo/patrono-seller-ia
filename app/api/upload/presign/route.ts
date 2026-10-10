@@ -1,42 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { createClient } from '@supabase/supabase-js'
+import { NextResponse } from 'next/server'
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
-export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-
-  const { filename, contentType, size } = await req.json()
-
-  const isVideo = contentType?.startsWith('video/')
-  const maxSize = isVideo ? 500 * 1024 * 1024 : 10 * 1024 * 1024
-  if (size > maxSize) {
-    return NextResponse.json(
-      { error: `Arquivo muito grande. Máximo: ${isVideo ? '500MB' : '10MB'}` },
-      { status: 400 }
-    )
-  }
-
-  const ext = (filename as string).split('.').pop() ?? 'bin'
-  const bucket = isVideo ? 'videos' : 'imagens'
-  const path = `${session.user.id}/${Date.now()}.${ext}`
-
-  const { data, error } = await supabaseAdmin.storage.from(bucket).createSignedUploadUrl(path)
-
-  if (error) {
-    return NextResponse.json({ error: `Erro ao gerar URL de upload: ${error.message}` }, { status: 500 })
-  }
-
-  const { data: urlData } = supabaseAdmin.storage.from(bucket).getPublicUrl(path)
-
-  return NextResponse.json({
-    uploadUrl: data.signedUrl,
-    publicUrl: urlData.publicUrl,
-  })
+/**
+ * P2.15.3 — DESATIVADA (410). Nenhuma tela chama esta rota: os envios vão do
+ * navegador direto ao Storage (lib/upload-midia.ts). Ela gravava em bucket
+ * público sem lista de tipos permitidos — superfície sem uso, então fechada.
+ * O código anterior está no histórico do git (commit a037147).
+ */
+export async function POST() {
+  return NextResponse.json({ error: 'Esta rota foi desativada. Os envios de arquivo são feitos direto pela tela.' }, { status: 410 })
 }

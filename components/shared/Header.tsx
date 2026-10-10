@@ -22,6 +22,13 @@ const PAGE_TITLES: Record<string, string> = {
   '/video-seller': 'Patrono Video Seller',
   '/admin/usuarios': 'Usuários',
   '/whatsapp': 'WhatsApp em Massa',
+  '/videos': 'Vídeos Gerados',
+  '/programas': 'Meus Programas',
+  '/vendas-comissoes': 'Vendas e Comissões',
+  '/admin/permissoes': 'Permissões',
+  '/conta': 'Minha Conta',
+  '/conta/digital-twin': 'Digital Twin',
+  '/integracoes/shopee': 'Shopee',
 }
 
 export function Header() {

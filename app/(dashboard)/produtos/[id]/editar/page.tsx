@@ -38,17 +38,23 @@ export default function EditarImagensPage() {
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [erroAoCarregar, setErroAoCarregar] = useState<string | null>(null)
 
   useEffect(() => {
     fetch(`/api/produtos/${id}`)
-      .then((r) => r.json())
-      .then((p) => {
+      .then(async (r) => {
+        const p = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          setErroAoCarregar(r.status === 404 ? 'Este produto não existe mais ou não é deste workspace.' : 'Não consegui carregar o produto.')
+          return
+        }
         setProduto(p)
         setImagens(p.imagens ?? [])
         setVideos(p.videos ?? [])
         setLinkProduto(p.linkProduto ?? '')
-        setLoading(false)
       })
+      .catch(() => setErroAoCarregar('Sem conexão. Tente de novo.'))
+      .finally(() => setLoading(false))
   }, [id])
 
   // Envia arquivos, separando imagens de vídeos e respeitando os limites.
@@ -127,37 +133,53 @@ export default function EditarImagensPage() {
 
   async function salvar() {
     setSaving(true)
-    const patch: Record<string, unknown> = { imagens, videos }
-    if (linkProduto.trim()) patch.linkProduto = linkProduto.trim()
+    try {
+      const patch: Record<string, unknown> = { imagens, videos }
+      // Campo vazio = tirar o link (antes, apagar não tinha efeito).
+      patch.linkProduto = linkProduto.trim() || null
 
-    const res = await fetch(`/api/produtos/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    })
-    if (res.ok) {
+      const res = await fetch(`/api/produtos/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      const dados = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast({ title: 'Não consegui salvar', description: dados.error ?? 'Tente de novo.', variant: 'destructive' })
+        return
+      }
       // Atualiza também os links dinâmicos se o link mudou
       if (linkProduto.trim() && linkProduto.trim() !== produto?.linkProduto) {
         const linksRes = await fetch('/api/links')
-        const links = await linksRes.json()
-        const meus = links.filter((l: { produtoId: string }) => l.produtoId === id)
-        await Promise.all(meus.map((l: { id: string }) =>
+        const links = await linksRes.json().catch(() => [])
+        const meus = Array.isArray(links) ? links.filter((l: { produtoId: string }) => l.produtoId === id) : []
+        const r = await Promise.all(meus.map((l: { id: string }) =>
           fetch('/api/links', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: l.id, urlDestino: linkProduto.trim() }),
           })
         ))
+        if (!linksRes.ok || r.some((x) => !x.ok))
+          toast({ title: 'Produto salvo, mas alguns links não foram atualizados', description: 'Confira em Links Dinâmicos.', variant: 'destructive' })
       }
       toast({ title: 'Produto salvo!', variant: 'success' })
       router.push('/produtos')
-    } else {
-      toast({ title: 'Erro ao salvar', variant: 'destructive' })
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Tente de novo.', variant: 'destructive' })
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   if (loading) return <div className="card-stat animate-pulse h-48" />
+  if (erroAoCarregar)
+    return (
+      <div className="card-stat max-w-2xl space-y-3">
+        <p className="text-sm text-white">{erroAoCarregar}</p>
+        <Button asChild variant="outline"><a href="/produtos">Voltar para Produtos</a></Button>
+      </div>
+    )
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -270,7 +292,7 @@ export default function EditarImagensPage() {
                   <img src={url} alt="" className="w-full h-full object-cover" />
                   <button
                     onClick={() => setImagens((prev) => prev.filter((_, j) => j !== i))}
-                    className="absolute top-1 right-1 bg-danger rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute top-1 right-1 bg-danger rounded-full w-5 h-5 flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
                   >
                     <X className="w-3 h-3 text-white" />
                   </button>

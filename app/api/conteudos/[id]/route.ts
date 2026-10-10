@@ -2,7 +2,41 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { z } from 'zod'
 import { registrarAuditoria } from '@/lib/audit-log'
+
+/**
+ * P2.15.3: lista branca do que a tela pode alterar (status, agenda, vídeo,
+ * legendas). Antes o corpo ia inteiro para o banco: dava para trocar
+ * workspaceId/userId/produtoId (inclusive para produto de outro workspace) e
+ * aprovar conteúdo com alerta vermelho — a trava só existia na tela.
+ */
+const STATUS = ['ideia', 'produto_cadastrado', 'roteiro_gerado', 'aguardando_aprovacao', 'aprovado', 'agendado', 'publicado', 'analisar_resultado', 'reaproveitar', 'descartado'] as const
+const legenda = z.string().max(5000).nullable()
+const Alteracao = z
+  .object({
+    status: z.enum(STATUS),
+    dataAgendamento: z.string().datetime().nullable(),
+    videoUrl: z.string().url().nullable(),
+    legendaTiktok: legenda,
+    legendaInstagram: legenda,
+    legendaYoutube: legenda,
+    legendaWhatsapp: legenda,
+    legendaFacebook: legenda,
+    legendaMarketplace: legenda,
+    // editor do conteúdo (ConteudoPreview)
+    roteiro: legenda,
+    textoTela: legenda,
+    narracao: legenda,
+    promptCurto: legenda,
+    promptVideoIA: legenda,
+    chamadaAcao: legenda,
+    hashtags: z.array(z.string().max(100)).max(60),
+    /** A titular confirmou o risco do alerta vermelho na tela de Aprovação (não é gravado). */
+    confirmarRisco: z.boolean(),
+  })
+  .partial()
+  .strict()
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -23,11 +57,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const body = await req.json()
+  const lido = Alteracao.safeParse(await req.json().catch(() => null))
+  if (!lido.success) {
+    const primeiro = lido.error.issues[0]
+    return NextResponse.json({ error: primeiro?.code === 'unrecognized_keys' ? 'Campo não pode ser alterado por aqui.' : 'Dados inválidos.' }, { status: 400 })
+  }
+  const { confirmarRisco, ...body } = lido.data
+
+  const atual = await prisma.conteudo.findFirst({ where: { id, workspaceId: session.user.workspaceId }, select: { alertasCompliance: true } })
+  if (!atual) return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
+  // A trava de alerta vermelho vale no servidor, não só no botão.
+  const alertaVermelho = (atual.alertasCompliance as { severidade?: string }[]).some((a) => a?.severidade === 'vermelho')
+  if (alertaVermelho && body.status === 'aprovado' && !confirmarRisco)
+    return NextResponse.json({ error: 'Este conteúdo tem alerta vermelho de conformidade. Confirme o risco antes de aprovar.' }, { status: 409 })
 
   const conteudo = await prisma.conteudo.updateMany({
     where: { id, workspaceId: session.user.workspaceId },
-    data: body,
+    data: { ...body, dataAgendamento: body.dataAgendamento === undefined ? undefined : body.dataAgendamento ? new Date(body.dataAgendamento) : null },
   })
 
   if (!conteudo.count) return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
@@ -39,6 +85,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       action: 'conteudo.aprovado',
       entityType: 'Conteudo',
       entityId: id,
+      ...(alertaVermelho && { metadata: { riscoConfirmadoPelaTitular: true } }),
     })
   } else if (body.status === 'publicado') {
     await registrarAuditoria({
@@ -58,9 +105,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  await prisma.conteudo.deleteMany({
+  const r = await prisma.conteudo.deleteMany({
     where: { id, workspaceId: session.user.workspaceId },
   })
+  if (!r.count) return NextResponse.json({ error: 'Conteúdo não encontrado' }, { status: 404 })
 
   return NextResponse.json({ success: true })
 }

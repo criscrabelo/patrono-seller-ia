@@ -103,27 +103,31 @@ export default function NovoProdutoPage() {
     }
 
     setSaving(true)
-    const res = await fetch('/api/produtos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...form,
-        preco: form.preco !== '' ? Number(form.preco) : undefined,
-        beneficios: form.beneficios.filter(Boolean),
-        pontosNegativos: form.pontosNegativos.filter(Boolean),
-        linkProduto: form.linkProduto || undefined,
-      }),
-    })
-
-    if (!res.ok) {
-      toast({ title: 'Erro ao salvar produto', variant: 'destructive' })
+    try {
+      const res = await fetch('/api/produtos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          preco: form.preco !== '' ? Number(form.preco) : undefined,
+          beneficios: form.beneficios.filter(Boolean),
+          pontosNegativos: form.pontosNegativos.filter(Boolean),
+          linkProduto: form.linkProduto || undefined,
+        }),
+      })
+      const dados = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const linkRuim = form.linkProduto && !/^https?:\/\//i.test(form.linkProduto)
+        toast({ title: 'Não consegui salvar o produto', description: linkRuim ? 'O link precisa ser um endereço completo, começando com https://' : dados.error ?? 'Confira os campos e tente de novo.', variant: 'destructive' })
+        setSaving(false)
+        return
+      }
+      toast({ title: 'Produto cadastrado!', variant: 'success' })
+      router.push(`/conteudos/gerar?produtoId=${dados.id}`)
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Nada foi salvo. Tente de novo.', variant: 'destructive' })
       setSaving(false)
-      return
     }
-
-    const produto = await res.json()
-    toast({ title: 'Produto cadastrado!', variant: 'success' })
-    router.push(`/conteudos/gerar?produtoId=${produto.id}`)
   }
 
   const inputClass = `w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm

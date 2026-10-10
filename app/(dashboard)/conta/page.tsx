@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { KeyRound, Loader2, Eye, EyeOff, User as UserIcon } from 'lucide-react'
@@ -29,8 +30,12 @@ export default function ContaPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ senhaAtual, novaSenha }),
-    })
+    }).catch(() => null)
     setSalvando(false)
+    if (!res) {
+      toast({ title: 'Sem conexão', description: 'A senha não foi alterada. Tente de novo.', variant: 'destructive' })
+      return
+    }
     if (res.ok) {
       toast({ title: 'Senha alterada com sucesso!', variant: 'success' })
       setSenhaAtual(''); setNovaSenha(''); setConfirmar('')
@@ -63,10 +68,10 @@ export default function ContaPage() {
         <p className="text-sm text-muted-foreground">Seus dados e segurança</p>
       </div>
 
-      <a href="/conta/digital-twin" className="block card-stat hover:bg-white/5 transition-colors">
+      <Link href="/conta/digital-twin" className="block card-stat hover:bg-white/5 transition-colors">
         <span className="text-sm font-medium text-white">Digital Twin</span>
         <span className="text-xs text-muted-foreground block mt-0.5">Representação digital autorizada — mesma aparência, mesma voz</span>
-      </a>
+      </Link>
 
       {/* Dados */}
       <div className="card-stat space-y-3">

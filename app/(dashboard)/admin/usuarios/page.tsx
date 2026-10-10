@@ -49,10 +49,16 @@ export default function UsuariosAdminPage() {
 
   async function fetchUsuarios() {
     setLoading(true)
-    const res = await fetch('/api/admin/usuarios')
-    const data = await res.json()
-    setUsuarios(Array.isArray(data) ? data : [])
-    setLoading(false)
+    try {
+      const res = await fetch('/api/admin/usuarios')
+      const data = await res.json().catch(() => null)
+      setUsuarios(Array.isArray(data) ? data : [])
+      if (!res.ok) toast({ title: 'Não consegui carregar as usuárias', variant: 'destructive' })
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Atualize a página.', variant: 'destructive' })
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function atualizar(id: string, payload: { status?: string; role?: string }) {
@@ -173,7 +179,7 @@ export default function UsuariosAdminPage() {
       toast({ title: 'Usuário excluído', variant: 'success' })
       fetchUsuarios()
     } else {
-      const d = await res.json()
+      const d = await res.json().catch(() => ({}))
       toast({ title: d.error || 'Erro ao excluir', variant: 'destructive' })
     }
   }
@@ -232,7 +238,7 @@ export default function UsuariosAdminPage() {
               const isSelf = u.id === session?.user.id
               return (
                 <div key={u.id} className="rounded-lg border border-border p-3">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
                       {u.role === 'admin' ? <Shield className="w-4 h-4 text-accent" /> : <User className="w-4 h-4 text-muted-foreground" />}
@@ -246,7 +252,7 @@ export default function UsuariosAdminPage() {
                             onChange={(e) => setNomeEditado(e.target.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') salvarNome(u.id) }}
                             className="rounded-md border border-accent/40 bg-background px-2 py-1 text-sm text-white
-                              focus:outline-none focus:ring-1 focus:ring-accent w-56"
+                              focus:outline-none focus:ring-1 focus:ring-accent w-full max-w-56"
                           />
                           <button onClick={() => salvarNome(u.id)} disabled={salvandoNome}
                             className="text-accent hover:text-accent-light p-1 disabled:opacity-50">
@@ -276,7 +282,7 @@ export default function UsuariosAdminPage() {
                             onChange={(e) => setEmailEditado(e.target.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') salvarEmail(u.id) }}
                             className="rounded-md border border-accent/40 bg-background px-2 py-1 text-xs text-white
-                              focus:outline-none focus:ring-1 focus:ring-accent w-56"
+                              focus:outline-none focus:ring-1 focus:ring-accent w-full max-w-56"
                           />
                           <button onClick={() => salvarEmail(u.id)} disabled={salvandoEmail}
                             className="text-accent hover:text-accent-light p-1 disabled:opacity-50">
@@ -298,7 +304,7 @@ export default function UsuariosAdminPage() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${st.color}`}>
                       {st.icon}{st.label}
                     </span>

@@ -11,6 +11,7 @@ import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
+import { STATUS_LABELS, type StatusConteudo } from '@/types'
 
 interface Conteudo {
   id: string
@@ -41,6 +42,7 @@ export default function CalendarioPage() {
     fetch('/api/conteudos')
       .then((r) => r.json())
       .then((data) => setConteudos(Array.isArray(data) ? data : []))
+      .catch(() => setConteudos([]))
   }, [])
 
   const diasDoMes = eachDayOfInterval({
@@ -154,7 +156,7 @@ export default function CalendarioPage() {
                           'text-[10px] px-2 py-0.5 rounded-full text-white',
                           REDE_CORES[c.redeSocial] ?? 'bg-gray-500'
                         )}>
-                          {c.status}
+                          {STATUS_LABELS[c.status as StatusConteudo] ?? c.status}
                         </span>
                         <Link href={`/conteudos/${c.id}`}
                           className="text-xs text-accent hover:underline">Ver</Link>

@@ -19,8 +19,8 @@ interface StatusResposta {
     defaultStyle: string
   } | null
   voiceProfile: { id: string; enabled: boolean; provider: string | null } | null
-  identityConsent: { status: string } | null
-  voiceConsent: { status: string } | null
+  identityConsent: { id: string; status: string } | null
+  voiceConsent: { id: string; status: string } | null
   podeGerar: { permitido: boolean; motivo: string }
   runtime: { cpuCores: number; totalRamGB: number; gpuDetected: boolean; gpuName: string | null }
   workers: { workerId: string; gpuDetected: boolean; gpuName: string | null; vramGB: number | null; version: string | null; lastSeenAt: string }[]
@@ -68,6 +68,13 @@ const TEXTO_GUIADO_VOZ =
  * consentimento → minha imagem → minha voz (gravar ou enviar) → aprovar
  * o perfil. Sem exigir nenhum comando técnico da proprietária.
  */
+const ESTADO_DO_CONSENTIMENTO: Record<string, string> = {
+  GRANTED: 'autorizado',
+  REVOKED: 'revogado',
+  NOT_REQUESTED: 'não pedido',
+  PENDING: 'aguardando',
+}
+
 export default function DigitalTwinPage() {
   const [carregando, setCarregando] = useState(true)
   const [status, setStatus] = useState<StatusResposta | null>(null)
@@ -83,14 +90,23 @@ export default function DigitalTwinPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
 
+  const [erroAoCarregar, setErroAoCarregar] = useState(false)
+
   async function carregar() {
-    const res = await fetch('/api/digital-twin')
-    if (res.ok) setStatus(await res.json())
-    const resAssets = await fetch('/api/digital-twin/assets')
-    if (resAssets.ok) setAssets(await resAssets.json())
-    const resTokens = await fetch('/api/digital-twin/worker-token')
-    if (resTokens.ok) setTokens(await resTokens.json())
-    setCarregando(false)
+    try {
+      const [res, resAssets, resTokens] = await Promise.all([
+        fetch('/api/digital-twin'), fetch('/api/digital-twin/assets'), fetch('/api/digital-twin/worker-token'),
+      ])
+      if (res.ok) setStatus(await res.json())
+      if (resAssets.ok) setAssets(await resAssets.json())
+      if (resTokens.ok) setTokens(await resTokens.json())
+      // P2.15.3: falha ao ler o perfil não pode virar "Criar meu Digital Twin".
+      setErroAoCarregar(!res.ok)
+    } catch {
+      setErroAoCarregar(true)
+    } finally {
+      setCarregando(false)
+    }
   }
 
   /**
@@ -271,20 +287,34 @@ export default function DigitalTwinPage() {
     }
   }
 
+  // P2.15.3 (LGPD): a tela prometia "revogar a qualquer momento", mas nada chamava a revogação.
+  async function revogarConsentimento(tipo: 'identity' | 'voice', consentId: string) {
+    const oQue = tipo === 'identity' ? 'da sua imagem' : 'da sua voz'
+    if (!confirm(`Revogar o consentimento de uso ${oQue}? Nenhum vídeo novo poderá usá-la até você autorizar de novo.`)) return
+    const res = await fetch(`/api/digital-twin/consent?tipo=${tipo}&consentId=${encodeURIComponent(consentId)}`, { method: 'DELETE' }).catch(() => null)
+    const d = await res?.json().catch(() => ({}))
+    if (res?.ok) toast({ title: 'Consentimento revogado.', variant: 'success' })
+    else toast({ title: 'Não consegui revogar agora', description: d?.error ?? 'Tente de novo.', variant: 'destructive' })
+    carregar()
+  }
+
   async function refazerVoz() {
-    await fetch('/api/digital-twin/voice-approve', { method: 'DELETE' })
-    toast({ title: 'Aprovação da voz desfeita — envie uma nova referência quando quiser.' })
+    const res = await fetch('/api/digital-twin/voice-approve', { method: 'DELETE' }).catch(() => null)
+    if (res?.ok) toast({ title: 'Aprovação da voz desfeita — envie uma nova referência quando quiser.' })
+    else toast({ title: 'Não consegui desfazer a aprovação da voz', description: 'Tente de novo.', variant: 'destructive' })
     carregar()
   }
 
   async function atualizarPreferencia(campo: string, valor: boolean | string) {
-    const res = await fetch('/api/digital-twin', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [campo]: valor }) })
-    if (res.ok) carregar()
+    const res = await fetch('/api/digital-twin', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [campo]: valor }) }).catch(() => null)
+    if (res?.ok) carregar()
+    else toast({ title: 'Não consegui salvar a preferência', description: 'Tente de novo.', variant: 'destructive' })
   }
 
   async function refazer() {
-    await fetch('/api/digital-twin/approve', { method: 'DELETE' })
-    toast({ title: 'Aprovação desfeita — envie novas referências quando quiser.' })
+    const res = await fetch('/api/digital-twin/approve', { method: 'DELETE' }).catch(() => null)
+    if (res?.ok) toast({ title: 'Aprovação desfeita — envie novas referências quando quiser.' })
+    else toast({ title: 'Não consegui desfazer a aprovação', description: 'Tente de novo.', variant: 'destructive' })
     carregar()
   }
 
@@ -292,6 +322,15 @@ export default function DigitalTwinPage() {
     return (
       <div className="flex items-center gap-2 text-white/60">
         <Loader2 className="w-4 h-4 animate-spin" /> Carregando…
+      </div>
+    )
+  }
+
+  if (erroAoCarregar && !status) {
+    return (
+      <div className="card-stat max-w-xl space-y-2">
+        <p className="text-sm text-white">Não consegui carregar o seu Digital Twin agora.</p>
+        <button onClick={() => { setCarregando(true); carregar() }} className="text-sm underline text-muted-foreground hover:text-white">Tentar de novo</button>
       </div>
     )
   }
@@ -334,7 +373,7 @@ export default function DigitalTwinPage() {
           <section className="rounded-lg border border-border p-4 space-y-3">
             <h2 className="text-sm font-semibold text-white">Etapa 1 — Consentimento</h2>
             <p className="text-xs text-white/60">
-              Vamos usar sua imagem e sua voz só para gerar vídeos de divulgação de produtos, com a sua identidade sempre reconhecível. Você pode revogar a qualquer momento em Configurações.
+              Vamos usar sua imagem e sua voz só para gerar vídeos de divulgação de produtos, com a sua identidade sempre reconhecível. Você pode revogar a qualquer momento nesta mesma tela.
             </p>
             <div className="flex gap-2 flex-wrap">
               <button
@@ -534,7 +573,16 @@ export default function DigitalTwinPage() {
             <UserIcon className="w-4 h-4" /> {status.profile.displayName} — {status.profile.enabled ? 'Ativo' : 'Desativado'}
           </div>
           <div className="flex items-center gap-2 text-sm text-white/70">
-            <ShieldCheck className="w-4 h-4" /> Consentimento de identidade: {status.identityConsent?.status ?? 'NOT_REQUESTED'}
+            <ShieldCheck className="w-4 h-4" /> Consentimento de imagem: {ESTADO_DO_CONSENTIMENTO[status.identityConsent?.status ?? 'NOT_REQUESTED'] ?? status.identityConsent?.status}
+            {status.identityConsent?.status === 'GRANTED' && (
+              <button onClick={() => revogarConsentimento('identity', status.identityConsent!.id)} className="ml-auto text-xs underline text-white/60 hover:text-white">Revogar</button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-sm text-white/70">
+            <ShieldCheck className="w-4 h-4" /> Consentimento de voz: {ESTADO_DO_CONSENTIMENTO[status.voiceConsent?.status ?? 'NOT_REQUESTED'] ?? status.voiceConsent?.status}
+            {status.voiceConsent?.status === 'GRANTED' && (
+              <button onClick={() => revogarConsentimento('voice', status.voiceConsent!.id)} className="ml-auto text-xs underline text-white/60 hover:text-white">Revogar</button>
+            )}
           </div>
           <div className="flex items-center gap-2 text-sm text-white/70">
             <Mic className="w-4 h-4" /> Voz: {status.voiceProfile ? `${status.voiceProfile.enabled ? 'ativa' : 'inativa'}${status.voiceProfile.provider ? ` (${status.voiceProfile.provider})` : ''}` : 'não configurada'}

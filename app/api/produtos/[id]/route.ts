@@ -2,7 +2,30 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { z } from 'zod'
 import { registrarAuditoria } from '@/lib/audit-log'
+
+/**
+ * P2.15.3: lista branca do que a tela pode alterar. Antes o corpo ia inteiro
+ * para o banco — dava para trocar workspaceId/userId (levar o produto para
+ * outro workspace) ou gravar qualquer coluna, e campo desconhecido virava 500.
+ */
+const Alteracao = z
+  .object({
+    nome: z.string().trim().min(1).max(200),
+    categoria: z.string().trim().min(1).max(100),
+    preco: z.number().nonnegative().nullable(),
+    linkProduto: z.string().trim().url('O link precisa ser um endereço completo, começando com https://').nullable(),
+    descricao: z.string().max(5000).nullable(),
+    publicoAlvo: z.array(z.string().max(200)).max(50),
+    beneficios: z.array(z.string().max(500)).max(50),
+    pontosNegativos: z.array(z.string().max(500)).max(50),
+    observacoes: z.string().max(5000).nullable(),
+    imagens: z.array(z.string().url()).max(30),
+    videos: z.array(z.string().url()).max(30),
+  })
+  .partial()
+  .strict()
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -23,7 +46,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const body = await req.json()
+  const lido = Alteracao.safeParse(await req.json().catch(() => null))
+  if (!lido.success) {
+    const primeiro = lido.error.issues[0]
+    return NextResponse.json({ error: primeiro?.code === 'unrecognized_keys' ? 'Campo não pode ser alterado por aqui.' : primeiro?.message ?? 'Dados inválidos.' }, { status: 400 })
+  }
+  const body = lido.data
 
   const produto = await prisma.produto.updateMany({
     where: { id, workspaceId: session.user.workspaceId },
@@ -49,10 +77,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  await prisma.produto.updateMany({
+  const r = await prisma.produto.updateMany({
     where: { id, workspaceId: session.user.workspaceId },
     data: { status: 'descartado' },
   })
+  if (!r.count) return NextResponse.json({ error: 'Produto não encontrado' }, { status: 404 })
 
   await registrarAuditoria({
     workspaceId: session.user.workspaceId,

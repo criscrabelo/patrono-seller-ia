@@ -42,11 +42,21 @@ export default function PrecisaDeVocePage() {
   const [sempre, setSempre] = useState<Record<string, boolean>>({})
   const [abertos, setAbertos] = useState<Record<string, boolean>>({})
 
+  const [erro, setErro] = useState(false)
+
   const carregar = useCallback(async () => {
-    const res = await fetch('/api/precisa-de-voce')
-    if (res.status === 404) return setDesligado(true)
-    const dados = await res.json().catch(() => ({ itens: [] }))
-    setItens(dados.itens ?? [])
+    try {
+      const res = await fetch('/api/precisa-de-voce')
+      if (res.status === 404) return setDesligado(true)
+      // P2.15.3: erro NÃO pode parecer "nada precisa de você".
+      if (!res.ok) return setErro(true)
+      const dados = await res.json().catch(() => null)
+      if (!dados || !Array.isArray(dados.itens)) return setErro(true)
+      setErro(false)
+      setItens(dados.itens)
+    } catch {
+      setErro(true)
+    }
   }, [])
 
   useEffect(() => {
@@ -65,6 +75,8 @@ export default function PrecisaDeVocePage() {
       if (res.ok) toast({ title: dados.mensagem ?? 'Feito.', variant: dados.status === 'PENDENTE' ? 'default' : 'success' })
       else toast({ title: 'Não foi possível concluir', description: dados.error, variant: 'destructive' })
       await carregar()
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Nada foi alterado. Tente de novo.', variant: 'destructive' })
     } finally {
       setOcupado(null)
     }
@@ -78,6 +90,13 @@ export default function PrecisaDeVocePage() {
       </div>
     )
   }
+  if (erro)
+    return (
+      <div className="card-stat max-w-3xl flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-white">Não consegui carregar o que precisa de você. A lista pode não estar vazia.</p>
+        <Button size="sm" variant="outline" onClick={carregar}>Tentar de novo</Button>
+      </div>
+    )
   if (!itens) return <div className="card-stat animate-pulse h-32 max-w-3xl" />
 
   const urgentes = itens.filter((i) => i.risco === 'ALTO').length

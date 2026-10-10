@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
 
   let body: unknown
   try {
-    body = await req.json()
+    body = await req.json().catch(() => ({}))
   } catch {
     return NextResponse.json({ error: 'Corpo inválido.' }, { status: 400 })
   }

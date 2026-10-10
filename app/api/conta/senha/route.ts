@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const { senhaAtual, novaSenha } = await req.json()
+  const { senhaAtual, novaSenha } = await req.json().catch(() => ({}))
 
   if (!senhaAtual || !novaSenha) {
     return NextResponse.json({ error: 'Preencha a senha atual e a nova senha' }, { status: 400 })

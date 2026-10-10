@@ -22,16 +22,19 @@ export default function ImportarImagensPage() {
   const [salvando, setSalvando] = useState<string | null>(null)
   const [salvos, setSalvos] = useState<Record<string, boolean>>({})
 
+  const [totalDeProdutos, setTotalDeProdutos] = useState(0)
+  const [erro, setErro] = useState(false)
+
   useEffect(() => {
     fetch('/api/produtos')
-      .then(r => r.json())
-      .then(prods => {
-        const shopee = prods.filter((p: Produto) =>
-          p.linkProduto?.includes('shopee') && p.imagens.length === 0
-        )
-        setProdutos(shopee)
-        setLoading(false)
+      .then(async (r) => {
+        const prods = await r.json().catch(() => null)
+        if (!r.ok || !Array.isArray(prods)) { setErro(true); return }
+        setTotalDeProdutos(prods.length)
+        setProdutos(prods.filter((p: Produto) => p.linkProduto?.includes('shopee') && (p.imagens ?? []).length === 0))
       })
+      .catch(() => setErro(true))
+      .finally(() => setLoading(false))
   }, [])
 
   async function salvar(prod: Produto) {
@@ -39,20 +42,25 @@ export default function ImportarImagensPage() {
     if (!url) { toast({ title: 'Cole a URL da imagem', variant: 'destructive' }); return }
 
     setSalvando(prod.id)
-    const res = await fetch(`/api/produtos/${prod.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imagens: [url] }),
-    })
-
-    if (res.ok) {
-      setSalvos(s => ({ ...s, [prod.id]: true }))
-      setProdutos(p => p.filter(x => x.id !== prod.id))
-      toast({ title: `✅ Imagem salva — ${prod.nome}`, variant: 'success' })
-    } else {
-      toast({ title: 'Erro ao salvar', variant: 'destructive' })
+    try {
+      const res = await fetch(`/api/produtos/${prod.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imagens: [url] }),
+      })
+      const dados = await res.json().catch(() => ({}))
+      if (res.ok) {
+        setSalvos(s => ({ ...s, [prod.id]: true }))
+        setProdutos(p => p.filter(x => x.id !== prod.id))
+        toast({ title: `✅ Imagem salva — ${prod.nome}`, variant: 'success' })
+      } else {
+        toast({ title: 'Não consegui salvar', description: dados.error ?? 'Confira se o endereço da imagem está completo (https://…).', variant: 'destructive' })
+      }
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Tente de novo.', variant: 'destructive' })
+    } finally {
+      setSalvando(null)
     }
-    setSalvando(null)
   }
 
   if (loading) return (
@@ -61,10 +69,24 @@ export default function ImportarImagensPage() {
     </div>
   )
 
+  if (erro) return (
+    <div className="card-stat flex flex-col items-center justify-center py-16 text-center max-w-3xl gap-2">
+      <p className="text-white font-semibold">Não consegui carregar os produtos.</p>
+      <button onClick={() => location.reload()} className="text-sm underline text-muted-foreground hover:text-white">Tentar de novo</button>
+    </div>
+  )
+
   if (produtos.length === 0) return (
     <div className="card-stat flex flex-col items-center justify-center py-20 text-center max-w-3xl">
       <Check className="w-12 h-12 text-accent mb-3" />
-      <p className="text-white font-semibold">Todos os produtos já têm imagem!</p>
+      {totalDeProdutos === 0 ? (
+        <>
+          <p className="text-white font-semibold">Nenhum produto cadastrado ainda.</p>
+          <a href="/produtos/novo" className="mt-2 text-sm underline text-muted-foreground hover:text-white">Cadastrar o primeiro produto</a>
+        </>
+      ) : (
+        <p className="text-white font-semibold">Nenhum produto da Shopee está sem imagem.</p>
+      )}
     </div>
   )
 

@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { Copy, Check, Plus, Link2, Zap, TrendingUp, MousePointer, DollarSign, RefreshCw, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -110,13 +111,19 @@ export default function LinksPage() {
   })
 
   async function fetchAll() {
-    const [linksRes, prodRes] = await Promise.all([
-      fetch('/api/links'), fetch('/api/produtos'),
-    ])
-    const [l, p] = await Promise.all([linksRes.json(), prodRes.json()])
-    setLinks(Array.isArray(l) ? l : [])
-    setProdutos(Array.isArray(p) ? p : [])
-    setLoading(false)
+    try {
+      const [linksRes, prodRes] = await Promise.all([
+        fetch('/api/links'), fetch('/api/produtos'),
+      ])
+      const [l, p] = await Promise.all([linksRes.json().catch(() => []), prodRes.json().catch(() => [])])
+      setLinks(Array.isArray(l) ? l : [])
+      setProdutos(Array.isArray(p) ? p : [])
+      if (!linksRes.ok) toast({ title: 'Não consegui carregar os links', description: 'Tente atualizar a página.', variant: 'destructive' })
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Não consegui carregar os links. Tente de novo.', variant: 'destructive' })
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchAll() }, [])
@@ -125,21 +132,29 @@ export default function LinksPage() {
     if (!form.produtoId || !form.urlDestino) {
       toast({ title: 'Preencha produto e URL de destino', variant: 'destructive' }); return
     }
-    setGenerating(true)
-    const res = await fetch('/api/links', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, plataformas: form.plataformas }),
-    })
-    if (res.ok) {
-      const novos = await res.json()
-      toast({ title: `✅ ${novos.length} links gerados!`, variant: 'success' })
-      setShowForm(false)
-      fetchAll()
-    } else {
-      toast({ title: 'Erro ao gerar links', variant: 'destructive' })
+    if (form.plataformas.length === 0) {
+      toast({ title: 'Marque ao menos uma plataforma', variant: 'destructive' }); return
     }
-    setGenerating(false)
+    setGenerating(true)
+    try {
+      const res = await fetch('/api/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, plataformas: form.plataformas }),
+      })
+      const dados = await res.json().catch(() => ({}))
+      if (res.ok) {
+        toast({ title: `✅ ${dados.length} links gerados!`, variant: 'success' })
+        setShowForm(false)
+        fetchAll()
+      } else {
+        toast({ title: 'Não consegui gerar os links', description: dados.error, variant: 'destructive' })
+      }
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Tente de novo.', variant: 'destructive' })
+    } finally {
+      setGenerating(false)
+    }
   }
 
   async function registrarVenda(linkId: string) {
@@ -244,6 +259,11 @@ export default function LinksPage() {
                 <option value="">Selecionar produto...</option>
                 {produtos.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
               </select>
+              {produtos.length === 0 && (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Nenhum produto ainda. <Link href="/produtos/novo" className="underline text-white">Cadastre um produto</Link> primeiro.
+                </p>
+              )}
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1.5 block">Tipo de monetização *</label>

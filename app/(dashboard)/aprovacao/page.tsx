@@ -42,29 +42,51 @@ export default function AprovacaoPage() {
   const [legendaTexto, setLegendaTexto] = useState('')
   const [salvandoLegenda, setSalvandoLegenda] = useState(false)
 
+  const [erroAoCarregar, setErroAoCarregar] = useState(false)
+  const [decidindo, setDecidindo] = useState<string | null>(null)
+
   async function fetchConteudos() {
     setLoading(true)
-    const res = await fetch('/api/conteudos?status=aguardando_aprovacao')
-    const data = await res.json()
-    setConteudos(Array.isArray(data) ? data : [])
-    setLoading(false)
+    try {
+      const res = await fetch('/api/conteudos?status=aguardando_aprovacao')
+      const data = await res.json().catch(() => null)
+      setErroAoCarregar(!res.ok)
+      setConteudos(Array.isArray(data) ? data : [])
+    } catch {
+      setErroAoCarregar(true)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchConteudos() }, [])
 
   async function atualizar(id: string, status: string) {
-    await fetch(`/api/conteudos/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    })
-    const labels: Record<string, string> = {
-      aprovado: 'Conteúdo aprovado!',
-      descartado: 'Conteúdo rejeitado.',
-      roteiro_gerado: 'Conteúdo adiado.',
+    if (decidindo) return
+    setDecidindo(id)
+    try {
+      const res = await fetch(`/api/conteudos/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, ...(status === 'aprovado' && confirmedRisks.includes(id) && { confirmarRisco: true }) }),
+      })
+      const dados = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast({ title: 'Não foi possível concluir', description: dados.error ?? 'Tente de novo.', variant: 'destructive' })
+        return
+      }
+      const labels: Record<string, string> = {
+        aprovado: 'Conteúdo aprovado!',
+        descartado: 'Conteúdo rejeitado.',
+        roteiro_gerado: 'Conteúdo adiado.',
+      }
+      toast({ title: labels[status], variant: status === 'aprovado' ? 'success' : 'default' })
+      fetchConteudos()
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Nada foi alterado. Tente de novo.', variant: 'destructive' })
+    } finally {
+      setDecidindo(null)
     }
-    toast({ title: labels[status], variant: status === 'aprovado' ? 'success' : 'default' })
-    fetchConteudos()
   }
 
   // Identifica qual campo de legenda está em uso (o primeiro não-vazio).
@@ -129,7 +151,12 @@ export default function AprovacaoPage() {
         <p className="text-sm text-muted-foreground">{conteudos.length} conteúdo(s) aguardando</p>
       </div>
 
-      {conteudos.length === 0 ? (
+      {erroAoCarregar ? (
+        <div className="card-stat flex flex-col items-center justify-center py-12 text-center gap-3">
+          <p className="text-sm text-white">Não consegui carregar as aprovações.</p>
+          <Button variant="outline" onClick={fetchConteudos}>Tentar de novo</Button>
+        </div>
+      ) : conteudos.length === 0 ? (
         <div className="card-stat flex flex-col items-center justify-center py-16 text-center">
           <CheckCircle className="w-10 h-10 text-accent mb-3" />
           <p className="text-sm text-muted-foreground">Nenhum conteúdo aguardando aprovação.</p>
@@ -147,24 +174,24 @@ export default function AprovacaoPage() {
             return (
               <div key={c.id} className="card-stat">
                 {/* Header */}
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
                   <div>
                     <p className="font-semibold text-white">{c.produto.nome}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {c.redeSocial} · {c.estilo} · {formatDateShort(c.createdAt)}
                     </p>
                   </div>
-                  <div className="flex gap-2 shrink-0">
-                    <Button size="sm" variant="destructive"
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    <Button size="sm" variant="destructive" disabled={decidindo === c.id}
                       onClick={() => atualizar(c.id, 'descartado')}>
                       <X className="w-3.5 h-3.5" />Rejeitar
                     </Button>
-                    <Button size="sm" variant="outline"
+                    <Button size="sm" variant="outline" disabled={decidindo === c.id}
                       onClick={() => atualizar(c.id, 'roteiro_gerado')}>
                       <Clock className="w-3.5 h-3.5" />Adiar
                     </Button>
                     <Button size="sm"
-                      disabled={!canApprove}
+                      disabled={!canApprove || decidindo === c.id}
                       onClick={() => atualizar(c.id, 'aprovado')}>
                       <CheckCircle className="w-3.5 h-3.5" />Aprovar
                     </Button>

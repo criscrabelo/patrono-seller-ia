@@ -73,16 +73,24 @@ export async function GET(req: NextRequest) {
   let totalFalhas = 0
 
   for (const ws of workspaces) {
-    const r = await rodarFilaDoWorkspace({
-      porta,
-      workspaceId: ws.id,
-      workerId,
-      capacidades,
-      adaptadores,
-      renovadores: RENOVADORES_LIGADOS,
-      agora,
-      limite: JOBS_POR_WORKSPACE,
-    })
+    // P2.15.3: erro num workspace não derruba a fila dos outros.
+    let r: Awaited<ReturnType<typeof rodarFilaDoWorkspace>>
+    try {
+      r = await rodarFilaDoWorkspace({
+        porta,
+        workspaceId: ws.id,
+        workerId,
+        capacidades,
+        adaptadores,
+        renovadores: RENOVADORES_LIGADOS,
+        agora,
+        limite: JOBS_POR_WORKSPACE,
+      })
+    } catch (e) {
+      totalFalhas++
+      console.error('[cron/executar-fila] workspace falhou', ws.id, e instanceof Error ? e.message : String(e))
+      continue
+    }
     if (r.executados === 0 && r.destravados === 0) continue
 
     totalExecutados += r.executados

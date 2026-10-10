@@ -62,21 +62,23 @@ export default function VideoSellerPage() {
     setGerando(true)
     setOutput(null)
 
-    const res = await fetch('/api/video-seller', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, comando: comandoOverride || form.comando }),
-    })
-
-    if (!res.ok) {
-      toast({ title: 'Erro ao gerar', description: 'A IA demorou. Tente novamente.', variant: 'destructive' })
+    try {
+      const res = await fetch('/api/video-seller', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, comando: comandoOverride || form.comando }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast({ title: 'Não foi possível gerar', description: data.error ?? 'Tente novamente.', variant: 'destructive' })
+        return
+      }
+      setOutput(data)
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Tente novamente.', variant: 'destructive' })
+    } finally {
       setGerando(false)
-      return
     }
-
-    const data = await res.json()
-    setOutput(data)
-    setGerando(false)
   }
 
   const inputClass = `w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm
@@ -196,7 +198,7 @@ export default function VideoSellerPage() {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Diferenciais</p>
                 <ul className="text-white space-y-0.5">
-                  {output.analiseProduto.diferenciais.map((d, i) => <li key={i}>• {d}</li>)}
+                  {(output.analiseProduto?.diferenciais ?? []).map((d, i) => <li key={i}>• {d}</li>)}
                 </ul>
               </div>
             </div>
@@ -216,7 +218,7 @@ export default function VideoSellerPage() {
           <div className="card-stat">
             <h3 className="font-semibold text-white mb-3">Roteiro Cena a Cena</h3>
             <div className="space-y-2">
-              {output.roteiro.map((cena) => (
+              {(output.roteiro ?? []).map((cena) => (
                 <div key={cena.cena} className="rounded-lg bg-background border border-border p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="w-6 h-6 rounded-full bg-accent/20 text-accent text-xs font-bold flex items-center justify-center">
@@ -285,7 +287,7 @@ export default function VideoSellerPage() {
                 <h3 className="font-semibold text-white text-sm">CTA Final</h3>
               </div>
               <div className="flex flex-wrap gap-2">
-                {output.ctaFinal.map((cta, i) => (
+                {(output.ctaFinal ?? []).map((cta, i) => (
                   <div key={i} className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
                     <span className="text-sm text-white">{cta}</span>
                     <CopyBtn text={cta} />
@@ -299,7 +301,7 @@ export default function VideoSellerPage() {
                 <CopyBtn text={output.hashtagsSugeridas.join(' ')} />
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {output.hashtagsSugeridas.map((h) => (
+                {(output.hashtagsSugeridas ?? []).map((h) => (
                   <span key={h} className="px-2 py-1 rounded-full bg-secondary text-xs text-accent">{h}</span>
                 ))}
               </div>
@@ -318,7 +320,7 @@ export default function VideoSellerPage() {
             <div className="card-stat">
               <h3 className="font-semibold text-white mb-3">Variações para Teste A/B</h3>
               <div className="space-y-3">
-                {output.variacoesTeste.map((v, i) => (
+                {(output.variacoesTeste ?? []).map((v, i) => (
                   <div key={i} className="rounded-lg bg-background border border-border p-3">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="w-5 h-5 rounded-full bg-accent/20 text-accent text-xs font-bold flex items-center justify-center">

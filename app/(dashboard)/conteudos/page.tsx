@@ -72,10 +72,16 @@ export default function ConteudosPage() {
     const params = new URLSearchParams()
     if (filtroStatus) params.set('status', filtroStatus)
     if (filtroRede) params.set('redeSocial', filtroRede)
-    const res = await fetch(`/api/conteudos?${params}`)
-    const data = await res.json()
-    setConteudos(Array.isArray(data) ? data : [])
-    setLoading(false)
+    try {
+      const res = await fetch(`/api/conteudos?${params}`)
+      const data = await res.json().catch(() => null)
+      setConteudos(Array.isArray(data) ? data : [])
+      if (!res.ok) toast({ title: 'Não consegui carregar os conteúdos', description: 'Tente atualizar a página.', variant: 'destructive' })
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Não consegui carregar os conteúdos.', variant: 'destructive' })
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchConteudos() }, [filtroStatus, filtroRede])
@@ -137,7 +143,11 @@ export default function ConteudosPage() {
 
   async function deletar(id: string) {
     if (!confirm('Deseja realmente excluir este conteúdo?')) return
-    await fetch(`/api/conteudos/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/conteudos/${id}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) {
+      toast({ title: 'Não consegui excluir', description: 'Nada foi alterado. Tente de novo.', variant: 'destructive' })
+      return
+    }
     toast({ title: 'Conteúdo excluído', variant: 'success' })
     fetchConteudos()
   }

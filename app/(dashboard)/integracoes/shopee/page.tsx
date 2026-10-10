@@ -65,13 +65,18 @@ export default function ShopeeIntegracaoPage() {
   const [accessToken, setAccessToken] = useState('')
 
   async function fetchConfig() {
-    const res = await fetch('/api/integracoes/shopee')
-    if (res.ok) {
-      const data = await res.json()
-      setConfig(data)
-      if (data?.extraData?.modo) setModo(data.extraData.modo as Modo)
+    try {
+      const res = await fetch('/api/integracoes/shopee')
+      if (res.ok) {
+        const data = await res.json().catch(() => null)
+        setConfig(data)
+        if (data?.extraData?.modo) setModo(data.extraData.modo as Modo)
+      } else toast({ title: 'Não consegui carregar a configuração da Shopee', variant: 'destructive' })
+    } catch {
+      toast({ title: 'Sem conexão', description: 'Atualize a página.', variant: 'destructive' })
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => { fetchConfig() }, [])
@@ -116,7 +121,11 @@ export default function ShopeeIntegracaoPage() {
 
   async function desconectar() {
     if (!confirm('Desconectar a Shopee?')) return
-    await fetch('/api/integracoes/shopee', { method: 'DELETE' })
+    const res = await fetch('/api/integracoes/shopee', { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) {
+      toast({ title: 'Não consegui desconectar a Shopee', description: 'Nada foi alterado. Tente de novo.', variant: 'destructive' })
+      return
+    }
     toast({ title: 'Shopee desconectada' })
     setConfig(null)
     setResultado(null)
@@ -210,7 +219,7 @@ export default function ShopeeIntegracaoPage() {
                 <p className="text-white font-medium">{config?.accountName ?? '—'}</p>
               </div>
               {config?.extraData?.subId && (
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <p className="text-muted-foreground text-xs mb-1">Sub ID (rastreamento)</p>
                   <div className="flex items-center gap-2">
                     <code className="text-accent text-xs font-mono">{config.extraData.subId}</code>
