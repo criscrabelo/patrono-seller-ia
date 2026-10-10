@@ -325,6 +325,13 @@ export async function guardarChamadaPaga(params: {
     )
   }
 
+  // P2.14.7: kill switch global e Safe Mode vencem qualquer orçamento.
+  const { freioDeEmergencia } = await import('./kill-switch')
+  const freio = await freioDeEmergencia(params.workspaceId, params.env ?? process.env)
+  if (freio.bloqueado) {
+    return registrarBloqueio(params, negar(freio.motivo ?? 'Gasto bloqueado por segurança.'), custoEstimado)
+  }
+
   const fallback = escolherFallback(params.provider, params.operacao)
 
   try {

@@ -12,6 +12,10 @@ import { AFFILIATE_PROVIDER_REGISTRY } from '../lib/affiliate-providers'
 import { CHANNEL_CAPABILITIES, capacidadeDoCanal } from '../lib/channel-registry'
 import { STATUS_PIPELINE, AUTOMATION_MODES, HUMAN_ACTION_REASONS } from '../lib/automation'
 import { criarUsuarioComWorkspace } from '../lib/workspace'
+import { limparWorkspaceDeTeste } from './_limpar-workspace-de-teste'
+
+// P2.14.8: o teste apaga, ao final, a conta que criou.
+const PREFIXO = 'Conta de Teste — '
 import { resumoPorConteudo, resumoPorCanal } from '../lib/learning-engine'
 
 const prisma = new PrismaClient()
@@ -119,6 +123,7 @@ describe('LearningEngine — métricas determinísticas reais', () => {
   })
 
   after(async () => {
+    await limparWorkspaceDeTeste(prisma, workspaceId, PREFIXO)
     await prisma.$disconnect()
   })
 

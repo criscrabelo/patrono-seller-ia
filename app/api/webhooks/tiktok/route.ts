@@ -3,23 +3,24 @@ import {
   processarWebhookTikTok,
   lerCabecalhoDeAssinatura,
   TAMANHO_MAXIMO_DO_CORPO,
-  WebhookIdempotencyStoreEmMemoria,
 } from '@/lib/tiktok-webhook'
+import { WebhookReceiptStore } from '@/lib/webhook-receipt'
 
-// Store de idempotência do processo — suficiente para uma única instância;
-// se/quando escalarmos para múltiplas instâncias, trocar por uma
-// implementação baseada no Postgres já existente (AuditLog), sem serviço novo.
-const store = new WebhookIdempotencyStoreEmMemoria()
+// P2.14.7: dedupe PERSISTENTE (tabela WebhookReceipt) — sobrevive a
+// reinício e vale entre instâncias serverless (antes era um Set em memória).
+const store = new WebhookReceiptStore('tiktok')
 
 /**
  * Rota PÚBLICA (exceção exata no middleware): quem chama é o servidor do
  * TikTok, sem sessão. Por isso toda recusa acontece aqui, nesta ordem, e
- * nenhuma etapa grava nada:
+ * NENHUMA RECUSA grava nada:
  *   1. app sem segredo configurado → recusa;
  *   2. cabeçalho `Tiktok-Signature` ausente ou fora do formato oficial →
  *      recusa ANTES de ler o corpo;
  *   3. corpo maior que o limite → recusa;
  *   4. assinatura, janela de tempo e JSON (lib/tiktok-webhook.ts).
+ * Só um evento com assinatura VÁLIDA e dentro da janela grava — e apenas o
+ * recibo de dedupe (provider + id do evento, sem payload), uma vez.
  */
 export async function POST(req: NextRequest) {
   const clientSecret = process.env.TIKTOK_CLIENT_SECRET

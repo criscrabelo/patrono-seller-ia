@@ -224,18 +224,29 @@ describe('Webhook do TikTok: formato oficial, recusa antes de qualquer escrita',
     assert.equal((await enviar(corpo, { 'tiktok-signature': `t=${t},s=${assinar(t, corpo)}` })).status, 413)
   })
 
-  test('evento legítimo no formato oficial é aceito, e o repetido é reconhecido', async () => {
+  // P2.14.7: o dedupe agora é persistente (WebhookReceipt) — exige o banco de teste.
+  test('evento legítimo no formato oficial é aceito, e o repetido é reconhecido (dedupe persistente)', { skip: !process.env.DATABASE_URL ? 'exige Postgres' : false }, async () => {
     process.env.TIKTOK_CLIENT_SECRET = SECRET
-    const corpo = JSON.stringify({ event: 'post.publish.complete', client_key: 'k', create_time: 3, user_openid: 'u' })
+    const unico = `r52-${Date.now()}`
+    const corpo = JSON.stringify({ event: 'post.publish.complete', client_key: 'k', create_time: 3, user_openid: unico })
     const t = agora()
-    const r1 = await enviar(corpo, { 'tiktok-signature': `t=${t},s=${assinar(t, corpo)}` })
-    assert.equal(r1.status, 200)
-    const r2 = await enviar(corpo, { 'tiktok-signature': `t=${t},s=${assinar(t, corpo)}` })
-    assert.equal((await r2.json()).duplicado, true)
-    delete process.env.TIKTOK_CLIENT_SECRET
+    const { prisma } = await import('../lib/prisma')
+    try {
+      const r1 = await enviar(corpo, { 'tiktok-signature': `t=${t},s=${assinar(t, corpo)}` })
+      assert.equal(r1.status, 200)
+      assert.equal((await r1.json()).duplicado, false)
+      const r2 = await enviar(corpo, { 'tiktok-signature': `t=${t},s=${assinar(t, corpo)}` })
+      assert.equal((await r2.json()).duplicado, true)
+      // Grava só o recibo (provider + id), uma única vez.
+      assert.equal(await prisma.webhookReceipt.count({ where: { provider: 'tiktok', eventoId: { contains: unico } } }), 1)
+    } finally {
+      await prisma.webhookReceipt.deleteMany({ where: { provider: 'tiktok', eventoId: { contains: unico } } })
+      await prisma.$disconnect()
+      delete process.env.TIKTOK_CLIENT_SECRET
+    }
   })
 
-  test('o caminho público não grava nada: sem banco na rota nem no processamento', () => {
+  test('recusas não gravam nada: rota e processamento sem banco; o recibo só vem depois da validação', () => {
     for (const f of ['app/api/webhooks/tiktok/route.ts', 'lib/tiktok-webhook.ts']) {
       const src = lerCodigo(f)
       // Banco e auditoria: nenhum import, nenhuma chamada. (O `.update` do
@@ -245,6 +256,15 @@ describe('Webhook do TikTok: formato oficial, recusa antes de qualquer escrita',
     // A recusa pelo cabeçalho vem antes de ler o corpo.
     const rota = lerCodigo('app/api/webhooks/tiktok/route.ts')
     assert.ok(rota.indexOf('lerCabecalhoDeAssinatura(') < rota.indexOf('await req.text()'))
+    // O recibo (única escrita) só é pedido DEPOIS de assinatura, janela e JSON.
+    const proc = lerCodigo('lib/tiktok-webhook.ts')
+    const ini = proc.indexOf('export async function processarWebhookTikTok')
+    const corpoFn = proc.slice(ini)
+    const reivindica = corpoFn.indexOf('store.reivindicar(')
+    assert.ok(reivindica > 0)
+    for (const antes of ['verificarAssinaturaWebhook(', 'timestampDentroDaJanela(', 'JSON.parse(']) assert.ok(corpoFn.indexOf(antes) < reivindica, antes)
+    // O recibo guarda só provider + id do evento: nenhum payload.
+    assert.ok(!/payload|corpo/i.test(lerCodigo('lib/webhook-receipt.ts').split('class WebhookReceiptStore')[1]))
   })
 })
 

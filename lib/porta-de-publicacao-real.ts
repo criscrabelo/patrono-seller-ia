@@ -20,6 +20,7 @@
 
 import { preflightDePublicacao, type RelatorioDePreflight } from './preflight-de-publicacao'
 import { capacidadeRealDoAdapter } from './capacidade-real-do-adapter'
+import { freioDeEmergencia } from './kill-switch'
 
 export interface DecisaoDaPorta {
   liberada: boolean
@@ -58,6 +59,12 @@ export async function autorizarPublicacaoReal(params: {
   agora?: Date
 }): Promise<DecisaoDaPorta> {
   const canal = (params.canal ?? '').trim().toLowerCase()
+
+  // P2.14.7: kill switch global e Safe Mode fecham a porta antes de tudo.
+  const freio = await freioDeEmergencia(params.workspaceId, params.env)
+  if (freio.bloqueado) {
+    return { liberada: false, bloqueio: 'SAFE_MODE_OU_KILL_SWITCH', explicacao: freio.motivo ?? 'Publicação bloqueada por segurança.', preflight: null }
+  }
 
   if (params.envio && !envioSuportadoPeloAdapter(canal, params.envio)) {
     return {

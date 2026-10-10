@@ -68,6 +68,22 @@ model Workspace {
   candidatosDeProduto CandidatoDeProduto[]
   perfilDaLoja        PerfilDaLoja?
 
+  // ── Fundações do Autopilot (P2.14.7 — Fase 0A) ──────────────────────
+  // SAFE MODE: o Patrono continua observando, mas não executa nenhuma ação
+  // irreversível (publicar, gastar, conectar). Entra sozinho em condição
+  // grave ou por decisão da titular; sai só por decisão humana.
+  safeModeAtivo  Boolean   @default(false)
+  safeModeMotivo String?
+  safeModeDesde  DateTime?
+
+  supervisorRuns   SupervisorRun[]
+  decisoes         DecisionRecord[]
+  eventos          DomainEvent[]
+  politicas        PolicyVersion[]
+  pedidosAprovacao ApprovalRequest[]
+  regrasAprovacao  ApprovalRule[]
+  custos           CostLedger[]
+
   // ── Digital Twin (Rodada 7) ────────────────────────────────────────
   digitalTwinProfiles DigitalTwinProfile[]
   voiceProfiles       VoiceProfile[]
@@ -178,6 +194,9 @@ model LinkDinamico {
   @@unique([publicacaoId, workspaceId])
 
   @@index([workspaceId])
+
+  // P2.14.7: métricas por produto em lote.
+  @@index([produtoId])
 }
 
 model EventoLink {
@@ -337,6 +356,9 @@ model Conteudo {
 
   @@unique([id, workspaceId])
   @@index([workspaceId])
+
+  // P2.14.7: varredura de publicações agendadas por workspace.
+  @@index([workspaceId, status, dataAgendamento])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -459,6 +481,11 @@ model Sale {
   @@index([workspaceId])
   @@index([workspaceId, status])
   @@index([workspaceId, dataOrigin])
+
+  // P2.14.7: atribuição e métricas por produto/link/clique.
+  @@index([productId])
+  @@index([linkId])
+  @@index([clickEventId])
 }
 
 model Commission {
@@ -493,6 +520,9 @@ model Commission {
 
   @@index([workspaceId])
   @@index([workspaceId, status])
+
+  // P2.14.7
+  @@index([saleId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -523,6 +553,9 @@ model AuditLog {
 
   @@index([workspaceId, createdAt])
   @@index([entityType, entityId])
+
+  // P2.14.7: última coleta e reservas de custo.
+  @@index([workspaceId, action, createdAt])
 }
 
 // ── Digital Twin (Rodada 7) ─────────────────────────────────────────────
@@ -875,6 +908,9 @@ model MLFeatureSnapshot {
   labeledAt  DateTime?
 
   @@index([workspaceId, entityType])
+
+  // P2.14.7: fechamento da janela de observação.
+  @@index([workspaceId, labeledAt])
 }
 
 // Teste A/B de criativo (regra 24) — hook, CTA, duração, avatar/B-roll,
@@ -1246,4 +1282,219 @@ model PerfilDaLoja {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fundações do Autopilot (P2.14.7 — Fase 0A).
+//
+// Supervisor com estados explícitos, livro de decisões e de eventos,
+// políticas versionadas, aprovações centralizadas, feature flags, custo e
+// recibos de webhook. Tudo por workspace, idempotente por chave.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Estados do ciclo do Supervisor. Transições válidas em lib/supervisor/estados.ts.
+enum EstadoDoRun {
+  PLANEJADO
+  DESCOBRINDO
+  VALIDANDO
+  RANQUEANDO
+  DECIDINDO
+  CRIANDO
+  AGUARDANDO_APROVACAO
+  AGENDANDO
+  PUBLICANDO
+  MEDINDO
+  APRENDENDO
+  CONCLUIDO
+  FALHOU
+  CANCELADO
+  PAUSADO
+}
+
+enum StatusDaAprovacao {
+  PENDENTE
+  APROVADA
+  REJEITADA
+  EXPIRADA
+  CANCELADA
+}
+
+/// Uma volta do ciclo autônomo. `chave` impede dois runs iguais (ex.: "diario:2026-10-10").
+model SupervisorRun {
+  id            String      @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace   @relation(fields: [workspaceId], references: [id])
+  chave         String
+  modo          String // MANUAL | ASSISTED | AUTOMATIC | SIMULACAO
+  estado        EstadoDoRun @default(PLANEJADO)
+  correlationId String      @unique
+  passo         Int         @default(0)
+  checkpoint    Json?
+  tentativas    Int         @default(0)
+  ultimoErro    String?
+  iniciadoEm    DateTime    @default(now())
+  atualizadoEm  DateTime    @updatedAt
+  concluidoEm   DateTime?
+
+  @@unique([workspaceId, chave])
+  @@index([workspaceId, estado])
+}
+
+/// Livro de decisões: o que foi decidido, por quem, com quais dados, quais
+/// faltavam, com que confiança, sob qual regra/política. Não é log técnico.
+model DecisionRecord {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id])
+  tipo              String
+  ator              String // PATRONO | TITULAR | SISTEMA
+  atorUserId        String?
+  correlationId     String?
+  runId             String?
+  entidadeTipo      String?
+  entidadeId        String?
+  decisao           String
+  confianca         Float?
+  entradas          Json?
+  ausentes          String[]
+  explicacao        String[]
+  regra             String? // regra/modelo + versão
+  politicaVersao    Int?
+  chaveIdempotencia String?
+  criadoEm          DateTime  @default(now())
+
+  @@unique([workspaceId, chaveIdempotencia])
+  @@index([workspaceId, criadoEm])
+  @@index([workspaceId, tipo, criadoEm])
+}
+
+/// Livro de eventos (outbox): fatos do domínio, versionados, idempotentes.
+/// Alimenta "O que o Patrono está fazendo agora" e o aprendizado.
+model DomainEvent {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id])
+  tipo              String
+  versao            Int       @default(1)
+  correlationId     String?
+  runId             String?
+  entidadeTipo      String?
+  entidadeId        String?
+  payload           Json
+  chaveIdempotencia String
+  ocorridoEm        DateTime  @default(now())
+  processadoEm      DateTime?
+
+  @@unique([workspaceId, chaveIdempotencia])
+  @@index([workspaceId, ocorridoEm])
+  @@index([workspaceId, tipo, ocorridoEm])
+}
+
+/// Política versionada e imutável: cada mudança cria uma versão nova. No
+/// máximo uma ativa por workspace (índice parcial na migration).
+model PolicyVersion {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id])
+  versao          Int
+  regras          Json
+  motivo          String?
+  ator            String // TITULAR | SISTEMA
+  criadoPorUserId String?
+  ativa           Boolean   @default(false)
+  criadoEm        DateTime  @default(now())
+
+  @@unique([workspaceId, versao])
+  @@index([workspaceId, ativa])
+}
+
+/// Pedido único de intervenção humana ("Precisa de você").
+model ApprovalRequest {
+  id                 String            @id @default(cuid())
+  workspaceId        String
+  workspace          Workspace         @relation(fields: [workspaceId], references: [id])
+  tipo               String // PUBLICACAO | CUSTO | CONEXAO | PRODUTO | POLITICA
+  chave              String
+  titulo             String
+  resumo             String
+  porque             String[]
+  risco              String // BAIXO | MEDIO | ALTO
+  acaoProposta       Json
+  entidadeTipo       String?
+  entidadeId         String?
+  status             StatusDaAprovacao @default(PENDENTE)
+  correlationId      String?
+  expiraEm           DateTime?
+  decididoEm         DateTime?
+  decididoPorUserId  String?
+  decididoPorRegraId String?
+  motivoDaDecisao    String?
+  criadoEm           DateTime          @default(now())
+  atualizadoEm       DateTime          @updatedAt
+
+  @@unique([workspaceId, chave])
+  @@index([workspaceId, status, criadoEm])
+}
+
+/// Aprovação por regra: classe de ação, período ou permanente.
+model ApprovalRule {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id])
+  tipo            String
+  condicao        Json
+  efeito          String // APROVAR | REJEITAR
+  validaAte       DateTime? // null = permanente
+  ativa           Boolean   @default(true)
+  motivo          String?
+  criadoPorUserId String?
+  criadoEm        DateTime  @default(now())
+  revogadaEm      DateTime?
+
+  @@index([workspaceId, tipo, ativa])
+}
+
+/// Liga/desliga sem redeploy. `escopo` = "global" ou o id do workspace.
+model FeatureFlag {
+  id                  String   @id @default(cuid())
+  chave               String
+  escopo              String   @default("global")
+  ligada              Boolean  @default(false)
+  motivo              String?
+  atualizadoPorUserId String?
+  criadoEm            DateTime @default(now())
+  atualizadoEm        DateTime @updatedAt
+
+  @@unique([chave, escopo])
+}
+
+/// Livro de custo por operação (em centavos). Toda ação paga passa por aqui.
+model CostLedger {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id])
+  operacao          String
+  provider          String
+  estimadoCentavos  Int
+  realCentavos      Int?
+  moeda             String    @default("BRL")
+  status            String // RESERVADO | CONFIRMADO | CANCELADO | BLOQUEADO
+  motivo            String?
+  correlationId     String?
+  chaveIdempotencia String
+  criadoEm          DateTime  @default(now())
+  atualizadoEm      DateTime  @updatedAt
+
+  @@unique([workspaceId, chaveIdempotencia])
+  @@index([workspaceId, criadoEm])
+}
+
+/// Recibo de webhook: dedupe persistente (sobrevive a reinício/serverless).
+model WebhookReceipt {
+  id         String   @id @default(cuid())
+  provider   String
+  eventoId   String
+  recebidoEm DateTime @default(now())
+
+  @@unique([provider, eventoId])
 }

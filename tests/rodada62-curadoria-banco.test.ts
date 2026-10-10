@@ -87,6 +87,8 @@ describe('Curadoria contra o banco de teste', { skip: !TEM_BANCO ? 'DATABASE_URL
 
   after(async () => {
     for (const ws of [wsA, wsB].filter(Boolean)) {
+      await prisma.decisionRecord.deleteMany({ where: { workspaceId: ws } })
+      await prisma.domainEvent.deleteMany({ where: { workspaceId: ws } })
       await prisma.candidatoDeProduto.deleteMany({ where: { workspaceId: ws } })
       await prisma.perfilDaLoja.deleteMany({ where: { workspaceId: ws } })
       await prisma.produto.deleteMany({ where: { workspaceId: ws } })

@@ -33,6 +33,8 @@ import {
 } from './motor-de-oportunidades'
 import { obterPerfilDaLoja } from './perfil-da-loja'
 import { registrarAuditoria } from './audit-log'
+import { registrarDecisao, registrarEvento } from './ledger'
+import { comContexto, contextoAtual, novoCorrelationId } from './observabilidade'
 
 // ── Vocabulário ─────────────────────────────────────────────────────────
 
@@ -410,6 +412,14 @@ export interface ResultadoDaColeta {
  * não altera o modo, não cria tarefa, não gera conteúdo, não publica.
  */
 export async function coletarCandidatos(params: { workspaceId: string; userId?: string; agora?: Date }): Promise<ResultadoDaColeta> {
+  // P2.14.8: uma coleta = um correlationId, compartilhado por decisão, evento e log.
+  return comContexto(
+    { correlationId: contextoAtual()?.correlationId ?? novoCorrelationId('coleta'), workspaceId: params.workspaceId, ator: 'TITULAR' },
+    () => coletarCandidatosNoContexto(params)
+  )
+}
+
+async function coletarCandidatosNoContexto(params: { workspaceId: string; userId?: string; agora?: Date }): Promise<ResultadoDaColeta> {
   const agora = params.agora ?? new Date()
   const { workspaceId } = params
   const { perfil, origem: origemDoPerfil } = await obterPerfilDaLoja(workspaceId, { criarSeAusente: true })
@@ -635,6 +645,29 @@ export async function persistirColeta(p: {
           },
         })
       }
+      // P2.14.7: decisão e evento no MESMO commit da apresentação — ou tudo, ou nada.
+      const escolhidos = p.linhas
+        .filter((l) => l.status === 'APRESENTADO')
+        .sort((x, y) => (x.posicao ?? 99) - (y.posicao ?? 99))
+        .map((l) => ({ posicao: l.posicao, chaveDeOrigem: l.chaveDeOrigem, nome: l.nome, score: l.score, confianca: l.confianca, porque: Array.isArray(l.porqueDestaPosicao) ? l.porqueDestaPosicao : [] }))
+      const chaveDaColeta = `coleta:${agoraIso}`
+      await registrarDecisao(
+        {
+          workspaceId: p.workspaceId,
+          tipo: 'CURADORIA_APRESENTACAO',
+          ator: 'PATRONO',
+          decisao: escolhidos.length ? `Apresentar ${escolhidos.length} candidato(s).` : 'Nenhum candidato apto para apresentar.',
+          entradas: { avaliados: p.linhas.length, apresentados: escolhidos },
+          explicacao: escolhidos.map((e) => `${e.posicao}º ${e.nome}: ${e.porque.join(' ')}`.trim()),
+          regra: 'curadoria:ranking-v1',
+          chaveIdempotencia: chaveDaColeta,
+        },
+        tx
+      )
+      await registrarEvento(
+        { workspaceId: p.workspaceId, tipo: 'CANDIDATES_PRESENTED', chaveIdempotencia: chaveDaColeta, payload: { avaliados: p.linhas.length, chaves: escolhidos.map((e) => e.chaveDeOrigem) } },
+        tx
+      )
       return { gravados: gravados.length, apresentados: gravados.filter((g) => g.status === 'APRESENTADO').length }
     },
     { maxWait: 5_000, timeout: 20_000 }
@@ -698,6 +731,18 @@ export async function escolherCandidato(params: {
   candidatoId: string
   agora?: Date
 }): Promise<ResultadoDaEscolha> {
+  return comContexto(
+    { correlationId: contextoAtual()?.correlationId ?? novoCorrelationId('escolha'), workspaceId: params.workspaceId, ator: 'TITULAR' },
+    () => escolherCandidatoNoContexto(params)
+  )
+}
+
+async function escolherCandidatoNoContexto(params: {
+  workspaceId: string
+  userId: string
+  candidatoId: string
+  agora?: Date
+}): Promise<ResultadoDaEscolha> {
   const agora = params.agora ?? new Date()
   const { workspaceId, userId, candidatoId } = params
 
@@ -707,6 +752,20 @@ export async function escolherCandidato(params: {
   if (impedimento) throw new ErroDeCuradoria(409, impedimento)
 
   const resultado = await prisma.$transaction(async (tx) => {
+    const r = await reivindicarECadastrar(tx, c)
+    // P2.14.7: a escolha é da titular — decisão e evento no MESMO commit.
+    await registrarDecisao(
+      { workspaceId, tipo: 'ESCOLHA_DE_PRODUTO', ator: 'TITULAR', atorUserId: userId, decisao: `Escolheu "${c.nome}".`, entidadeTipo: 'CandidatoDeProduto', entidadeId: c.id, entradas: { score: c.score, posicao: c.posicao, produtoId: r.produtoId }, chaveIdempotencia: `escolha:${c.id}` },
+      tx
+    )
+    await registrarEvento(
+      { workspaceId, tipo: 'PRODUCT_SELECTED', chaveIdempotencia: `escolha:${c.id}`, entidadeTipo: 'Produto', entidadeId: r.produtoId, payload: { candidatoId: c.id, status: r.status, produtoCriado: r.produtoCriado } },
+      tx
+    )
+    return r
+  })
+
+  async function reivindicarECadastrar(tx: Prisma.TransactionClient, c: CandidatoDeProduto): Promise<ResultadoDaEscolha> {
     // Reivindicação atômica: só um clique passa.
     const reivindicado = await tx.candidatoDeProduto.updateMany({
       where: { id: c.id, workspaceId, status: 'APRESENTADO', complianceBloqueante: false, validoAte: { gte: agora } },
@@ -730,7 +789,7 @@ export async function escolherCandidato(params: {
 
     await tx.candidatoDeProduto.update({ where: { id: c.id }, data: { status: 'CADASTRADO', produtoId } })
     return { status: 'CADASTRADO' as const, produtoId, produtoCriado: !existente }
-  })
+  }
 
   await registrarAuditoria({
     workspaceId,

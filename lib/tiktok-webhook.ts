@@ -80,6 +80,12 @@ export function timestampDentroDaJanela(timestampHeaderSegundos: string, agoraMs
 export interface WebhookIdempotencyStore {
   jaProcessado(eventId: string): Promise<boolean>
   marcarProcessado(eventId: string): Promise<void>
+  /**
+   * Reivindicação ATÔMICA (P2.14.7): true = este processo é o primeiro a ver
+   * o evento. Quando existe, substitui o par jaProcessado/marcarProcessado,
+   * que tem corrida entre instâncias serverless.
+   */
+  reivindicar?(eventId: string): Promise<boolean>
 }
 
 export class WebhookIdempotencyStoreEmMemoria implements WebhookIdempotencyStore {
@@ -130,6 +136,11 @@ export async function processarWebhookTikTok(params: {
   }
 
   const eventId = idDoEvento(payload)
+  if (params.store.reivindicar) {
+    return (await params.store.reivindicar(eventId))
+      ? { aceito: true, motivo: 'Evento aceito e processado.', duplicado: false }
+      : { aceito: true, motivo: 'Evento já processado anteriormente — ignorado (idempotência).', duplicado: true }
+  }
   if (await params.store.jaProcessado(eventId)) {
     return { aceito: true, motivo: 'Evento já processado anteriormente — ignorado (idempotência).', duplicado: true }
   }

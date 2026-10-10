@@ -17,6 +17,10 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { PrismaClient } from '@prisma/client'
 import { criarUsuarioComWorkspace } from '../lib/workspace'
+import { limparWorkspaceDeTeste } from './_limpar-workspace-de-teste'
+
+// P2.14.8: o teste apaga, ao final, a conta que criou.
+const PREFIXO = 'Conta de Teste — '
 import { resumoVendas, resumoComissoes, registrarResultado } from '../lib/vendas-comissoes'
 
 const prisma = new PrismaClient()
@@ -46,6 +50,7 @@ before(async () => {
 })
 
 after(async () => {
+  await limparWorkspaceDeTeste(prisma, workspaceId, PREFIXO)
   await prisma.$disconnect()
 })
 

@@ -56,6 +56,8 @@ describe('Coleta atômica contra o banco de teste', { skip: !TEM_BANCO ? 'DATABA
 
   after(async () => {
     const ids = Object.values(ws).filter(Boolean)
+    await prisma.decisionRecord.deleteMany({ where: { workspaceId: { in: ids } } })
+    await prisma.domainEvent.deleteMany({ where: { workspaceId: { in: ids } } })
     await prisma.eventoLink.deleteMany({ where: { workspaceId: { in: ids } } })
     await prisma.linkDinamico.deleteMany({ where: { workspaceId: { in: ids } } })
     await prisma.candidatoDeProduto.deleteMany({ where: { workspaceId: { in: ids } } })

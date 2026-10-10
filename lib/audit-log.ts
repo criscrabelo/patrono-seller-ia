@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { redigir } from '@/lib/cofre'
 
 /**
  * Auditoria simples de operações de escrita importantes.
@@ -10,6 +11,7 @@ import { prisma } from '@/lib/prisma'
  * ruim, mas quebrar "criar produto" por causa do log seria pior).
  *
  * NUNCA passe senha, token, segredo ou outro dado sensível em `metadata`.
+ * (P2.14.7: por garantia, `metadata` passa por `redigir()` antes de gravar.)
  */
 export async function registrarAuditoria(evento: {
   workspaceId: string
@@ -27,7 +29,7 @@ export async function registrarAuditoria(evento: {
         action: evento.action,
         entityType: evento.entityType,
         entityId: evento.entityId,
-        metadata: evento.metadata as never,
+        metadata: (evento.metadata ? redigir(evento.metadata) : undefined) as never,
       },
     })
   } catch (e) {
