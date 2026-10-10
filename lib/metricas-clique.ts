@@ -257,12 +257,72 @@ export async function calcularMetricasPorProduto(
   produtoIds: string[],
   antesDe: Date = new Date()
 ): Promise<MetricasPorProduto[]> {
-  const resultados: MetricasPorProduto[] = []
-  for (const produtoId of produtoIds ?? []) {
-    const m = await calcularMetricasDeClique({ workspaceId, produtoId, antesDe })
-    resultados.push({ ...m, produtoId, granularidade: 'PRODUTO' })
+  // P2.14.5.17 — EM LOTE: os mesmos filtros de `contarCliquesReais` e
+  // `listarVendasElegiveis` (por produto), em 3 consultas para todos os
+  // produtos em vez de 2 por produto em sequência. A autoridade da venda
+  // (`avaliarVendaParaOperacaoReal`) continua decidindo venda por venda.
+  const ids = [...new Set((produtoIds ?? []).filter((id) => typeof id === 'string' && id.length > 0))]
+  const janelaValida = !!workspaceId?.trim() && dataValida(antesDe)
+
+  const cliquesPorProduto = new Map<string, number>()
+  const vendasPorProduto = new Map<string, VendaContada[]>()
+  if (janelaValida && ids.length > 0) {
+    const [links, candidatas] = await Promise.all([
+      // Mesmo caminho do clique por produto: link do workspace → produto.
+      prisma.linkDinamico.findMany({
+        where: { workspaceId, produtoId: { in: ids } },
+        select: { id: true, produtoId: true },
+      }),
+      prisma.sale.findMany({
+        where: { workspaceId, dataOrigin: 'REAL_OPERATION', date: { lt: antesDe }, productId: { in: ids } },
+        select: { id: true, productId: true, commissions: { select: { status: true, receivedAmount: true } } },
+      }),
+    ])
+    const produtoDoLink = new Map(links.map((l) => [l.id, l.produtoId as string]))
+    if (links.length > 0) {
+      const porLink = await prisma.eventoLink.groupBy({
+        by: ['linkId'],
+        where: { workspaceId, tipo: TIPO_DE_EVENTO_CLIQUE, createdAt: { lt: antesDe }, linkId: { in: links.map((l) => l.id) } },
+        _count: { _all: true },
+      })
+      for (const g of porLink) {
+        const pid = produtoDoLink.get(g.linkId)
+        if (pid) cliquesPorProduto.set(pid, (cliquesPorProduto.get(pid) ?? 0) + g._count._all)
+      }
+    }
+    for (const venda of candidatas) {
+      // O filtro `productId in ids` já garante produto; o guard é só de tipo.
+      if (!venda.productId) continue
+      const veredito = await avaliarVendaParaOperacaoReal(workspaceId, venda.id)
+      if (!veredito?.elegivel) continue
+      const receitaRealizada = venda.commissions.reduce(
+        (soma, c) =>
+          c.status === 'RECEIVED' && typeof c.receivedAmount === 'number' && Number.isFinite(c.receivedAmount)
+            ? soma + c.receivedAmount
+            : soma,
+        0
+      )
+      const lista = vendasPorProduto.get(venda.productId) ?? []
+      lista.push({ id: venda.id, receitaRealizada })
+      vendasPorProduto.set(venda.productId, lista)
+    }
   }
-  return resultados
+
+  // Uma entrada por produto pedido, na mesma ordem (como antes).
+  return (produtoIds ?? []).map((produtoId) => {
+    const cliques = cliquesPorProduto.get(produtoId) ?? 0
+    const vendas = vendasPorProduto.get(produtoId) ?? []
+    const receitaRealizada = vendas.reduce((s, v) => s + v.receitaRealizada, 0)
+    return {
+      cliques,
+      vendasElegiveis: vendas.length,
+      taxaConversao: dividirOuNull(vendas.length, cliques),
+      receitaRealizada,
+      receitaPorClique: dividirOuNull(receitaRealizada, cliques),
+      produtoId,
+      granularidade: 'PRODUTO' as const,
+    }
+  })
 }
 
 /**

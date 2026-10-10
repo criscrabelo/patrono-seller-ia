@@ -455,95 +455,190 @@ export async function coletarCandidatos(params: { workspaceId: string; userId?: 
   const posicaoPorProduto = new Map(selecao.candidatos.map((c) => [c.produtoId, c]))
   const elegiveis = fila.filter((o) => !o.complianceBloqueante && o.classificacao !== 'NAO_ELEGIVEL')
 
-  const idsGravados: { id: string; produtoId: string }[] = []
+  // 4) Monta TODA a rodada em memória; nada é gravado ainda.
+  const linhas: LinhaDaColeta[] = []
   for (const o of elegiveis) {
     const escolhido = posicaoPorProduto.get(o.produtoId)
     const comPosicao = escolhido ? { ...o, porqueDestaPosicao: [escolhido.motivoDaPosicao, ...o.porqueDestaPosicao] } : o
+    const situacao = escolhido ? { status: 'APRESENTADO' as const, posicao: escolhido.posicao } : { status: 'NOVO' as const, posicao: null }
     const informado = informadoPorId.get(o.produtoId)
     if (informado) {
-      const retrato = {
+      linhas.push({
         ...retratoDoCandidato(comPosicao, itemDoInformado(informado), {
           coletadoEm: agora,
           validoAte: calcularValidade({ tipo: 'USER_PROVIDED', coletadoEm: agora }),
         }),
         ...sinaisMarcados(informado),
-        // Descartado com a quarentena cumprida volta a concorrer.
-        ...(informado.status === 'DESCARTADO' ? { status: 'NOVO' as const, posicao: null } : {}),
-      }
-      await prisma.candidatoDeProduto.update({ where: { id: informado.id }, data: retrato })
-      idsGravados.push({ id: informado.id, produtoId: o.produtoId })
+        chaveDeOrigem: informado.chaveDeOrigem,
+        fonte: informado.fonte,
+        produtoId: null,
+        ...situacao,
+      })
       continue
     }
     const b = brutoPorId.get(o.produtoId)
     if (!b) continue
-    const retrato = retratoDoCandidato(
-      comPosicao,
-      {
-        nome: b.nome,
-        linkProduto: b.linkProduto,
-        imagem: b.imagens[0] ?? null,
-        categoria: b.categoria,
-        preco: b.preco,
-        providerId: b.providerId,
-        externalId: b.externalId,
-        comissaoPercentual: comissaoDaOferta(b.linksDinamicos),
-        vendas: null,
-        velocidadeDeVendas: null,
-        avaliacao: null,
-        numeroDeAvaliacoes: null,
-        estoque: null,
-      },
-      { coletadoEm: agora, validoAte: calcularValidade({ tipo: tipoDeFonteDoCatalogo(o, b.origemDados), coletadoEm: agora }) }
-    )
-    const chaveDeOrigem = `produto:${b.id}`
-    const gravado = await prisma.candidatoDeProduto.upsert({
-      where: { workspaceId_chaveDeOrigem: { workspaceId, chaveDeOrigem } },
-      create: { ...retrato, workspaceId, chaveDeOrigem, fonte: FONTE_CATALOGO, produtoId: b.id, status: 'NOVO' },
-      update: retrato,
-      select: { id: true, status: true },
-    })
-    // Escolhido/cadastrado nunca é reaberto (e já foi filtrado acima). Chegar
-    // aqui como DESCARTADO = quarentena cumprida: volta a concorrer.
-    if ((STATUS_DEFINITIVOS as readonly string[]).includes(gravado.status)) continue
-    if (gravado.status === 'DESCARTADO') {
-      await prisma.candidatoDeProduto.update({ where: { id: gravado.id }, data: { status: 'NOVO', posicao: null } })
-    }
-    idsGravados.push({ id: gravado.id, produtoId: o.produtoId })
-  }
-
-  // 4) Só os 3 de agora ficam APRESENTADO; os anteriores voltam a NOVO.
-  const apresentar = idsGravados.filter((g) => posicaoPorProduto.has(g.produtoId))
-  await prisma.$transaction([
-    prisma.candidatoDeProduto.updateMany({
-      where: { workspaceId, status: 'APRESENTADO' },
-      data: { status: 'NOVO', posicao: null },
-    }),
-    ...apresentar.map((g) =>
-      prisma.candidatoDeProduto.update({
-        where: { id: g.id },
-        data: { status: 'APRESENTADO', posicao: posicaoPorProduto.get(g.produtoId)!.posicao },
-      })
-    ),
-  ])
-
-  if (params.userId) {
-    await registrarAuditoria({
-      workspaceId,
-      userId: params.userId,
-      action: 'curadoria.candidatos_coletados',
-      entityType: 'CandidatoDeProduto',
-      entityId: workspaceId,
-      metadata: { avaliados: fila.length, apresentados: apresentar.length, bloqueados: fila.length - elegiveis.length },
+    linhas.push({
+      ...retratoDoCandidato(
+        comPosicao,
+        {
+          nome: b.nome,
+          linkProduto: b.linkProduto,
+          imagem: b.imagens[0] ?? null,
+          categoria: b.categoria,
+          preco: b.preco,
+          providerId: b.providerId,
+          externalId: b.externalId,
+          comissaoPercentual: comissaoDaOferta(b.linksDinamicos),
+          vendas: null,
+          velocidadeDeVendas: null,
+          avaliacao: null,
+          numeroDeAvaliacoes: null,
+          estoque: null,
+        },
+        { coletadoEm: agora, validoAte: calcularValidade({ tipo: tipoDeFonteDoCatalogo(o, b.origemDados), coletadoEm: agora }) }
+      ),
+      chaveDeOrigem: `produto:${b.id}`,
+      fonte: FONTE_CATALOGO,
+      produtoId: b.id,
+      ...situacao,
     })
   }
+
+  // 5) Grava a rodada inteira de uma vez (atômico) — ou nada.
+  const bloqueados = fila.length - elegiveis.length
+  const r = await persistirColeta({
+    workspaceId,
+    agora,
+    linhas,
+    auditoria: params.userId
+      ? { userId: params.userId, metadata: { avaliados: fila.length, apresentados: linhas.filter((l) => l.status === 'APRESENTADO').length, bloqueados } }
+      : undefined,
+  })
 
   return {
     avaliados: fila.length,
-    candidatosAtivos: idsGravados.length,
-    apresentados: apresentar.length,
-    bloqueados: fila.length - elegiveis.length,
+    candidatosAtivos: r.gravados,
+    apresentados: r.apresentados,
+    bloqueados,
     origemDoPerfil,
   }
+}
+
+// ── Persistência atômica da coleta (P2.14.5.17) ────────────────────────
+
+/** Uma linha da rodada: o retrato do motor + identidade + situação. */
+export type LinhaDaColeta = RetratoDoCandidato & {
+  chaveDeOrigem: string
+  fonte: string
+  produtoId: string | null
+  status: 'NOVO' | 'APRESENTADO'
+  posicao: number | null
+}
+
+const MENSAGEM_COLETA_EM_ANDAMENTO = 'Já existe uma coleta em andamento para este workspace. Tente de novo em instantes.'
+
+/**
+ * Grava a rodada inteira numa ÚNICA transação:
+ *   1. trava lógica do workspace (`pg_try_advisory_xact_lock`): uma segunda
+ *      coleta simultânea recebe 409 em vez de intercalar escritas;
+ *   2. os APRESENTADO anteriores voltam a NOVO;
+ *   3. UM `INSERT … ON CONFLICT (workspaceId, chaveDeOrigem) DO UPDATE` com
+ *      todas as linhas — nunca reabre escolhido/cadastrado nem descartado em
+ *      quarentena, mesmo que mudem entre a leitura e a escrita;
+ *   4. a auditoria, só dentro da mesma transação (só existe se tudo deu certo).
+ * Qualquer falha desfaz tudo: não há rodada pela metade.
+ */
+export async function persistirColeta(p: {
+  workspaceId: string
+  agora: Date
+  linhas: LinhaDaColeta[]
+  auditoria?: { userId: string; metadata: Record<string, unknown> }
+}): Promise<{ gravados: number; apresentados: number }> {
+  const agoraIso = p.agora.toISOString()
+  const quarentenaIso = inicioDaQuarentena(p.agora).toISOString()
+  const json = JSON.stringify(
+    p.linhas.map((l) => ({
+      ...l,
+      id: randomUUID(),
+      coletadoEm: new Date(l.coletadoEm as Date).toISOString(),
+      validoAte: new Date(l.validoAte as Date).toISOString(),
+    }))
+  )
+  const trava = `curadoria:${p.workspaceId}`
+
+  return prisma.$transaction(
+    async (tx) => {
+      const [lock] = await tx.$queryRaw<{ ok: boolean }[]>`SELECT pg_try_advisory_xact_lock(hashtextextended(${trava}, 0)) AS ok`
+      if (!lock?.ok) throw new ErroDeCuradoria(409, MENSAGEM_COLETA_EM_ANDAMENTO)
+
+      await tx.$executeRaw`
+        UPDATE "CandidatoDeProduto" SET "status" = 'NOVO', "posicao" = NULL, "updatedAt" = ${agoraIso}::timestamp(3)
+        WHERE "workspaceId" = ${p.workspaceId} AND "status" = 'APRESENTADO'`
+
+      const gravados =
+        p.linhas.length === 0
+          ? []
+          : await tx.$queryRaw<{ status: string }[]>`
+        INSERT INTO "CandidatoDeProduto" (
+          "id", "workspaceId", "chaveDeOrigem", "fonte", "providerId", "externalId", "produtoId",
+          "nome", "linkProduto", "imagem", "imagemAutorizada", "categoria", "preco",
+          "comissaoPercentual", "comissaoValor", "vendas", "velocidadeDeVendas", "avaliacao", "numeroDeAvaliacoes", "estoque",
+          "score", "baseDeEvidencia", "aderencia", "aderenciaDoPerfil", "afinidade", "confianca", "nivelDeRisco",
+          "complianceBloqueante", "publicacaoImpedida", "compradoPelaTitular", "usadoPelaTitular",
+          "motivosPositivos", "riscos", "desconhecidos", "porqueDestaPosicao",
+          "status", "posicao", "coletadoEm", "validoAte", "createdAt", "updatedAt"
+        )
+        SELECT
+          j->>'id', ${p.workspaceId}, j->>'chaveDeOrigem', j->>'fonte', j->>'providerId', j->>'externalId', j->>'produtoId',
+          j->>'nome', j->>'linkProduto', j->>'imagem', (j->>'imagemAutorizada')::boolean, j->>'categoria', (j->>'preco')::double precision,
+          (j->>'comissaoPercentual')::double precision, (j->>'comissaoValor')::double precision, (j->>'vendas')::integer,
+          (j->>'velocidadeDeVendas')::double precision, (j->>'avaliacao')::double precision, (j->>'numeroDeAvaliacoes')::integer, (j->>'estoque')::integer,
+          (j->>'score')::integer, (j->>'baseDeEvidencia')::integer, (j->>'aderencia')::integer, (j->>'aderenciaDoPerfil')::integer,
+          (j->>'afinidade')::integer, j->>'confianca', j->>'nivelDeRisco',
+          (j->>'complianceBloqueante')::boolean, (j->>'publicacaoImpedida')::boolean, (j->>'compradoPelaTitular')::boolean, (j->>'usadoPelaTitular')::boolean,
+          ARRAY(SELECT jsonb_array_elements_text(j->'motivosPositivos')),
+          ARRAY(SELECT jsonb_array_elements_text(j->'riscos')),
+          ARRAY(SELECT jsonb_array_elements_text(j->'desconhecidos')),
+          ARRAY(SELECT jsonb_array_elements_text(j->'porqueDestaPosicao')),
+          (j->>'status')::"StatusDoCandidato", (j->>'posicao')::integer,
+          (j->>'coletadoEm')::timestamp(3), (j->>'validoAte')::timestamp(3), ${agoraIso}::timestamp(3), ${agoraIso}::timestamp(3)
+        FROM jsonb_array_elements(${json}::jsonb) AS e(j)
+        ON CONFLICT ("workspaceId", "chaveDeOrigem") DO UPDATE SET
+          "providerId" = EXCLUDED."providerId", "externalId" = EXCLUDED."externalId",
+          "nome" = EXCLUDED."nome", "linkProduto" = EXCLUDED."linkProduto", "imagem" = EXCLUDED."imagem",
+          "imagemAutorizada" = EXCLUDED."imagemAutorizada", "categoria" = EXCLUDED."categoria", "preco" = EXCLUDED."preco",
+          "comissaoPercentual" = EXCLUDED."comissaoPercentual", "comissaoValor" = EXCLUDED."comissaoValor",
+          "vendas" = EXCLUDED."vendas", "velocidadeDeVendas" = EXCLUDED."velocidadeDeVendas", "avaliacao" = EXCLUDED."avaliacao",
+          "numeroDeAvaliacoes" = EXCLUDED."numeroDeAvaliacoes", "estoque" = EXCLUDED."estoque",
+          "score" = EXCLUDED."score", "baseDeEvidencia" = EXCLUDED."baseDeEvidencia", "aderencia" = EXCLUDED."aderencia",
+          "aderenciaDoPerfil" = EXCLUDED."aderenciaDoPerfil", "afinidade" = EXCLUDED."afinidade", "confianca" = EXCLUDED."confianca",
+          "nivelDeRisco" = EXCLUDED."nivelDeRisco", "complianceBloqueante" = EXCLUDED."complianceBloqueante",
+          "publicacaoImpedida" = EXCLUDED."publicacaoImpedida", "compradoPelaTitular" = EXCLUDED."compradoPelaTitular",
+          "usadoPelaTitular" = EXCLUDED."usadoPelaTitular", "motivosPositivos" = EXCLUDED."motivosPositivos",
+          "riscos" = EXCLUDED."riscos", "desconhecidos" = EXCLUDED."desconhecidos", "porqueDestaPosicao" = EXCLUDED."porqueDestaPosicao",
+          "status" = EXCLUDED."status", "posicao" = EXCLUDED."posicao",
+          "coletadoEm" = EXCLUDED."coletadoEm", "validoAte" = EXCLUDED."validoAte", "updatedAt" = EXCLUDED."updatedAt"
+        WHERE "CandidatoDeProduto"."status" NOT IN ('ESCOLHIDO', 'CADASTRADO')
+          AND NOT ("CandidatoDeProduto"."status" = 'DESCARTADO' AND "CandidatoDeProduto"."updatedAt" > ${quarentenaIso}::timestamp(3))
+        RETURNING "status"::text AS status`
+
+      if (p.auditoria) {
+        await tx.auditLog.create({
+          data: {
+            workspaceId: p.workspaceId,
+            userId: p.auditoria.userId,
+            action: 'curadoria.candidatos_coletados',
+            entityType: 'CandidatoDeProduto',
+            entityId: p.workspaceId,
+            metadata: p.auditoria.metadata as Prisma.InputJsonValue,
+          },
+        })
+      }
+      return { gravados: gravados.length, apresentados: gravados.filter((g) => g.status === 'APRESENTADO').length }
+    },
+    { maxWait: 5_000, timeout: 20_000 }
+  )
 }
 
 export interface ResumoDaUltimaColeta {

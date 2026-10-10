@@ -331,7 +331,8 @@ describe('Estado da tela /oportunidades (P2.14.5.13.3)', () => {
 
   test('a coleta grava os bloqueados na auditoria; a tela não puxa código de servidor', () => {
     const curadoria = readFileSync(join(RAIZ, 'lib/curadoria.ts'), 'utf8')
-    assert.match(curadoria, /metadata: \{ avaliados: fila\.length, apresentados: apresentar\.length, bloqueados:/)
+    assert.match(curadoria, /metadata: \{ avaliados: fila\.length, apresentados: [^}]*, bloqueados \}/)
+    assert.match(curadoria, /action: 'curadoria\.candidatos_coletados'/)
     assert.ok(!/^import /m.test(readFileSync(join(RAIZ, 'lib/curadoria-estado.ts'), 'utf8')), 'curadoria-estado sem imports')
     const pagina = readFileSync(join(RAIZ, 'app/(dashboard)/oportunidades/page.tsx'), 'utf8')
     assert.match(pagina, /^import type \{ CandidatoNaTela \} from '@\/lib\/curadoria-http'/m, 'da camada HTTP, só tipo')
