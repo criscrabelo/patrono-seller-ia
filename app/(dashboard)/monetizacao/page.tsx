@@ -74,13 +74,13 @@ export default function MonetizacaoPage() {
         <h2 className="text-lg font-semibold text-white flex items-center gap-2">
           <DollarSign className="w-5 h-5 text-accent" /> Monetização Omnichannel
         </h2>
-        <p className="text-sm text-muted-foreground">Sistema completo de geração de conteúdo viral com 30+ plataformas</p>
+        <p className="text-sm text-muted-foreground">Onde dá para divulgar e vender — e o que seus links já trouxeram</p>
       </div>
 
       {/* Stats reais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Cliques Hoje', value: totalCliques.toLocaleString(), icon: Link2, color: 'text-accent' },
+          { label: 'Cliques (total)', value: totalCliques.toLocaleString(), icon: Link2, color: 'text-accent' },
           { label: 'Conversões', value: totalConversoes.toLocaleString(), icon: TrendingUp, color: 'text-warning' },
           { label: 'Taxa Conversão', value: `${taxaConversao}%`, icon: BarChart2, color: 'text-blue-400' },
           { label: 'Receita Total', value: formatCurrency(totalReceita), icon: DollarSign, color: 'text-accent' },
@@ -193,10 +193,10 @@ export default function MonetizacaoPage() {
         </div>
       )}
 
-      {/* 30+ Plataformas */}
+      {/* Plataformas onde divulgar */}
       <div className="card-stat space-y-3">
         <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-          <Users className="w-4 h-4 text-accent" /> 30+ Plataformas Integradas
+          <Users className="w-4 h-4 text-accent" /> Plataformas onde você pode divulgar (sem integração automática)
         </h3>
         <div className="flex flex-wrap gap-2">
           {['🎵 TikTok','📸 Instagram','▶️ YouTube','👤 Facebook','📌 Pinterest',

@@ -108,7 +108,7 @@ export default function RelatoriosPage() {
 
       {/* Top conteúdos */}
       <div className="card-stat">
-        <h3 className="font-semibold text-white mb-4">Top 10 Conteúdos</h3>
+        <h3 className="font-semibold text-white mb-4">Conteúdos recentes</h3>
         {(metricas?.topConteudos ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum conteúdo publicado ainda.</p>
         ) : (
