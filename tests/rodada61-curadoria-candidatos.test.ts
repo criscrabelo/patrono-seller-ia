@@ -27,6 +27,7 @@ import {
   type DadosReaisDoItem,
 } from '../lib/curadoria'
 import { candidatoParaTela } from '../lib/curadoria-http'
+import { estadoDaCuradoria, textoDoResumo, type UltimaColetaNaTela } from '../lib/curadoria-estado'
 import { linhaDoPerfilPadrao, perfilDaLinha, perfilPadrao } from '../lib/perfil-da-loja'
 import {
   avaliarAderenciaAoPerfil,
@@ -123,6 +124,7 @@ describe('Retrato do motor: nada é inventado', () => {
     for (const campo of ['preco', 'comissaoPercentual', 'comissaoValor', 'vendas', 'velocidadeDeVendas', 'avaliacao', 'numeroDeAvaliacoes', 'estoque', 'imagem', 'categoria'] as const) {
       assert.equal(r[campo], null, campo)
     }
+    assert.equal((r.desconhecidos as string[]).filter((d) => /image(m|ns) do produto/.test(d)).length, 1, 'sem duplicata')
     assert.ok((r.desconhecidos as string[]).includes('imagem do produto'))
     assert.ok((r.desconhecidos as string[]).some((d) => /categoria/.test(d)))
   })
@@ -137,8 +139,8 @@ describe('Retrato do motor: nada é inventado', () => {
     const r = retratoDoCandidato(o, ITEM_VAZIO, datas)
     assert.equal(r.score, o.score)
     assert.equal(r.baseDeEvidencia, o.componentes.base)
-    assert.equal(r.aderencia, 95)
-    assert.equal(r.aderenciaDoPerfil, 80)
+    assert.equal(r.aderencia, 85)
+    assert.equal(r.aderenciaDoPerfil, 70)
     assert.equal(r.afinidade, 15)
     assert.equal(r.compradoPelaTitular, true)
   })
@@ -284,6 +286,58 @@ describe('A tela não mostra imagem sem direito', () => {
   })
 })
 
+describe('Estado da tela /oportunidades (P2.14.5.13.3)', () => {
+  const coleta = (avaliados: number, apresentados: number, bloqueados: number | null = 0): UltimaColetaNaTela => ({
+    em: AGORA.toISOString(), avaliados, apresentados, bloqueados,
+  })
+
+  test('nunca houve coleta', () => {
+    const e = estadoDaCuradoria({ ultima: null, candidatosEmAberto: 0 })
+    assert.equal(e.estado, 'NUNCA_COLETADO')
+    assert.equal(e.resumo, null)
+  })
+
+  test('coleta com catálogo vazio: texto fixo pedido, sem obrigar a titular a cadastrar', () => {
+    const e = estadoDaCuradoria({ ultima: coleta(0, 0, 0), candidatosEmAberto: 0 })
+    assert.equal(e.estado, 'CATALOGO_VAZIO')
+    assert.equal(e.titulo, 'Ainda não há produtos disponíveis para o Patrono avaliar.')
+    assert.equal(
+      e.detalhe,
+      'Quando houver produtos no catálogo ou em uma fonte conectada, o Patrono selecionará automaticamente os melhores candidatos.'
+    )
+    assert.equal(e.resumo, '0 avaliados · 0 apresentados · 0 bloqueados')
+  })
+
+  test('coleta com produtos, mas nenhum elegível', () => {
+    const e = estadoDaCuradoria({ ultima: coleta(5, 0, 5), candidatosEmAberto: 0 })
+    assert.equal(e.estado, 'SEM_ELEGIVEIS')
+    assert.match(e.titulo, /avaliou 5 produto/)
+  })
+
+  test('candidatos encontrados (e os já resolvidos)', () => {
+    assert.equal(estadoDaCuradoria({ ultima: coleta(9, 3, 1), candidatosEmAberto: 3 }).estado, 'COM_CANDIDATOS')
+    assert.equal(estadoDaCuradoria({ ultima: coleta(9, 3, 1), candidatosEmAberto: 0 }).estado, 'CANDIDATOS_RESOLVIDOS')
+  })
+
+  test('toast com os números reais: X avaliados · Y apresentados · Z bloqueados', () => {
+    assert.equal(textoDoResumo(coleta(12, 3, 2)), '12 avaliados · 3 apresentados · 2 bloqueados')
+    assert.equal(textoDoResumo(coleta(4, 0, null)), '4 avaliados · 0 apresentados · — bloqueados')
+    const pagina = readFileSync(join(RAIZ, 'app/(dashboard)/oportunidades/page.tsx'), 'utf8')
+    assert.match(pagina, /description: nova \? textoDoResumo\(nova\)/)
+    assert.ok(!/title: 'Candidatos atualizados'/.test(pagina), 'o toast antigo sem números saiu')
+    assert.match(pagina, /estadoDaCuradoria\(\{ ultima, candidatosEmAberto: candidatos\.length \}\)/)
+    assert.match(pagina, /“Informar produto” — é opcional/)
+  })
+
+  test('a coleta grava os bloqueados na auditoria; a tela não puxa código de servidor', () => {
+    const curadoria = readFileSync(join(RAIZ, 'lib/curadoria.ts'), 'utf8')
+    assert.match(curadoria, /metadata: \{ avaliados: fila\.length, apresentados: apresentar\.length, bloqueados:/)
+    assert.ok(!/^import /m.test(readFileSync(join(RAIZ, 'lib/curadoria-estado.ts'), 'utf8')), 'curadoria-estado sem imports')
+    const pagina = readFileSync(join(RAIZ, 'app/(dashboard)/oportunidades/page.tsx'), 'utf8')
+    assert.match(pagina, /^import type \{ CandidatoNaTela \} from '@\/lib\/curadoria-http'/m, 'da camada HTTP, só tipo')
+  })
+})
+
 describe('Guardas: só curadoria, nada além', () => {
   function arquivos(dir: string): string[] {
     return readdirSync(dir).flatMap((f) => {
@@ -294,6 +348,7 @@ describe('Guardas: só curadoria, nada além', () => {
   const novos = [
     join(RAIZ, 'lib/curadoria.ts'),
     join(RAIZ, 'lib/curadoria-http.ts'),
+    join(RAIZ, 'lib/curadoria-estado.ts'),
     join(RAIZ, 'lib/perfil-da-loja.ts'),
     join(RAIZ, 'app/(dashboard)/oportunidades/page.tsx'),
     ...arquivos(join(RAIZ, 'app/api/oportunidades')),

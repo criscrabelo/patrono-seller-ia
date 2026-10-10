@@ -3,8 +3,8 @@ import { getServerSession } from 'next-auth'
 import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { CATEGORIAS } from '@/types'
-import { coletarCandidatos, informarProduto, listarApresentados } from '@/lib/curadoria'
-import { candidatoParaTela, respostaDeErro } from '@/lib/curadoria-http'
+import { coletarCandidatos, informarProduto, listarApresentados, ultimaColeta } from '@/lib/curadoria'
+import { candidatoParaTela, respostaDeErro, ultimaColetaParaTela } from '@/lib/curadoria-http'
 
 // P2.14.5.13: "Informar produto" — fallback, não o fluxo principal.
 // Obrigatórios: nome e link. Nada é completado: o que não vier fica vazio.
@@ -44,8 +44,11 @@ export async function POST(req: NextRequest) {
     await informarProduto({ workspaceId, userId, dados: { ...parsed.data, imagem: parsed.data.imagem || null } })
     // Entra no ranking junto com o catálogo.
     const resumo = await coletarCandidatos({ workspaceId, userId })
-    const candidatos = await listarApresentados(workspaceId)
-    return NextResponse.json({ resumo, candidatos: candidatos.map(candidatoParaTela) }, { status: 201 })
+    const [candidatos, ultima] = await Promise.all([listarApresentados(workspaceId), ultimaColeta(workspaceId)])
+    return NextResponse.json(
+      { resumo, candidatos: candidatos.map(candidatoParaTela), ultimaColeta: ultimaColetaParaTela(ultima) },
+      { status: 201 }
+    )
   } catch (e) {
     return respostaDeErro(e)
   }

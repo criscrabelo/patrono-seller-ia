@@ -53,3 +53,6 @@ export function respostaDeErro(e: unknown) {
   console.error('Erro na curadoria:', e)
   return NextResponse.json({ error: 'Erro interno ao processar a curadoria.' }, { status: 500 })
 }
+
+export { ultimaColetaParaTela } from './curadoria-estado'
+export type { UltimaColetaNaTela } from './curadoria-estado'

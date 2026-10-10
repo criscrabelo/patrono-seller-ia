@@ -329,6 +329,8 @@ export interface AvaliacaoDeAderencia {
   nota: number | null
   /** Perfil BoraComprar (0–80). `null` = desconhecido. */
   perfil: number | null
+  /** Fração (0–1) do perfil que pôde ser avaliada com dado real (P2.14.5.13.5). */
+  coberturaDoPerfil: number
   /** Bônus de afinidade que ENTROU na nota (0–20). */
   afinidade: number
   /**
@@ -393,15 +395,42 @@ function contemMarca(textoOriginal: string, textoSemAcento: string, marca: Marca
 }
 
 /**
+ * P2.14.5.13.5 — pesos do PERFIL (somam 80 = TETO_DO_PERFIL). O perfil é a
+ * SOMA dos pontos sustentados por dado real; critério desconhecido não tira
+ * ponto, mas também não entrega os pontos que não foram comprovados. A
+ * cobertura diz quanto do perfil pôde ser avaliado.
+ */
+export const PESOS_DO_PERFIL = {
+  categoria: 25,
+  subcategoria: 20,
+  preco: 25,
+  conteudo: 10,
+} as const
+
+/** Pontos de preço fora da faixa: neutro (abaixo do mínimo ou até o premium) e alto. */
+export const PONTOS_DE_PRECO = { naFaixa: 25, neutro: 12, acimaDoPremium: 5 } as const
+
+/**
  * Aderência ao perfil da BoraComprar.
  *
- * PERFIL (0–80): média SÓ dos critérios com dado real (categoria/subcategoria
- * e preço), escalada para 80. Critério sem dado vai para `desconhecidos`.
+ * PERFIL (0–80): soma dos pontos SUSTENTADOS (pesos em `PESOS_DO_PERFIL`).
+ * Só preço comprovado vale no máximo 25/80; categoria + subcategoria + preço
+ * valem 70/80. `coberturaDoPerfil` = pesos avaliados ÷ 80.
  *
- * AFINIDADE (0–20): bônus pessoal da titular — marca preferida +10, estilo
- * +5, comprado +5 OU usado +10 (não acumulam). Só entra na nota se o perfil
- * for conhecido e ≥ 40/80. Nunca é prova de demanda e nunca penaliza quem
- * não tem marca preferida.
+ * Sinais lidos SÓ no nome do produto (subcategoria, estilo, marca): a
+ * descrição livre gerava falso positivo ("levar na bolsa"). `#usei` continua
+ * vindo de Observações. Decisão da titular (P2.14.5.13.6): falso negativo
+ * temporário é preferível a aderência inventada — se a subcategoria só
+ * aparece na descrição, ela é DESCONHECIDA.
+ *
+ * Evolução futura (não implementada): um campo estruturado de
+ * subcategoria/tags, ou dado oficial da plataforma, pode alimentar o
+ * critério de subcategoria. Se a descrição livre algum dia for usada, terá
+ * peso menor e regra própria — nunca os 20 pontos completos do nome.
+ *
+ * AFINIDADE (0–20): marca preferida +10, estilo +5, comprado +5 OU usado +10
+ * (não acumulam). Só entra na nota se o perfil for ≥ 40/80. Nunca é prova de
+ * demanda e nunca penaliza quem não tem marca preferida.
  */
 export function avaliarAderenciaAoPerfil(
   p: {
@@ -409,70 +438,83 @@ export function avaliarAderenciaAoPerfil(
     preco: number | null
     origemDados: string | null | undefined
     nome?: string | null
+    /** Não é usada para sinais (P2.14.5.13.5). Mantida por compatibilidade. */
     descricao?: string | null
     observacoes?: string | null
   },
   perfil: PerfilDaLoja = PERFIL_DA_LOJA
 ): AvaliacaoDeAderencia {
-  const notas: number[] = []
   const positivos: string[] = []
   const negativos: string[] = []
   const desconhecidos: string[] = []
+  let pontos = 0
+  let pesoAvaliado = 0
 
   const categoria = (p.categoria ?? '').trim()
-  const textoOriginal = [p.nome, p.descricao, p.observacoes].filter(Boolean).join(' \n ')
-  const texto = semAcento(textoOriginal)
+  const nomeOriginal = (p.nome ?? '').trim()
+  const nome = semAcento(nomeOriginal)
 
-  // Categoria: a subcategoria (pelo texto) revela prioridade mesmo em "Outros".
-  const subcategorias = Object.entries(perfil.subcategoriasPrioritarias)
-    .filter(([, termos]) => termos.some((t) => contemTermo(texto, t)))
-    .map(([nome]) => nome)
-  const categoriaPrioritaria = perfil.categoriasDoCadastro.includes(categoria)
-  if (subcategorias.length > 0 || categoriaPrioritaria) {
-    notas.push(100)
-    if (categoriaPrioritaria) positivos.push(`Categoria "${categoria}" é prioridade da loja.`)
-    if (subcategorias.length > 0) positivos.push(`Subcategoria prioritária da loja: ${subcategorias.join(', ')}.`)
-  } else if (!categoria || categoria === 'Outros') {
-    desconhecidos.push('aderência da categoria ("Outros" ou vazia, sem subcategoria reconhecida)')
+  // Categoria do cadastro (25).
+  if (!categoria || categoria === 'Outros') {
+    desconhecidos.push('aderência da categoria ("Outros" ou vazia)')
   } else {
-    notas.push(0)
-    negativos.push(`Categoria "${categoria}" fora das prioridades da loja.`)
+    pesoAvaliado += PESOS_DO_PERFIL.categoria
+    if (perfil.categoriasDoCadastro.some((c) => semAcento(c) === semAcento(categoria))) {
+      pontos += PESOS_DO_PERFIL.categoria
+      positivos.push(`Categoria "${categoria}" é prioridade da loja (+${PESOS_DO_PERFIL.categoria}).`)
+    } else {
+      negativos.push(`Categoria "${categoria}" fora das prioridades da loja (0/${PESOS_DO_PERFIL.categoria}).`)
+    }
   }
 
-  // Preço: referência, não trava.
+  // Subcategoria pelo NOME (20). Sem termo reconhecido = desconhecido.
+  const subcategorias = Object.entries(perfil.subcategoriasPrioritarias)
+    .filter(([, termos]) => termos.some((t) => contemTermo(nome, t)))
+    .map(([s]) => s)
+  if (subcategorias.length > 0) {
+    pesoAvaliado += PESOS_DO_PERFIL.subcategoria
+    pontos += PESOS_DO_PERFIL.subcategoria
+    positivos.push(`Subcategoria prioritária da loja no nome: ${subcategorias.join(', ')} (+${PESOS_DO_PERFIL.subcategoria}).`)
+  } else {
+    desconhecidos.push('subcategoria (nenhum termo prioritário no nome)')
+  }
+
+  // Preço (25): referência, não trava.
   if (typeof p.preco === 'number') {
+    pesoAvaliado += PESOS_DO_PERFIL.preco
     const { minimo, maximo, premiumAte } = perfil.faixaDePreco
     const valor = `R$ ${p.preco.toFixed(2)}`
     if (p.preco >= minimo && p.preco <= maximo) {
-      notas.push(100)
-      positivos.push(`Preço ${valor} dentro da faixa da loja (R$ ${minimo}–${maximo}).`)
+      pontos += PONTOS_DE_PRECO.naFaixa
+      positivos.push(`Preço ${valor} dentro da faixa da loja (R$ ${minimo}–${maximo}) (+${PONTOS_DE_PRECO.naFaixa}).`)
     } else if (p.preco < minimo || p.preco <= premiumAte) {
-      notas.push(50)
-      negativos.push(`Preço ${valor} fora da faixa de referência (R$ ${minimo}–${maximo}) — neutro, não elimina.`)
+      pontos += PONTOS_DE_PRECO.neutro
+      negativos.push(`Preço ${valor} fora da faixa de referência (R$ ${minimo}–${maximo}) — neutro, não elimina (+${PONTOS_DE_PRECO.neutro}).`)
     } else {
-      notas.push(20)
-      negativos.push(`Preço ${valor} acima de R$ ${premiumAte} — concorre pela demanda e comissão, não pela faixa.`)
+      pontos += PONTOS_DE_PRECO.acimaDoPremium
+      negativos.push(`Preço ${valor} acima de R$ ${premiumAte} — concorre pela demanda e comissão, não pela faixa (+${PONTOS_DE_PRECO.acimaDoPremium}).`)
     }
   } else {
     desconhecidos.push('preço (para checar a faixa da loja)')
   }
 
+  // Conteúdo (10): sem dado nesta fase — fica desconhecido, sem pontos.
   if (perfil.priorizarFacilDeDemonstrar) desconhecidos.push('facilidade de demonstrar (não informada)')
   if (perfil.priorizarSemPresencaDaTitular) desconhecidos.push('se o conteúdo dispensa a presença da titular (não informado)')
 
-  const perfilNota =
-    notas.length > 0 ? Math.round((notas.reduce((s, n) => s + n, 0) / notas.length) * (TETO_DO_PERFIL / 100)) : null
+  const perfilNota = pesoAvaliado > 0 ? Math.round(pontos) : null
+  const coberturaDoPerfil = Math.round((pesoAvaliado / TETO_DO_PERFIL) * 100) / 100
 
-  // ── Afinidade da titular ──────────────────────────────────────────────
+  // ── Afinidade da titular (sinais só no nome; #usei em Observações) ────
   const af = perfil.afinidadeDaTitular
   const sinaisDeAfinidade: string[] = []
   let bruto = 0
-  const marca = af.marcasPreferidas.find((m) => contemMarca(textoOriginal, texto, m, categoria))
+  const marca = af.marcasPreferidas.find((m) => contemMarca(nomeOriginal, nome, m, categoria))
   if (marca) {
     bruto += af.bonus.marcaPreferida
     sinaisDeAfinidade.push(`marca preferida da titular (${marca.nome})`)
   }
-  const estilo = af.estilo.find((t) => contemTermo(texto, t))
+  const estilo = af.estilo.find((t) => contemTermo(nome, t))
   if (estilo) {
     bruto += af.bonus.estilo
     sinaisDeAfinidade.push(`estilo da titular (${estilo})`)
@@ -500,6 +542,7 @@ export function avaliarAderenciaAoPerfil(
   return {
     nota: perfilNota === null ? null : perfilNota + afinidade,
     perfil: perfilNota,
+    coberturaDoPerfil,
     afinidade,
     afinidadeDetectada,
     sinaisDeAfinidade,
@@ -595,7 +638,10 @@ export function avaliarComplianceDoProduto(p: {
     if (NIVEIS_DE_RISCO.indexOf(n) > NIVEIS_DE_RISCO.indexOf(nivel)) nivel = n
   }
 
-  if (CATEGORIAS_DE_RISCO_ALTO.includes(p.categoria)) {
+  // P2.14.5.13.4: comparação sem acento e sem maiúsculas — "Saude" (cadastro
+  // antigo) é "Saúde". Só a comparação; a categoria gravada não muda.
+  const categoriaComparavel = semAcento((p.categoria ?? '').trim())
+  if (CATEGORIAS_DE_RISCO_ALTO.some((c) => semAcento(c) === categoriaComparavel)) {
     riscos.push(`Categoria "${p.categoria}" exige cuidado com alegações (risco alto).`)
     subir('ALTO')
   }
@@ -681,6 +727,8 @@ export interface OportunidadePontuada {
   afinidadeDaTitular?: number
   /** Afinidade detectada (0–20), usada só no desempate. */
   afinidadeParaDesempate?: number
+  /** Fração (0–1) do perfil avaliada com dado real (P2.14.5.13.5). */
+  coberturaDoPerfil?: number
 }
 
 /** Campos que o score usa. O que não vier fica em `dadosAusentes`. */
@@ -864,16 +912,16 @@ export function pontuarProduto(
     taxaConversaoObservada: 'conversão observada (menos de 5 cliques ou nenhuma publicação)',
     receitaPorClique: 'receita por clique',
     provider: 'programa de afiliados de origem',
-    imagens: 'imagens do produto',
+    imagens: 'imagem do produto',
     linkProduto: 'link de destino',
   }
-  const desconhecidos = [
+  const desconhecidos = [...new Set([
     ...dadosAusentes.map((c) => ROTULO_AUSENTE[c] ?? c),
     'vendas e velocidade de vendas (a fonte não informa)',
     'avaliações de compradores (a fonte não informa)',
     'estoque (a fonte não informa)',
     ...aderencia.desconhecidos,
-  ]
+  ])]
   const motivosPositivos = [
     ...aderencia.positivos,
     midia.visivel ? 'Mídia com direito de uso verificado.' : '',
@@ -892,6 +940,7 @@ export function pontuarProduto(
     aderencia.nota === null
       ? 'Aderência ao perfil BoraComprar: sem base para avaliar — não entra na nota.'
       : `Aderência ao perfil BoraComprar: ${aderencia.nota}/100 = perfil ${aderencia.perfil}/${TETO_DO_PERFIL} + afinidade da titular ${aderencia.afinidade}/20 — vale ${Math.round(PARTICIPACAO_DA_ADERENCIA * 100)}% da nota.`,
+    `Perfil: ${aderencia.perfil ?? 0}/${TETO_DO_PERFIL} · cobertura ${Math.round(aderencia.coberturaDoPerfil * 100)}% (o que não pôde ser avaliado não soma ponto).`,
     aderencia.afinidadeDetectada > 0
       ? `Afinidade da titular (${aderencia.sinaisDeAfinidade.join('; ')}) é bônus de aderência, não prova de demanda.`
       : '',
@@ -935,6 +984,7 @@ export function pontuarProduto(
     aderenciaDoPerfil: aderencia.perfil,
     afinidadeDaTitular: aderencia.afinidade,
     afinidadeParaDesempate: aderencia.afinidadeDetectada,
+    coberturaDoPerfil: aderencia.coberturaDoPerfil,
   }
 }
 
@@ -1073,13 +1123,14 @@ export function faixaDeEvidencia(o: Pick<OportunidadePontuada, 'componentes' | '
   return Math.floor((o.componentes?.base ?? o.score) / FAIXA_DE_DESEMPATE)
 }
 
-type Desempate = 'faixa' | 'perfil' | 'afinidade' | 'score' | 'confianca' | null
+type Desempate = 'faixa' | 'perfil' | 'afinidade' | 'score' | 'confianca' | 'cobertura' | 'tecnico' | null
 
 /**
  * Qual critério põe `a` à frente de `b` (ou o contrário). Ordem da regra da
- * titular: faixa de evidência → aderência ao perfil → afinidade da titular
- * → score → confiança. Facilidade de conteúdo ainda não tem dado nesta fase
- * e não diferencia ninguém. Só ORDENA: não soma ponto a ninguém.
+ * titular (P2.14.5.13.6): faixa de evidência → perfil → afinidade → score →
+ * confiança → cobertura do perfil (maior primeiro) → nome normalizado → id.
+ * Nome e id são só técnicos (empate técnico): nunca significam ser melhor.
+ * Só ORDENA: não soma ponto a ninguém.
  */
 export function criterioDeDesempate(a: OportunidadePontuada, b: OportunidadePontuada): { diferenca: number; criterio: Desempate } {
   const fa = faixaDeEvidencia(a)
@@ -1096,8 +1147,28 @@ export function criterioDeDesempate(a: OportunidadePontuada, b: OportunidadePont
   const ca = PESO_DA_CONFIANCA[a.confianca]
   const cb = PESO_DA_CONFIANCA[b.confianca]
   if (ca !== cb) return { diferenca: cb - ca, criterio: 'confianca' }
+  // P2.14.5.13.6 — cobertura do perfil: só em empate real, prefere quem é
+  // sustentado por mais dado conhecido. Não altera score nem aderência.
+  const cova = a.coberturaDoPerfil ?? 0
+  const covb = b.coberturaDoPerfil ?? 0
+  if (cova !== covb) return { diferenca: covb - cova, criterio: 'cobertura' }
+  // P2.14.5.13.5 — EMPATE TÉCNICO: nenhum critério substantivo diferencia.
+  // Só para a lista ser estável: nome normalizado e depois id. Não soma
+  // ponto e não significa que um é melhor que o outro.
+  const na = semAcento(a.produtoNome ?? '')
+  const nb = semAcento(b.produtoNome ?? '')
+  if (na !== nb) return { diferenca: na < nb ? -1 : 1, criterio: 'tecnico' }
+  if (a.produtoId !== b.produtoId) return { diferenca: a.produtoId < b.produtoId ? -1 : 1, criterio: 'tecnico' }
   return { diferenca: 0, criterio: null }
 }
+
+/** Nenhum critério substantivo diferencia `a` de `b`. */
+export function empateTecnico(a: OportunidadePontuada, b: OportunidadePontuada): boolean {
+  const { criterio } = criterioDeDesempate(a, b)
+  return criterio === 'tecnico' || criterio === null
+}
+
+export const TEXTO_DO_EMPATE_TECNICO = 'Empate técnico: não há evidência suficiente para diferenciar estes produtos.'
 
 /** Ordena a fila no lugar, do mais promissor ao menos. */
 export function ordenarFila<T extends OportunidadePontuada>(fila: T[]): T[] {
@@ -1110,6 +1181,8 @@ const ROTULO_DO_DESEMPATE: Record<Exclude<Desempate, null>, string> = {
   afinidade: 'maior afinidade da titular',
   score: 'score maior',
   confianca: 'confiança maior',
+  cobertura: 'perfil sustentado por mais dados conhecidos (cobertura), sem mudar o score',
+  tecnico: 'ordem técnica (nome), que não significa ser melhor',
 }
 
 // ── Seleção por modo de automação (P2.14.5.12) ──────────────────────────
@@ -1188,11 +1261,22 @@ export function selecionarParaModo(
     const acima = escolhidos[i - 1]
     const abaixo = escolhidos[i + 1]
     const partes = [`${i + 1}º de ${elegiveis.length} elegível(is), score ${o.score} (confiança ${o.confianca}).`]
+    const empatados = elegiveis.filter((x) => x.produtoId !== o.produtoId && empateTecnico(o, x)).length
+    if (empatados > 0) {
+      partes.push(
+        `${TEXTO_DO_EMPATE_TECNICO} Empatado com ${empatados} outro(s) elegível(is); a ordem entre eles é só técnica (nome) e não significa que este é melhor.`
+      )
+    }
     const relacao = (de: OportunidadePontuada, ate: OportunidadePontuada, posicaoDoOutro: number, frente: boolean) => {
       const { criterio } = criterioDeDesempate(frente ? de : ate, frente ? ate : de)
       const diff = Math.abs(de.score - ate.score)
-      if (criterio === 'faixa' || criterio === null) {
-        return `${diff} ponto(s) ${frente ? 'acima' : 'abaixo'} do ${posicaoDoOutro}º.`
+      if (criterio === 'tecnico' || criterio === null) {
+        return `Em empate técnico com o ${posicaoDoOutro}º.`
+      }
+      if (criterio === 'faixa') {
+        return diff > 0
+          ? `${diff} ponto(s) ${frente ? 'acima' : 'abaixo'} do ${posicaoDoOutro}º.`
+          : `Mesmo score do ${posicaoDoOutro}º; base de evidência ${frente ? 'maior' : 'menor'}.`
       }
       const faixa = faixaDeEvidencia(de) * FAIXA_DE_DESEMPATE
       return (

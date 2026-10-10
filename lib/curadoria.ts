@@ -533,7 +533,7 @@ export async function coletarCandidatos(params: { workspaceId: string; userId?: 
       action: 'curadoria.candidatos_coletados',
       entityType: 'CandidatoDeProduto',
       entityId: workspaceId,
-      metadata: { avaliados: fila.length, apresentados: apresentar.length },
+      metadata: { avaliados: fila.length, apresentados: apresentar.length, bloqueados: fila.length - elegiveis.length },
     })
   }
 
@@ -543,6 +543,36 @@ export async function coletarCandidatos(params: { workspaceId: string; userId?: 
     apresentados: apresentar.length,
     bloqueados: fila.length - elegiveis.length,
     origemDoPerfil,
+  }
+}
+
+export interface ResumoDaUltimaColeta {
+  em: Date
+  avaliados: number
+  apresentados: number
+  /** null em coletas registradas antes de este número ser gravado. */
+  bloqueados: number | null
+}
+
+const numeroOuNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+/**
+ * Última coleta feita pela titular, lida do log de auditoria (só leitura).
+ * `null` = nunca houve coleta neste workspace.
+ */
+export async function ultimaColeta(workspaceId: string): Promise<ResumoDaUltimaColeta | null> {
+  const log = await prisma.auditLog.findFirst({
+    where: { workspaceId, action: 'curadoria.candidatos_coletados' },
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true, metadata: true },
+  })
+  if (!log) return null
+  const m = (log.metadata ?? {}) as Record<string, unknown>
+  return {
+    em: log.createdAt,
+    avaliados: numeroOuNull(m.avaliados) ?? 0,
+    apresentados: numeroOuNull(m.apresentados) ?? 0,
+    bloqueados: numeroOuNull(m.bloqueados),
   }
 }
 

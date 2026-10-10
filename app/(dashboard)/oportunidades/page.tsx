@@ -12,6 +12,7 @@ import { toast } from '@/hooks/use-toast'
 import { useGuardModulo } from '@/hooks/useGuardModulo'
 import { CATEGORIAS } from '@/types'
 import type { CandidatoNaTela } from '@/lib/curadoria-http'
+import { estadoDaCuradoria, textoDoResumo, type UltimaColetaNaTela } from '@/lib/curadoria-estado'
 
 const DESCONHECIDO = 'desconhecido'
 const reais = (v: number | null) => (v === null ? DESCONHECIDO : `R$ ${v.toFixed(2).replace('.', ',')}`)
@@ -135,6 +136,7 @@ const FORM_VAZIO = { nome: '', link: '', categoria: '', preco: '', imagem: '', c
 export default function OportunidadesPage() {
   useGuardModulo('oportunidades')
   const [candidatos, setCandidatos] = useState<CandidatoNaTela[]>([])
+  const [ultima, setUltima] = useState<UltimaColetaNaTela | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -159,6 +161,7 @@ export default function OportunidadesPage() {
     try {
       const d = await chamar('/api/oportunidades')
       setCandidatos((d.candidatos as CandidatoNaTela[]) ?? [])
+      setUltima((d.ultimaColeta as UltimaColetaNaTela | null) ?? null)
     } catch (e) {
       setErro((e as Error).message)
     } finally {
@@ -176,7 +179,10 @@ export default function OportunidadesPage() {
     try {
       const d = await chamar('/api/oportunidades/coletar', { method: 'POST' })
       setCandidatos((d.candidatos as CandidatoNaTela[]) ?? [])
-      toast({ title: 'Candidatos atualizados', variant: 'success' })
+      const nova = (d.ultimaColeta as UltimaColetaNaTela | null) ?? null
+      setUltima(nova)
+      // Os números reais da coleta — inclusive quando são zero.
+      toast({ title: 'Coleta concluída', description: nova ? textoDoResumo(nova) : undefined, variant: 'success' })
     } catch (e) {
       setErro((e as Error).message)
     } finally {
@@ -241,6 +247,7 @@ export default function OportunidadesPage() {
         }),
       })
       setCandidatos((d.candidatos as CandidatoNaTela[]) ?? [])
+      setUltima((d.ultimaColeta as UltimaColetaNaTela | null) ?? null)
       setForm(FORM_VAZIO)
       setMostrarForm(false)
       toast({ title: 'Produto informado e incluído no ranking', variant: 'success' })
@@ -250,6 +257,8 @@ export default function OportunidadesPage() {
       setOcupado(false)
     }
   }
+
+  const situacao = estadoDaCuradoria({ ultima, candidatosEmAberto: candidatos.length })
 
   const input =
     'w-full px-3 py-2 text-sm rounded-lg border border-border bg-background text-white placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent'
@@ -315,14 +324,28 @@ export default function OportunidadesPage() {
           ))}
         </div>
       ) : candidatos.length === 0 ? (
-        <div className="card-stat flex flex-col items-center justify-center py-16 text-center">
+        <div className="card-stat flex flex-col items-center justify-center py-16 text-center" data-estado={situacao.estado}>
           <Package className="w-10 h-10 text-muted-foreground mb-3" />
-          <p className="text-sm text-muted-foreground mb-4">
-            Nenhum candidato apresentado. Clique em “Atualizar candidatos” para o motor ranquear o catálogo.
-          </p>
+          <p className="text-sm text-white font-medium">{situacao.titulo}</p>
+          <p className="text-sm text-muted-foreground mt-1 max-w-xl">{situacao.detalhe}</p>
+          {situacao.estado === 'CATALOGO_VAZIO' && (
+            <p className="text-xs text-muted-foreground mt-3">
+              Se quiser, você também pode usar “Informar produto” — é opcional.
+            </p>
+          )}
+          {situacao.resumo && ultima && (
+            <p className="text-[11px] text-muted-foreground mt-4">
+              Última coleta: {situacao.resumo} · {new Date(ultima.em).toLocaleString('pt-BR')}
+            </p>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {situacao.resumo && ultima && (
+            <p className="lg:col-span-3 text-[11px] text-muted-foreground">
+              Última coleta: {situacao.resumo} · {new Date(ultima.em).toLocaleString('pt-BR')}
+            </p>
+          )}
           {candidatos.map((c) => (
             <CardDoCandidato key={c.id} c={c} ocupado={ocupado} onEscolher={() => escolher(c)} onDescartar={() => descartar(c)} />
           ))}

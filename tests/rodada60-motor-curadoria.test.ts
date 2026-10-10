@@ -29,6 +29,8 @@ import {
   criterioDeDesempate,
   FAIXA_DE_DESEMPATE,
   TETO_DO_PERFIL,
+  PESOS_DO_PERFIL,
+  TEXTO_DO_EMPATE_TECNICO,
   ORIGENS_SINTETICAS,
   ORIGEM_COMPRADO_PELA_TITULAR,
   type OportunidadePontuada,
@@ -177,26 +179,28 @@ describe('Aderência ao perfil da BoraComprar (configuração, sem migration)', 
     assert.deepEqual(PERFIL_DA_LOJA.afinidadeDaTitular.bonus, { marcaPreferida: 10, estilo: 5, comprado: 5, usado: 10 })
   })
 
-  test('categoria prioritária e preço na faixa: perfil 80/80; dados ausentes ficam desconhecidos', () => {
+  test('categoria prioritária e preço na faixa: 50/80 (subcategoria e conteúdo não comprovados)', () => {
     const a = avaliarAderenciaAoPerfil({ categoria: 'Casa e Decoração', preco: 89.9, origemDados: 'MANUAL' })
-    assert.equal(a.perfil, TETO_DO_PERFIL)
+    assert.equal(a.perfil, PESOS_DO_PERFIL.categoria + PESOS_DO_PERFIL.preco)
+    assert.equal(a.coberturaDoPerfil, 0.63) // (25 + 25) / 80
     assert.equal(a.afinidade, 0)
-    assert.equal(a.nota, 80)
+    assert.equal(a.nota, 50)
     assert.ok(a.desconhecidos.some((d) => /demonstrar/.test(d)))
     assert.ok(a.desconhecidos.some((d) => /presença da titular/.test(d)))
   })
 
   test('fora das prioridades pesa contra; preço é referência, não trava', () => {
     const a = avaliarAderenciaAoPerfil({ categoria: 'Esportes', preco: 900, origemDados: 'MANUAL' })
-    assert.equal(a.perfil, 8) // categoria 0 + preço 20 → 10 → ×0,8
+    assert.equal(a.perfil, 5) // categoria 0/25 + preço acima do premium 5/25
     assert.equal(a.negativos.length, 2)
     const premium = avaliarAderenciaAoPerfil({ categoria: 'Beleza', preco: 450, origemDados: 'MANUAL' })
-    assert.equal(premium.perfil, 60) // categoria 100 + preço neutro 50 → 75 → ×0,8
+    assert.equal(premium.perfil, 37) // categoria 25 + preço neutro 12
   })
 
   test('subcategoria revela prioridade mesmo em "Outros"', () => {
     const a = avaliarAderenciaAoPerfil({ categoria: 'Outros', preco: null, origemDados: 'MANUAL', nome: 'Perfume floral 100 ml' })
-    assert.equal(a.perfil, 80)
+    assert.equal(a.perfil, PESOS_DO_PERFIL.subcategoria)
+    assert.equal(a.coberturaDoPerfil, 0.25)
     assert.ok(a.positivos.some((p) => /perfumes/.test(p)))
   })
 
@@ -207,13 +211,69 @@ describe('Aderência ao perfil da BoraComprar (configuração, sem migration)', 
   })
 })
 
+describe('Perfil por pesos com cobertura (P2.14.5.13.5)', () => {
+  test('pesos do perfil somam o teto de 80; afinidade e 13% inalterados', () => {
+    assert.deepEqual(PESOS_DO_PERFIL, { categoria: 25, subcategoria: 20, preco: 25, conteudo: 10 })
+    assert.equal(Object.values(PESOS_DO_PERFIL).reduce((s, n) => s + n, 0), TETO_DO_PERFIL)
+    assert.equal(PERFIL_DA_LOJA.afinidadeDaTitular.teto, 20)
+  })
+
+  test('só o preço comprovado NÃO vale 80/80', () => {
+    const soPreco = avaliarAderenciaAoPerfil({ categoria: 'Outros', preco: 299.9, origemDados: 'MANUAL', nome: 'Robô Aspirador H40' })
+    assert.equal(soPreco.perfil, 25)
+    assert.equal(soPreco.coberturaDoPerfil, 0.31)
+    assert.ok(soPreco.desconhecidos.some((d) => /categoria/.test(d)), 'desconhecido, não negativo')
+    assert.equal(soPreco.negativos.length, 0)
+  })
+
+  test('categoria + subcategoria + preço comprovados valem mais que só preço', () => {
+    const completo = avaliarAderenciaAoPerfil({ categoria: 'Brinquedos', preco: 89.9, origemDados: 'MANUAL', nome: 'Trem infantil com luz' })
+    const soPreco = avaliarAderenciaAoPerfil({ categoria: 'Outros', preco: 89.9, origemDados: 'MANUAL', nome: 'Item genérico' })
+    assert.equal(completo.perfil, 70)
+    assert.equal(completo.coberturaDoPerfil, 0.88)
+    assert.ok(completo.perfil! > soPreco.perfil!)
+  })
+
+  test('só preço não libera o bônus de afinidade (perfil < 40)', () => {
+    const a = avaliarAderenciaAoPerfil({ categoria: 'Outros', preco: 299.9, origemDados: 'USER_PROVIDED', nome: 'Robô Aspirador H40' })
+    assert.equal(a.afinidadeDetectada, 5)
+    assert.equal(a.afinidade, 0)
+  })
+})
+
+describe('Sinais só no nome do produto (P2.14.5.13.5)', () => {
+  test('"guarda-chuva para levar na bolsa" (descrição) não recebe bônus nem subcategoria por bolsa', () => {
+    const a = avaliarAderenciaAoPerfil({
+      categoria: 'Outros', preco: 24.24, origemDados: 'MANUAL',
+      nome: 'Mini Guarda-Chuva de Bolso', descricao: 'Compacto, guarda-chuva para levar na bolsa.',
+    })
+    assert.equal(a.afinidadeDetectada, 0)
+    assert.ok(!a.positivos.some((p) => /bolsas/.test(p)))
+  })
+
+  test('"Bolsa Renner" recebe marca, estilo e subcategoria', () => {
+    const a = avaliarAderenciaAoPerfil({ categoria: 'Moda', preco: 199, origemDados: 'MANUAL', nome: 'Bolsa Renner' })
+    assert.ok(a.sinaisDeAfinidade.some((s) => /Renner/.test(s)))
+    assert.ok(a.sinaisDeAfinidade.some((s) => /estilo da titular \(bolsa\)/.test(s)))
+    assert.ok(a.positivos.some((p) => /bolsas/.test(p)))
+    assert.equal(a.afinidade, 15)
+  })
+
+  test('marca citada só na descrição não conta; #usei continua vindo de Observações', () => {
+    const a = avaliarAderenciaAoPerfil({ categoria: 'Beleza', preco: 90, origemDados: 'MANUAL', nome: 'Shampoo hidratante', descricao: 'Mesma linha da Kérastase', observacoes: '#usei' })
+    assert.ok(!a.sinaisDeAfinidade.some((s) => /Kérastase/.test(s)))
+    assert.equal(a.usadoPelaTitular, true)
+  })
+})
+
 describe('Afinidade da titular (bônus dentro da aderência, teto 20)', () => {
   const kerastase = { categoria: 'Beleza', preco: 189, nome: 'Máscara capilar Kérastase Nutritive' }
 
   test('marca preferida +10', () => {
     const a = avaliarAderenciaAoPerfil({ ...kerastase, origemDados: 'MANUAL' })
+    assert.equal(a.perfil, 70) // categoria 25 + subcategoria 20 + preço 25
     assert.equal(a.afinidade, 10)
-    assert.equal(a.nota, 90)
+    assert.equal(a.nota, 80)
     assert.ok(a.sinaisDeAfinidade.some((s) => /Kérastase/.test(s)))
   })
 
@@ -233,7 +293,8 @@ describe('Afinidade da titular (bônus dentro da aderência, teto 20)', () => {
       categoria: 'Moda', preco: 280, origemDados: 'MANUAL', nome: 'Scarpin Usaflex salto alto', observacoes: '#usei',
     })
     assert.equal(a.afinidadeDetectada, 20) // 10 + 5 + 10 = 25 → 20
-    assert.equal(a.nota, 100)
+    assert.equal(a.perfil, 70)
+    assert.equal(a.nota, 90)
   })
 
   test('perfil desconhecido: comprado/usado NÃO cria nota; vai para explicação e desempate', () => {
@@ -246,7 +307,7 @@ describe('Afinidade da titular (bônus dentro da aderência, teto 20)', () => {
 
   test('perfil fraco: marca preferida não ganha bônus', () => {
     const a = avaliarAderenciaAoPerfil({ categoria: 'Esportes', preco: 900, origemDados: 'MANUAL', nome: 'Bola de futebol Adidas' })
-    assert.equal(a.perfil, 8)
+    assert.equal(a.perfil, 5)
     assert.equal(a.afinidade, 0)
     assert.equal(a.afinidadeDetectada, 10)
   })
@@ -348,6 +409,15 @@ describe('Compliance do produto (decisões da titular de 08/10/2026)', () => {
     }
   })
 
+  test('categoria sem acento ou em maiúsculas: "Saude" = "Saúde" (risco ALTO)', () => {
+    for (const categoria of ['Saúde', 'Saude', 'SAUDE', 'saúde', ' Saude ']) {
+      const r = avaliarComplianceDoProduto({ ...base, categoria })
+      assert.equal(r.nivel, 'ALTO', categoria)
+      assert.ok(r.riscos.some((x) => x.includes(`"${categoria}"`)), 'o texto cita a categoria original, sem alterar')
+    }
+    assert.equal(avaliarComplianceDoProduto({ ...base, categoria: 'Beleza' }).nivel, 'BAIXO')
+  })
+
   test('palavra inteira: "procurar" não dispara "cura"', () => {
     assert.equal(avaliarComplianceDoProduto({ ...base, textos: ['Fácil de procurar na gaveta'] }).nivel, 'BAIXO')
   })
@@ -367,11 +437,12 @@ describe('Explicação de cada candidato (pontuarProduto)', () => {
 
   test('explicação separa base, aderência e afinidade', () => {
     const o = pontuada({ categoria: 'Beleza', nome: 'Máscara capilar Kérastase', preco: 189, origemDados: 'USER_PROVIDED' })
-    assert.equal(o.aderenciaDoPerfil, 80)
+    assert.equal(o.aderenciaDoPerfil, 70)
     assert.equal(o.afinidadeDaTitular, 15)
-    assert.equal(o.componentes.aderenciaAoPerfil, 95)
+    assert.equal(o.componentes.aderenciaAoPerfil, 85)
     assert.ok(o.porqueDestaPosicao.some((p) => /Base de evidência/.test(p)))
-    assert.ok(o.porqueDestaPosicao.some((p) => /perfil 80\/80 \+ afinidade da titular 15\/20 — vale 13% da nota/.test(p)))
+    assert.ok(o.porqueDestaPosicao.some((p) => /perfil 70\/80 \+ afinidade da titular 15\/20 — vale 13% da nota/.test(p)))
+    assert.ok(o.porqueDestaPosicao.some((p) => /^Perfil: 70\/80 · cobertura 88%/.test(p)))
     assert.ok(o.porqueDestaPosicao.some((p) => /não prova de demanda/.test(p)))
   })
 
@@ -467,6 +538,43 @@ describe('Desempate por faixa de evidência (regra 14 da titular)', () => {
     assert.equal(desconhecido.aderenciaDoPerfil, null)
     assert.deepEqual(ordenarFila([desconhecido, semUso]).map((o) => o.produtoId), ['F', 'H'])
     assert.equal(criterioDeDesempate(semUso, desconhecido).criterio, 'perfil')
+  })
+})
+
+describe('Empate técnico e desconhecidos únicos (P2.14.5.13.5)', () => {
+  test('empate total: ordem só técnica (nome), dita com clareza, sem "0 pontos acima"', () => {
+    const zeta = comScore(pontuada({ id: 'z', nome: 'Zeta organizador', categoria: 'Casa e Decoração' }), 50)
+    const alfa = comScore(pontuada({ id: 'a2', nome: 'Alfa organizador', categoria: 'Casa e Decoração' }), 50)
+    assert.equal(criterioDeDesempate(alfa, zeta).criterio, 'tecnico')
+    assert.deepEqual(ordenarFila([zeta, alfa]).map((o) => o.produtoId), ['a2', 'z'])
+    const s = selecionarParaModo(ordenarFila([zeta, alfa]), { automationMode: 'ASSISTED', automationPaused: false })
+    for (const c of s.candidatos) {
+      assert.ok(c.motivoDaPosicao.includes(TEXTO_DO_EMPATE_TECNICO), c.motivoDaPosicao)
+      assert.ok(!/0 ponto\(s\)/.test(c.motivoDaPosicao), c.motivoDaPosicao)
+    }
+    assert.equal(TEXTO_DO_EMPATE_TECNICO, 'Empate técnico: não há evidência suficiente para diferenciar estes produtos.')
+  })
+
+  test('cobertura desempata só depois de confiança, sem mudar score; antes de nome/ID', () => {
+    // Mesma base, perfil 50, afinidade 0, mesmo score: o de cobertura maior vem antes,
+    // mesmo com nome alfabeticamente posterior.
+    const menosDados = comScore(pontuada({ id: 'm', nome: 'Aaa', categoria: 'Casa e Decoração', preco: 89.9 }), 50)
+    const maisDados = comScore(pontuada({ id: 'n', nome: 'Zzz organizador', categoria: 'Casa e Decoração', preco: 89.9 }), 50)
+    const igualado = { ...maisDados, aderenciaDoPerfil: menosDados.aderenciaDoPerfil, afinidadeParaDesempate: 0 }
+    assert.ok((igualado.coberturaDoPerfil ?? 0) > (menosDados.coberturaDoPerfil ?? 0))
+    assert.equal(criterioDeDesempate(igualado, menosDados).criterio, 'cobertura')
+    assert.deepEqual(ordenarFila([menosDados, igualado]).map((o) => o.produtoId), ['n', 'm'])
+    assert.equal(igualado.score, menosDados.score, 'cobertura não mexe no score')
+    const s = selecionarParaModo([igualado, menosDados], { automationMode: 'ASSISTED', automationPaused: false })
+    assert.ok(!s.candidatos[0].motivoDaPosicao.includes(TEXTO_DO_EMPATE_TECNICO), 'cobertura diferente não é empate técnico')
+    assert.match(s.candidatos[0].motivoDaPosicao, /sustentado por mais dados conhecidos/)
+  })
+
+  test('"imagem do produto" aparece uma vez só', () => {
+    const o = pontuada({ imagens: [] })
+    assert.equal(o.desconhecidos!.filter((d) => /image(m|ns) do produto/.test(d)).length, 1)
+    assert.ok(o.desconhecidos!.includes('imagem do produto'))
+    assert.equal(new Set(o.desconhecidos).size, o.desconhecidos!.length)
   })
 })
 
