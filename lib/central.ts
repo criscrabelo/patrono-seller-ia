@@ -298,28 +298,23 @@ export function decisoesLegiveis(lista: DecisaoBruta[], limite = 4): DecisaoLegi
   return out
 }
 
-export async function painelCentral(workspaceId: string, agora = new Date()) {
-  const hoje = inicioDoDiaEmBrasilia(agora)
-  const [ultimoRun, fila, eventosHoje, decisoes, integracoes, seguranca, politica, vendas, comissoes, publicacoesAtrasadas] = await Promise.all([
+/**
+ * P2.15.6 — O estado da operação SEM decisões, eventos e financeiro: tudo o
+ * que "Como está?" do Copilot precisa, em paralelo (a fila leva 2 idas). O
+ * painel completo reaproveita esta mesma leitura.
+ */
+export async function estadoDaOperacao(workspaceId: string, agora = new Date()) {
+  const [ultimoRun, fila, integracoes, seguranca, politica, publicacoesAtrasadas] = await Promise.all([
     prisma.supervisorRun.findFirst({ where: { workspaceId }, orderBy: { iniciadoEm: 'desc' } }),
     listarPrecisaDeVoce(workspaceId, agora),
-    prisma.domainEvent.findMany({ where: { workspaceId, ocorridoEm: { gte: hoje } }, orderBy: { ocorridoEm: 'desc' }, take: 40, select: { tipo: true, payload: true, ocorridoEm: true } }),
-    prisma.decisionRecord.findMany({ where: { workspaceId }, orderBy: { criadoEm: 'desc' }, take: 20, select: { id: true, tipo: true, ator: true, decisao: true, explicacao: true, entradas: true, criadoEm: true } }),
     prisma.integracao.findMany({ where: { workspaceId }, select: { plataforma: true, status: true, tokenExpiry: true } }),
     estadoDeExecucao(workspaceId),
     politicaAtiva(workspaceId),
-    resumoVendas(workspaceId),
-    resumoComissoes(workspaceId),
     contarPublicacoesAtrasadas(workspaceId, agora),
   ])
   const saude = saudeDasIntegracoes(integracoes, agora)
   const resumoIntegracoes = resumoDasIntegracoes(saude)
   const checkpoint = (ultimoRun?.checkpoint ?? {}) as Record<string, unknown>
-  const atividade = agruparRepetidas(
-    eventosHoje
-      .map((e) => ({ quando: e.ocorridoEm.toISOString(), texto: frasesDoEvento(e) }))
-      .filter((a): a is { quando: string; texto: string } => !!a.texto)
-  ).slice(0, 8)
   const pendencias = fila.length
   const principal = fila[0] ?? null // a fila já vem por prioridade
   const porRisco = { ALTO: 0, MEDIO: 0, BAIXO: 0 } as Record<'ALTO' | 'MEDIO' | 'BAIXO', number>
@@ -351,12 +346,9 @@ export async function painelCentral(workspaceId: string, agora = new Date()) {
       porRisco,
       principal: principal ? { titulo: principal.titulo, resumo: principal.resumo, risco: principal.risco } : null,
     },
-    atividadeHoje: atividade,
-    decisoesRecentes: decisoesLegiveis(decisoes),
     integracoes: saude,
     resumoIntegracoes,
     publicacoesAtrasadas,
-    financeiro: { vendas, comissoes },
     proximaAcao: proximaMelhorAcao({
       pendencias,
       bloqueado: seguranca.acoesIrreversiveisBloqueadas,
@@ -366,6 +358,44 @@ export async function painelCentral(workspaceId: string, agora = new Date()) {
       principal: principal?.titulo ?? null,
       publicacoesAtrasadas,
     }),
+  }
+}
+
+/** P2.15.6 — "O que você fez hoje?": só os eventos do dia (uma ida). */
+export async function atividadeDeHoje(workspaceId: string, agora = new Date()) {
+  const eventosHoje = await prisma.domainEvent.findMany({
+    where: { workspaceId, ocorridoEm: { gte: inicioDoDiaEmBrasilia(agora) } },
+    orderBy: { ocorridoEm: 'desc' },
+    take: 40,
+    select: { tipo: true, payload: true, ocorridoEm: true },
+  })
+  return agruparRepetidas(
+    eventosHoje
+      .map((e) => ({ quando: e.ocorridoEm.toISOString(), texto: frasesDoEvento(e) }))
+      .filter((a): a is { quando: string; texto: string } => !!a.texto)
+  ).slice(0, 8)
+}
+
+export async function painelCentral(workspaceId: string, agora = new Date()) {
+  const [estado, atividade, decisoes, vendas, comissoes] = await Promise.all([
+    estadoDaOperacao(workspaceId, agora),
+    atividadeDeHoje(workspaceId, agora),
+    prisma.decisionRecord.findMany({ where: { workspaceId }, orderBy: { criadoEm: 'desc' }, take: 20, select: { id: true, tipo: true, ator: true, decisao: true, explicacao: true, entradas: true, criadoEm: true } }),
+    resumoVendas(workspaceId),
+    resumoComissoes(workspaceId),
+  ])
+  const { patrono, pendencias, precisaDeVoce, integracoes, resumoIntegracoes, publicacoesAtrasadas, proximaAcao } = estado
+  return {
+    patrono,
+    pendencias,
+    precisaDeVoce,
+    atividadeHoje: atividade,
+    decisoesRecentes: decisoesLegiveis(decisoes),
+    integracoes,
+    resumoIntegracoes,
+    publicacoesAtrasadas,
+    financeiro: { vendas, comissoes },
+    proximaAcao,
   }
 }
 export type PainelCentral = Awaited<ReturnType<typeof painelCentral>>

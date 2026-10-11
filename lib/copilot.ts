@@ -8,7 +8,8 @@
  * permissões. O Copilot nunca tem atalho que a tela não tenha: toda ação
  * passa pelos mesmos motores (política, travas, aprovação, ledger).
  */
-import { painelCentral, nomeDoCanal } from './central'
+import { estadoDaOperacao, atividadeDeHoje, nomeDoCanal } from './central'
+import { resumoComissoes } from './vendas-comissoes'
 import { decidirPrecisaDeVoce, listarPrecisaDeVoce } from './precisa-de-voce'
 import { executarCiclo, TIPO_EXCECAO } from './supervisor/ciclo'
 import { entrarEmSafeMode, sairDoSafeMode } from './kill-switch'
@@ -135,7 +136,7 @@ export async function executarComando(comando: Comando, ctx: { workspaceId: stri
     case 'AJUDA':
       return r(AJUDA)
     case 'STATUS': {
-      const p = await painelCentral(ctx.workspaceId, agora)
+      const p = await estadoDaOperacao(ctx.workspaceId, agora)
       const e = p.patrono.estado
       const ciclo = p.patrono.ultimoCiclo
       const linhas = [
@@ -183,11 +184,11 @@ export async function executarComando(comando: Comando, ctx: { workspaceId: stri
       return r([`"${alvo.titulo}": ${res.status === 'APROVADA' ? 'aprovado' : 'recusado'}. ${res.mensagem}`], true)
     }
     case 'HOJE': {
-      const p = await painelCentral(ctx.workspaceId, agora)
-      if (!p.atividadeHoje.length) return r(['Hoje ainda não fiz nada. Diga "rodar agora" para eu analisar os produtos.'])
+      const atividade = await atividadeDeHoje(ctx.workspaceId, agora)
+      if (!atividade.length) return r(['Hoje ainda não fiz nada. Diga "rodar agora" para eu analisar os produtos.'])
       return r([
         'Hoje eu:',
-        ...p.atividadeHoje.map((a) => `${hora(a.quando)} — ${a.texto}${a.vezes > 1 ? ` (${a.vezes} vezes)` : ''}`),
+        ...atividade.map((a) => `${hora(a.quando)} — ${a.texto}${a.vezes > 1 ? ` (${a.vezes} vezes)` : ''}`),
       ])
     }
     case 'PORQUE': {
@@ -210,14 +211,13 @@ export async function executarComando(comando: Comando, ctx: { workspaceId: stri
       return r([res.mudou ? 'Saí do modo de segurança.' : 'Não estou em modo de segurança.'], res.mudou)
     }
     case 'INTEGRACOES': {
-      const p = await painelCentral(ctx.workspaceId, agora)
+      const p = await estadoDaOperacao(ctx.workspaceId, agora)
       const ri = p.resumoIntegracoes
       if (!ri.destaque.length) return r([`Nenhum canal conectado ainda (0 de ${ri.total}). Consigo analisar e recomendar, mas só publico depois de conectar um canal em Integrações.`])
       return r([`${ri.conectadas} de ${ri.total} canais conectados. ${ri.mensagem}`, ...ri.destaque.map((i) => `${nomeDoCanal(i.plataforma)}: ${i.detalhe}`)])
     }
     case 'RESULTADO': {
-      const p = await painelCentral(ctx.workspaceId, agora)
-      const c = p.financeiro.comissoes as { prevista: number; confirmada: number; recebida: number }
+      const c = (await resumoComissoes(ctx.workspaceId)) as { prevista: number; confirmada: number; recebida: number }
       const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
       if (!c.prevista && !c.confirmada && !c.recebida) return r(['Ainda não há comissões registradas. Quando a primeira venda entrar, eu mostro aqui.'])
       return r([`Até agora você recebeu ${brl(c.recebida)}. Já confirmadas e a receber: ${brl(c.confirmada)}. Previstas (vendas ainda não confirmadas): ${brl(c.prevista)}.`])

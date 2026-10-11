@@ -13,7 +13,10 @@
  *   - toda decisão vai para o livro de decisões e de eventos, na mesma
  *     transação.
  */
-import type { ApprovalRequest, ApprovalRule, Prisma } from '@prisma/client'
+import { Prisma, type ApprovalRequest, type ApprovalRule } from '@prisma/client'
+import { randomUUID } from 'node:crypto'
+import { redigir } from './cofre'
+import { contextoAtual } from './observabilidade'
 import { prisma } from './prisma'
 import { registrarDecisao, registrarEvento } from './ledger'
 
@@ -77,11 +80,58 @@ export interface NovoPedido {
 /** Pede aprovação (ou resolve por regra). Idempotente pela chave. */
 export async function solicitarAprovacao(p: NovoPedido): Promise<ApprovalRequest> {
   const agora = p.agora ?? new Date()
-  return prisma.$transaction(async (tx) => {
-    const existente = await tx.approvalRequest.findUnique({ where: { workspaceId_chave: { workspaceId: p.workspaceId, chave: p.chave } } })
-    if (existente) return existente
+  // P2.15.6: o pedido que já existe (caso comum a cada ciclo) sai com UMA ida,
+  // sem abrir transação; pedido novo lê as regras junto. A criação continua
+  // atômica (pedido + evento [+ decisão]) e a corrida entre dois ciclos cai
+  // na chave única — quem perde devolve o pedido do vencedor.
+  const [existente, regras] = await Promise.all([
+    prisma.approvalRequest.findUnique({ where: { workspaceId_chave: { workspaceId: p.workspaceId, chave: p.chave } } }),
+    prisma.approvalRule.findMany({ where: { workspaceId: p.workspaceId, tipo: p.tipo, ativa: true } }),
+  ])
+  if (existente) return existente
+  try {
+    return await criarPedido(p, regras, agora)
+  } catch (e) {
+    if ((e as { code?: string }).code === 'P2002') {
+      const vencedor = await prisma.approvalRequest.findUnique({ where: { workspaceId_chave: { workspaceId: p.workspaceId, chave: p.chave } } })
+      if (vencedor) return vencedor
+    }
+    throw e
+  }
+}
 
-    const regras = await tx.approvalRule.findMany({ where: { workspaceId: p.workspaceId, tipo: p.tipo, ativa: true } })
+async function criarPedido(p: NovoPedido, regras: ApprovalRule[], agora: Date): Promise<ApprovalRequest> {
+  // P2.15.6: sem regra aplicável (o caso comum), pedido + evento saem num
+  // ÚNICO comando SQL — atômico e uma ida ao banco, em vez de BEGIN + create
+  // + evento + COMMIT. Com regra, segue a transação (grava também a decisão).
+  if (!regraAplicavel(regras, p.tipo, p.fatos, agora)) {
+    const ctx = contextoAtual()
+    const id = randomUUID()
+    const linhas = await prisma.$queryRaw<ApprovalRequest[]>(Prisma.sql`
+      WITH pedido AS (
+        INSERT INTO "ApprovalRequest" ("id", "workspaceId", "tipo", "chave", "titulo", "resumo", "porque", "risco", "acaoProposta", "entidadeTipo", "entidadeId", "expiraEm", "status", "criadoEm", "atualizadoEm")
+        VALUES (${id}, ${p.workspaceId}, ${p.tipo}, ${p.chave}, ${p.titulo}, ${p.resumo}, ${p.porque}::text[], ${p.fatos.risco}, ${JSON.stringify(p.acaoProposta)}::jsonb,
+                ${p.entidadeTipo ?? null}, ${p.entidadeId ?? null}, ${p.expiraEm ?? null}::timestamp(3), 'PENDENTE'::"StatusDaAprovacao", ${agora}::timestamp(3), now())
+        ON CONFLICT ("workspaceId", "chave") DO NOTHING
+        RETURNING *
+      ),
+      evento AS (
+        INSERT INTO "DomainEvent" ("id", "workspaceId", "tipo", "versao", "correlationId", "runId", "entidadeTipo", "entidadeId", "payload", "chaveIdempotencia")
+        SELECT ${randomUUID()}, ${p.workspaceId}, 'APPROVAL_REQUIRED', 1, ${ctx?.correlationId ?? null}, ${ctx?.runId ?? null}, 'ApprovalRequest', pedido."id",
+               ${JSON.stringify(redigir({ tipo: p.tipo, risco: p.fatos.risco, porRegra: null }))}::jsonb, ${`aprovacao:${p.chave}:pedido`}
+        FROM pedido
+        ON CONFLICT ("workspaceId", "chaveIdempotencia") DO NOTHING
+        RETURNING 1
+      )
+      SELECT * FROM pedido
+    `)
+    if (linhas[0]) return linhas[0]
+    // Outro ciclo criou o mesmo pedido no meio do caminho: devolve o dele.
+    const vencedor = await prisma.approvalRequest.findUnique({ where: { workspaceId_chave: { workspaceId: p.workspaceId, chave: p.chave } } })
+    if (vencedor) return vencedor
+    throw new Error('Pedido de aprovação não foi criado nem encontrado.')
+  }
+  return prisma.$transaction(async (tx) => {
     const regra = regraAplicavel(regras, p.tipo, p.fatos, agora)
     const resolvido = regra
       ? { status: (regra.efeito === 'REJEITAR' ? 'REJEITADA' : 'APROVADA') as 'APROVADA' | 'REJEITADA', decididoEm: agora, decididoPorRegraId: regra.id, motivoDaDecisao: `Resolvido pela regra ${regra.id}.` }

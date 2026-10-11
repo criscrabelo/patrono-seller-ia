@@ -14,11 +14,26 @@ import { log } from './observabilidade'
 
 export type Sessao = { workspaceId: string; userId: string }
 
+// P2.15.6: a flag de UI da Fase 1 era relida a cada chamada (uma ida ao
+// banco a mais em cada pergunta do Copilot). Cache curto por instância:
+// ligar/desligar vale em até 15 s. Não é trava de segurança — kill switch,
+// Safe Mode e política continuam lidos na hora pelos motores.
+const CACHE_FLAG_MS = 15_000
+const cacheDeFlag = new Map<string, { ate: number; ligada: boolean }>()
+async function flagComCache(flag: ChaveDeFlag, workspaceId: string): Promise<boolean> {
+  const chave = `${flag}:${workspaceId}`
+  const c = cacheDeFlag.get(chave)
+  if (c && c.ate > Date.now()) return c.ligada
+  const ligada = await flagLigada(flag, workspaceId)
+  cacheDeFlag.set(chave, { ate: Date.now() + CACHE_FLAG_MS, ligada })
+  return ligada
+}
+
 export async function exigirSessaoEFlag(flag: ChaveDeFlag): Promise<Sessao | NextResponse> {
   // P2.15.4: sessão + permissão de módulo pela porta única.
   const session = await exigirSessao()
   if (session instanceof NextResponse) return session
-  if (!(await flagLigada(flag, session.user.workspaceId))) return NextResponse.json({ error: 'Recurso ainda não liberado.' }, { status: 404 })
+  if (!(await flagComCache(flag, session.user.workspaceId))) return NextResponse.json({ error: 'Recurso ainda não liberado.' }, { status: 404 })
   return { workspaceId: session.user.workspaceId, userId: session.user.id }
 }
 

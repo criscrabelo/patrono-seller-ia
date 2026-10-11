@@ -14,7 +14,7 @@
  * depois de DECIDINDO; CRIANDO/PUBLICANDO ficam para quando a camada de
  * aprovação e política estiver validada em uso real.
  */
-import type { CandidatoDeProduto } from '@prisma/client'
+import type { CandidatoDeProduto, EstadoDoRun } from '@prisma/client'
 import { prisma } from '../prisma'
 import { comContexto, log } from '../observabilidade'
 import { registrarDecisao, registrarEvento } from '../ledger'
@@ -22,7 +22,7 @@ import { avaliarAcao, politicaAtiva } from '../politica'
 import { estadoDeExecucao, killSwitchGlobalAtivo } from '../kill-switch'
 import { solicitarAprovacao, type Risco } from '../aprovacoes'
 import { coletarCandidatos, escolherCandidato, listarApresentados, FONTE_TITULAR } from '../curadoria'
-import { iniciarRun, transitar } from './run'
+import { iniciarRun, transitar, type RunConhecido } from './run'
 import { flagLigada } from '../feature-flags'
 import { CHAVE_TIKTOK_SHOP, evidenciaDoTikTokShop } from '../tiktok-shop-evidencia'
 
@@ -134,49 +134,62 @@ export async function executarCiclo(p: {
     return { runId: null, estadoFinal: 'CANCELADO', resumo: ['O desligamento geral está ativo: não rodei.'], apresentados: 0, excecoes: 0, pedidoDeAprovacao: null, escolhaAutomatica: null }
   }
 
-  const politica = await politicaAtiva(p.workspaceId)
+  // P2.15.6: política e travas em paralelo (independentes); o run depende do modo da política.
+  const [politica, seguranca] = await Promise.all([politicaAtiva(p.workspaceId), estadoDeExecucao(p.workspaceId, env)])
   const modo = politica.regras.autonomia.padrao
   const run = await iniciarRun({ workspaceId: p.workspaceId, chave: `ciclo:${agora.toISOString()}`, modo })
 
   return comContexto({ correlationId: run.correlationId, runId: run.id, workspaceId: p.workspaceId, ator: 'PATRONO' }, async () => {
+    // P2.15.6: o ciclo conhece o próprio run — cada transição é UMA ida ao banco, sem reler.
+    let atual: RunConhecido = run
     let estado = run.estado
-    const ir = async (para: typeof estado, checkpoint?: Record<string, unknown>) => {
-      const r = await transitar({ workspaceId: p.workspaceId, runId: run.id, de: estado, para, checkpoint, env })
+    const ir = async (para: EstadoDoRun | EstadoDoRun[], checkpoint?: Record<string, unknown>) => {
+      const r = await transitar({ workspaceId: p.workspaceId, runId: run.id, de: estado, para, checkpoint, env, atual })
+      atual = r
       estado = r.estado
     }
     try {
-      const seguranca = await estadoDeExecucao(p.workspaceId, env)
       await ir('DESCOBRINDO', { gatilho: p.gatilho ?? 'MANUAL', politicaVersao: politica.versao, modo })
 
       // ── Saúde da operação → exceções (só o que exige a titular) ──
-      const [integracoes, produtosAtivos, informadosAbertos, tiktokShopLigado] = await Promise.all([
-        prisma.integracao.findMany({ where: { workspaceId: p.workspaceId }, select: { plataforma: true, status: true, tokenExpiry: true } }),
-        prisma.produto.count({ where: { workspaceId: p.workspaceId, status: { not: 'descartado' } } }),
-        prisma.candidatoDeProduto.count({ where: { workspaceId: p.workspaceId, fonte: FONTE_TITULAR, produtoId: null, status: { in: ['NOVO', 'APRESENTADO'] } } }),
-        flagLigada('TIKTOK_SHOP_CATALOGO', p.workspaceId, env),
-      ])
-      const tiktokShopPendente = !tiktokShopLigado && !(await evidenciaDoTikTokShop(p.workspaceId, agora))
-      const excecoes = diagnosticar({ agora, integracoes, produtosAtivos, informadosAbertos, tiktokShopPendente })
-      for (const e of excecoes) {
-        await solicitarAprovacao({
-          workspaceId: p.workspaceId, tipo: TIPO_EXCECAO, chave: e.chave, titulo: e.titulo, resumo: e.resumo, porque: e.porque,
-          fatos: { risco: e.risco }, acaoProposta: { link: e.link }, agora,
-        })
+      // P2.15.6: roda EM PARALELO com a coleta (não dependem uma da outra);
+      // dentro, as leituras e os pedidos de cada exceção também saem juntos.
+      const tratarExcecoes = async () => {
+        const [integracoes, produtosAtivos, informadosAbertos, tiktokShopLigado, evidenciaTikTokShop] = await Promise.all([
+          prisma.integracao.findMany({ where: { workspaceId: p.workspaceId }, select: { plataforma: true, status: true, tokenExpiry: true } }),
+          prisma.produto.count({ where: { workspaceId: p.workspaceId, status: { not: 'descartado' } } }),
+          prisma.candidatoDeProduto.count({ where: { workspaceId: p.workspaceId, fonte: FONTE_TITULAR, produtoId: null, status: { in: ['NOVO', 'APRESENTADO'] } } }),
+          flagLigada('TIKTOK_SHOP_CATALOGO', p.workspaceId, env),
+          evidenciaDoTikTokShop(p.workspaceId, agora),
+        ])
+        const tiktokShopPendente = !tiktokShopLigado && !evidenciaTikTokShop
+        const excecoes = diagnosticar({ agora, integracoes, produtosAtivos, informadosAbertos, tiktokShopPendente })
+        await Promise.all(
+          excecoes.map((e) =>
+            solicitarAprovacao({
+              workspaceId: p.workspaceId, tipo: TIPO_EXCECAO, chave: e.chave, titulo: e.titulo, resumo: e.resumo, porque: e.porque,
+              fatos: { risco: e.risco }, acaoProposta: { link: e.link }, agora,
+            })
+          )
+        )
+        return excecoes
       }
-      if (excecoes.length) resumo.push(excecoes.length === 1 ? 'Encontrei 1 ponto que precisa de você.' : `Encontrei ${excecoes.length} pontos que precisam de você.`)
 
       // ── Descobrir, validar, ranquear (curadoria) ──
-      const coleta = await coletarCandidatos({ workspaceId: p.workspaceId, userId: p.userId, agora })
-      await ir('VALIDANDO', { avaliados: coleta.avaliados, bloqueados: coleta.bloqueados })
-      await ir('RANQUEANDO')
+      const [excecoes, coleta] = await Promise.all([tratarExcecoes(), coletarCandidatos({ workspaceId: p.workspaceId, userId: p.userId, agora })])
+      if (excecoes.length) resumo.push(excecoes.length === 1 ? 'Encontrei 1 ponto que precisa de você.' : `Encontrei ${excecoes.length} pontos que precisam de você.`)
+      // P2.15.6: VALIDANDO → RANQUEANDO → DECIDINDO não têm trabalho entre si: um evento por passo, uma ida só.
+      // …e a leitura dos apresentados corre junto (só depende da coleta).
+      const [, apresentados] = await Promise.all([
+        ir(['VALIDANDO', 'RANQUEANDO', 'DECIDINDO'], { avaliados: coleta.avaliados, bloqueados: coleta.bloqueados }),
+        listarApresentados(p.workspaceId),
+      ])
       resumo.push(
         coleta.avaliados === 0
           ? 'Não havia produtos para analisar.'
           : `Analisei ${coleta.avaliados} ${coleta.avaliados === 1 ? 'produto' : 'produtos'} e selecionei ${coleta.apresentados} ${coleta.apresentados === 1 ? 'oportunidade' : 'oportunidades'}.`
       )
-      await ir('DECIDINDO')
 
-      const apresentados = await listarApresentados(p.workspaceId)
       const melhor = apresentados[0]
       let pedido: ResultadoDoCiclo['pedidoDeAprovacao'] = null
       let escolhaAutomatica: ResultadoDoCiclo['escolhaAutomatica'] = null
@@ -187,10 +200,12 @@ export async function executarCiclo(p: {
         const fatos = { risco: riscoDe(melhor), categoria: melhor.categoria, preco: melhor.preco }
         const avaliacao = avaliarAcao(politica.regras, { tipo: 'ESCOLHER_PRODUTO', ...fatos }, seguranca)
         // Um pedido de escolha por vez: recomendações anteriores ainda pendentes saem da fila.
-        await prisma.approvalRequest.updateMany({
+        // P2.15.6: corre junto com a decisão (não depende dela); é aguardado no fim do bloco.
+        const cancelamentoDosAnteriores = prisma.approvalRequest.updateMany({
           where: { workspaceId: p.workspaceId, tipo: TIPO_ESCOLHA, status: 'PENDENTE', NOT: { chave: `escolha:${melhor.id}` } },
           data: { status: 'CANCELADA', motivoDaDecisao: 'Substituído por recomendação mais recente.' },
         })
+        cancelamentoDosAnteriores.catch(() => {}) // o erro, se houver, sai no await abaixo
 
         if (avaliacao.resultado === 'BLOQUEAR') {
           await registrarDecisao({ workspaceId: p.workspaceId, tipo: 'ESCOLHA_DE_PRODUTO', ator: 'PATRONO', decisao: `Não escolheu "${melhor.nome}": bloqueado pela política.`, explicacao: avaliacao.motivos, entidadeTipo: 'CandidatoDeProduto', entidadeId: melhor.id, politicaVersao: politica.versao, chaveIdempotencia: `ciclo:${run.id}:bloqueio` })
@@ -226,6 +241,7 @@ export async function executarCiclo(p: {
             resumo.push(`Você já tinha decidido sobre “${melhor.nome}”; mantive a sua decisão.`)
           }
         }
+        await cancelamentoDosAnteriores
       }
 
       await ir('CONCLUIDO', { resumo })

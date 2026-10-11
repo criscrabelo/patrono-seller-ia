@@ -9,9 +9,10 @@
  * - Cada transição grava RUN_STATE_CHANGED na mesma transação.
  * - Entrar em estado irreversível passa pelas travas (kill switch/Safe Mode).
  */
-import type { EstadoDoRun, Prisma, SupervisorRun } from '@prisma/client'
+import { Prisma, type EstadoDoRun, type SupervisorRun } from '@prisma/client'
+import { randomUUID } from 'node:crypto'
+import { redigir } from '../cofre'
 import { prisma } from '../prisma'
-import { registrarEvento } from '../ledger'
 import { novoCorrelationId } from '../observabilidade'
 import { exigirPodeAgir } from '../kill-switch'
 import { ESTADOS_IRREVERSIVEIS, podeTransitar, retomadaValida } from './estados'
@@ -36,58 +37,87 @@ function checkpointComo(obj: Prisma.JsonValue | null): Record<string, unknown> {
   return obj && typeof obj === 'object' && !Array.isArray(obj) ? (obj as Record<string, unknown>) : {}
 }
 
+/** Estado do run que o chamador já conhece (evita reler o banco antes de cada passo). */
+export type RunConhecido = Pick<SupervisorRun, 'id' | 'estado' | 'passo' | 'checkpoint' | 'modo' | 'correlationId'>
+
+/**
+ * Transição atômica — P2.15.6: UMA ida ao banco.
+ *
+ * Antes: findFirst + BEGIN + updateMany + upsert do evento + findUniqueOrThrow
+ * + COMMIT (~6 idas, ~2,25 s em Production). Agora um único comando SQL
+ * (CTE): compare-and-set em `estado` E `passo` + o mesmo RUN_STATE_CHANGED
+ * (mesma chave de idempotência, mesmo payload), atômico por ser um comando
+ * só. Quem já conhece o run (o ciclo) passa `atual` e pula a releitura.
+ * `para` pode ser uma SEQUÊNCIA de estados (ex.: VALIDANDO→RANQUEANDO→
+ * DECIDINDO sem trabalho entre eles): um evento por passo, uma ida só.
+ */
 export async function transitar(p: {
   workspaceId: string
   runId: string
   de: EstadoDoRun
-  para: EstadoDoRun
+  para: EstadoDoRun | EstadoDoRun[]
   checkpoint?: Record<string, unknown>
   erro?: string | null
   env?: Record<string, string | undefined>
+  atual?: RunConhecido
 }): Promise<SupervisorRun> {
-  const run = await prisma.supervisorRun.findFirst({ where: { id: p.runId, workspaceId: p.workspaceId } })
+  const run = p.atual ?? (await prisma.supervisorRun.findFirst({ where: { id: p.runId, workspaceId: p.workspaceId } }))
   if (!run) throw new ErroDeTransicao('Run não encontrado.')
   if (run.estado !== p.de) throw new ErroDeTransicao(`Run está em ${run.estado}, não em ${p.de}.`)
-  if (!podeTransitar(p.de, p.para)) throw new ErroDeTransicao(`Transição proibida: ${p.de} → ${p.para}.`)
+  const destinos = Array.isArray(p.para) ? p.para : [p.para]
+  if (!destinos.length) throw new ErroDeTransicao('Transição sem destino.')
+  const cadeia: EstadoDoRun[] = [p.de, ...destinos]
+  for (let i = 0; i < destinos.length; i++) {
+    if (!podeTransitar(cadeia[i], cadeia[i + 1])) throw new ErroDeTransicao(`Transição proibida: ${cadeia[i]} → ${cadeia[i + 1]}.`)
+  }
+  const final = destinos[destinos.length - 1]
 
   const anterior = checkpointComo(run.checkpoint)
-  if (p.de === 'PAUSADO' && !retomadaValida(anterior.estadoAntesDaPausa as EstadoDoRun | undefined, p.para)) {
+  if (p.de === 'PAUSADO' && !retomadaValida(anterior.estadoAntesDaPausa as EstadoDoRun | undefined, destinos[0])) {
     throw new ErroDeTransicao(`Retomada inválida: o run parou em ${String(anterior.estadoAntesDaPausa)}.`)
   }
-  if (ESTADOS_IRREVERSIVEIS.has(p.para) && run.modo !== 'SIMULACAO') await exigirPodeAgir(p.workspaceId, p.env)
+  if (destinos.some((d) => ESTADOS_IRREVERSIVEIS.has(d)) && run.modo !== 'SIMULACAO') await exigirPodeAgir(p.workspaceId, p.env)
 
   const checkpoint = {
     ...anterior,
     ...(p.checkpoint ?? {}),
-    ...(p.para === 'PAUSADO' ? { estadoAntesDaPausa: p.de } : {}),
+    ...(final === 'PAUSADO' ? { estadoAntesDaPausa: cadeia[cadeia.length - 2] } : {}),
   }
-  const terminal = p.para === 'CONCLUIDO' || p.para === 'FALHOU' || p.para === 'CANCELADO'
+  const terminal = final === 'CONCLUIDO' || final === 'FALHOU' || final === 'CANCELADO'
+  const falhou = final === 'FALHOU'
+  const eventos = destinos.map((para, i) => ({
+    id: randomUUID(),
+    chave: `run:${p.runId}:${run.passo + i + 1}`,
+    payload: JSON.stringify(redigir({ de: cadeia[i], para, erro: para === 'FALHOU' ? p.erro ?? null : null })),
+  }))
+  const valoresDosEventos = Prisma.join(
+    eventos.map((e, i) => Prisma.sql`(${e.id}::text, ${e.chave}::text, ${e.payload}::jsonb, ${i}::int)`)
+  )
 
-  return prisma.$transaction(async (tx) => {
-    const r = await tx.supervisorRun.updateMany({
-      where: { id: p.runId, workspaceId: p.workspaceId, estado: p.de },
-      data: {
-        estado: p.para,
-        passo: { increment: 1 },
-        checkpoint: checkpoint as Prisma.InputJsonValue,
-        ...(p.para === 'FALHOU' ? { ultimoErro: p.erro ?? 'falha sem detalhe', tentativas: { increment: 1 } } : {}),
-        ...(terminal ? { concluidoEm: new Date() } : {}),
-      },
-    })
-    if (r.count !== 1) throw new ErroDeTransicao('Outra execução avançou este run primeiro.')
-    await registrarEvento(
-      {
-        workspaceId: p.workspaceId,
-        tipo: 'RUN_STATE_CHANGED',
-        chaveIdempotencia: `run:${p.runId}:${run.passo + 1}`,
-        entidadeTipo: 'SupervisorRun',
-        entidadeId: p.runId,
-        runId: p.runId,
-        correlationId: run.correlationId,
-        payload: { de: p.de, para: p.para, erro: p.erro ?? null },
-      },
-      tx
+  const linhas = await prisma.$queryRaw<SupervisorRun[]>(Prisma.sql`
+    WITH atualizado AS (
+      UPDATE "SupervisorRun" SET
+        "estado" = ${final}::"EstadoDoRun",
+        "passo" = "passo" + ${destinos.length},
+        "checkpoint" = ${JSON.stringify(checkpoint)}::jsonb,
+        "atualizadoEm" = now(),
+        "concluidoEm" = CASE WHEN ${terminal} THEN now() ELSE "concluidoEm" END,
+        "ultimoErro" = CASE WHEN ${falhou} THEN ${p.erro ?? 'falha sem detalhe'} ELSE "ultimoErro" END,
+        "tentativas" = CASE WHEN ${falhou} THEN "tentativas" + 1 ELSE "tentativas" END
+      WHERE "id" = ${p.runId} AND "workspaceId" = ${p.workspaceId} AND "estado" = ${p.de}::"EstadoDoRun" AND "passo" = ${run.passo}
+      RETURNING *
+    ),
+    eventos AS (
+      INSERT INTO "DomainEvent" ("id", "workspaceId", "tipo", "versao", "correlationId", "runId", "entidadeTipo", "entidadeId", "payload", "chaveIdempotencia", "ocorridoEm")
+      SELECT v.id, ${p.workspaceId}, 'RUN_STATE_CHANGED', 1, ${run.correlationId}, ${p.runId}, 'SupervisorRun', ${p.runId}, v.payload, v.chave,
+             clock_timestamp() + (v.ordem * interval '1 millisecond')
+      FROM (VALUES ${valoresDosEventos}) AS v(id, chave, payload, ordem)
+      WHERE EXISTS (SELECT 1 FROM atualizado)
+      ON CONFLICT ("workspaceId", "chaveIdempotencia") DO NOTHING
+      RETURNING 1
     )
-    return tx.supervisorRun.findUniqueOrThrow({ where: { id: p.runId } })
-  })
+    SELECT * FROM atualizado
+  `)
+  if (linhas.length !== 1) throw new ErroDeTransicao('Outra execução avançou este run primeiro.')
+  return linhas[0]
 }

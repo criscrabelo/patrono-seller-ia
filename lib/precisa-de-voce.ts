@@ -111,16 +111,24 @@ async function resolverPorEvidencia(workspaceId: string, lista: ApprovalRequest[
 
 /** Limpa o que já não precisa da titular e devolve o que sobra, por prioridade. */
 export async function listarPrecisaDeVoce(workspaceId: string, agora = new Date()): Promise<ItemPrecisaDeVoce[]> {
-  await expirarVencidas(workspaceId, agora)
-  const todos = await pendentes(workspaceId, agora)
-  const resolvidos = await resolverPorEvidencia(workspaceId, todos, agora)
+  // P2.15.6: 2 idas em vez de 4. `pendentes` já ignora o que venceu, então
+  // expirar e listar saem juntos; depois, a evidência do TikTok Shop e a
+  // conferência dos candidatos (independentes) também saem juntas.
+  const [, todos] = await Promise.all([expirarVencidas(workspaceId, agora), pendentes(workspaceId, agora)])
+  const idsDasEscolhas = todos
+    .filter((r) => r.tipo === TIPO_ESCOLHA)
+    .map((r) => (r.acaoProposta as { candidatoId?: string } | null)?.candidatoId)
+    .filter((x): x is string => !!x)
+  const [resolvidos, vivosLidos] = await Promise.all([
+    resolverPorEvidencia(workspaceId, todos, agora),
+    idsDasEscolhas.length
+      ? prisma.candidatoDeProduto.findMany({ where: { workspaceId, id: { in: idsDasEscolhas }, status: 'APRESENTADO' }, select: { id: true } })
+      : Promise.resolve([] as { id: string }[]),
+  ])
   const lista = todos.filter((r) => !resolvidos.has(r.id))
   const escolhas = lista.filter((r) => r.tipo === TIPO_ESCOLHA)
   if (escolhas.length) {
-    const ids = escolhas.map((r) => (r.acaoProposta as { candidatoId?: string } | null)?.candidatoId).filter((x): x is string => !!x)
-    const vivos = new Set(
-      (await prisma.candidatoDeProduto.findMany({ where: { workspaceId, id: { in: ids }, status: 'APRESENTADO' }, select: { id: true } })).map((c) => c.id)
-    )
+    const vivos = new Set(vivosLidos.map((c) => c.id))
     const mortos = escolhas.filter((r) => !vivos.has((r.acaoProposta as { candidatoId?: string } | null)?.candidatoId ?? ''))
     if (mortos.length) {
       await prisma.approvalRequest.updateMany({
